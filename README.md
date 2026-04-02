@@ -18,7 +18,6 @@ At this point, the subsystem dataflow has been validated end-to-end for a fixed 
 This baseline is intended to serve as the first regression checkpoint before moving on to variable-dimension validation.
 
 ---
-
 ## Current subsystem structure
 
 The validated subsystem path is:
