@@ -5,4 +5,36 @@ specification_draft.md
 # Local files
 local_uvm_12.tcl
 uvm12/
-/logs
+logs/
+work/
+work_*/
+
+# Optimization output
+@_opt/
+*/@_opt/
+
+# Waveform database
+*.wlf
+wlft*
+*.vcd
+
+# Transcript/logs
+transcript
+logs/
+*.log
+*.xml
+
+# Temporary/backup files
+*.bak
+*.tmp
+*.swp
+*.swo
+*.ini
+*.vstf
+
+# Windows junk
+Thumbs.db
+Desktop.ini
+
+# IDE
+.vscode/
