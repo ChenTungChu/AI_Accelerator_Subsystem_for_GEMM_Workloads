@@ -1,0 +1,61 @@
+# 
+# --------------------------------------------------
+# Run sim
+# --------------------------------------------------
+# vsim -voptargs=+acc work.ai_accel_subsystem_tb_top +CASE=$CASE_ID
+# 31545000 [axi_mm_dual_port_bram][final] cycles=3149 busy=64 util=2% bytes=160 avg=0. 50 B/cyc bursts(p0=48,p1=16) ready(p0=0,p1=0) state=0
+# End time: 23:30:05 on Mar 31,2026, Elapsed time: 0:01:10
+# Errors: 0, Warnings: 9
+# vsim -voptargs="+acc" work.ai_accel_subsystem_tb_top "+CASE=4" 
+# Start time: 23:30:05 on Mar 31,2026
+# ** Note: (vsim-8009) Loading existing optimized design _opt
+# Loading sv_std.std
+# Loading work.ai_accel_subsystem_tb_top(fast)
+# Loading work.axi_mm_if(fast)
+# Loading work.ai_accel_subsystem(fast)
+# Loading work.axi_mm_apply_if(fast)
+# Loading work.axi_mm_commit_if(fast)
+# Loading work.axi_mm_dual_port_bram(fast)
+# Loading work.gemm_top(fast)
+# Loading work.gemm_scratchpad_adapter(fast)
+# 
+# add wave -r sim:/*
+# run -all
+# [INFO] Init test vectors
+# [INFO] CASE 4: known x identity
+# [INFO] Compute expected C
+# [INFO] Clear C region
+# [INFO] Preload A/B to scratchpad through axi0_if
+# [INFO] Start accelerator
+# [INFO] Wait acc_done
+# [INFO] acc_done observed.
+# [INFO] Read back C matrix
+# [INFO] Compare results
+# [OK]    C[0] = 1
+# [OK]    C[1] = 2
+# [OK]    C[2] = 3
+# [OK]    C[3] = 4
+# [OK]    C[4] = 5
+# [OK]    C[5] = 6
+# [OK]    C[6] = 7
+# [OK]    C[7] = 8
+# [OK]    C[8] = 9
+# [OK]    C[9] = 10
+# [OK]    C[10] = 11
+# [OK]    C[11] = 12
+# [OK]    C[12] = 13
+# [OK]    C[13] = 14
+# [OK]    C[14] = 15
+# [OK]    C[15] = 16
+# ====================================================
+# DIRECTED TEST PASS (CASE=4)
+# ====================================================
+# ** Note: $finish    : ../tb/top/ai_accel_subsystem_tb_top.sv(623)
+#    Time: 31545 ns  Iteration: 1  Instance: /ai_accel_subsystem_tb_top
+# 1
+# Break in Module ai_accel_subsystem_tb_top at ../tb/top/ai_accel_subsystem_tb_top.sv line 623
+# 
+# transcript off
+set CASE_ID 5
+# 5
+do run.tcl
