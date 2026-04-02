@@ -308,6 +308,7 @@ module ai_accel_subsystem_tb_top;
     endtask
 
 `include "../test/4x4_fixed_dimension_baseline_test.sv"
+`include "../test/variable_dimension_smoke_test.sv"
 
     // ============================================================
     // Main sequence
@@ -322,7 +323,12 @@ module ai_accel_subsystem_tb_top;
 
         repeat (5) @(posedge dma_clk);
 
-        run_4x4_fixed_dimension_baseline_test(CASE_ID);
+        if ((CASE_ID >= 100) && (CASE_ID <= 105)) begin
+            run_variable_dimension_smoke_test(CASE_ID);
+        end
+        else begin
+            run_4x4_fixed_dimension_baseline_test(CASE_ID);
+        end
 
         repeat (10) @(posedge dma_clk);
         $finish;

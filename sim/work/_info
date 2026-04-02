@@ -9,17 +9,17 @@ z2
 cModel Technology
 Z0 dD:/Learning/Digital_Design/Projects/ai_accelerator_subsystem_for_GEMM_workloads/sim
 T_opt
-!s110 1775027926
-VGgznPkK@HfFF:3faA7N>E0
+!s110 1775107931
+Vc]ka`6h;;Z_Yd^jVNh=Io0
 04 25 4 work ai_accel_subsystem_tb_top fast 0
-=1-107c613fd4db-69ccc6d6-321-140c0
+=1-107c613fd4db-69cdff5a-3ce-17230
 o-quiet -auto_acc_if_foreign -work work +acc
 Z1 tCvgOpt 0
 n@_opt
 OL;O;10.7c;67
 vai_accel_subsystem
 Z2 DXx6 sv_std 3 std 0 22 d=_JfHTnXCN[H5FjiaJJc0
-Z3 !s110 1775027919
+Z3 !s110 1775107925
 !i10b 1
 !s100 [?VCRBQelD6TiKC9lM=7c2
 II=;Pbd1[RbTI5LEb1X`cO2
@@ -27,45 +27,47 @@ Z4 VDg1SIo80bB@j0V0VzS_@n1
 !s105 ai_accel_subsystem_sv_unit
 S1
 R0
-w1775016915
+Z5 w1775103663
 8../rtl/top/ai_accel_subsystem.sv
 F../rtl/top/ai_accel_subsystem.sv
 L0 5
-Z5 OL;L;10.7c;67
+Z6 OL;L;10.7c;67
 r1
 !s85 0
 31
-Z6 !s108 1775027919.000000
+Z7 !s108 1775107925.000000
 !s107 ../rtl/top/ai_accel_subsystem.sv|
 !s90 -reportprogress|300|-sv|-timescale|1ns/1ps|+acc|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/top/ai_accel_subsystem.sv|
 !i113 0
-Z7 o-sv -timescale 1ns/1ps +acc -L uvm12 -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
-Z8 !s92 -sv -timescale 1ns/1ps +acc -L uvm12 +incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src +incdir+../rtl/interface +incdir+../rtl/top +incdir+../rtl/gemm +incdir+../rtl/subsystem +incdir+../rtl/mem -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z8 o-sv -timescale 1ns/1ps +acc -L uvm12 -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z9 !s92 -sv -timescale 1ns/1ps +acc -L uvm12 +incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src +incdir+../rtl/interface +incdir+../rtl/top +incdir+../rtl/gemm +incdir+../rtl/subsystem +incdir+../rtl/mem -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
 R1
 vai_accel_subsystem_tb_top
 R2
 R3
 !i10b 1
-!s100 m``fj8Q8Q2Hki[OXM8`a83
-I:z7[Lo[nD`aODkAz3LKSL3
+!s100 LnBd30UBH:Omgf0YncTzJ1
+I@65z18RB?MKnn><n]VbeB0
 R4
 !s105 ai_accel_subsystem_tb_top_sv_unit
 S1
 R0
-w1775022406
+w1775107865
 8../tb/top/ai_accel_subsystem_tb_top.sv
 F../tb/top/ai_accel_subsystem_tb_top.sv
+F..\tb\top\..\test\4x4_fixed_dimension_baseline_test.sv
+F..\tb\top\..\test\variable_dimension_smoke_test.sv
 L0 5
-R5
+R6
 r1
 !s85 0
 31
-R6
-!s107 ../tb/top/ai_accel_subsystem_tb_top.sv|
+R7
+!s107 ..\tb\top\..\test\variable_dimension_smoke_test.sv|..\tb\top\..\test\4x4_fixed_dimension_baseline_test.sv|../tb/top/ai_accel_subsystem_tb_top.sv|
 !s90 -reportprogress|300|-sv|-timescale|1ns/1ps|+acc|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../tb/top/ai_accel_subsystem_tb_top.sv|
 !i113 0
-R7
 R8
+R9
 R1
 Yaxi_mm_apply_if
 R2
@@ -77,20 +79,20 @@ R4
 !s105 axi_mm_apply_if_sv_unit
 S1
 R0
-w1774841253
+R5
 8../rtl/interface/axi_mm_apply_if.sv
 F../rtl/interface/axi_mm_apply_if.sv
 L0 6
-R5
+R6
 r1
 !s85 0
 31
-R6
+R7
 !s107 ../rtl/interface/axi_mm_apply_if.sv|
 !s90 -reportprogress|300|-sv|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/interface/axi_mm_apply_if.sv|
 !i113 0
-Z9 o-sv -L uvm12 -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
-Z10 !s92 -sv -L uvm12 +incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src +incdir+../rtl/interface +incdir+../rtl/top +incdir+../rtl/gemm +incdir+../rtl/subsystem +incdir+../rtl/mem -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z10 o-sv -L uvm12 -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
+Z11 !s92 -sv -L uvm12 +incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src +incdir+../rtl/interface +incdir+../rtl/top +incdir+../rtl/gemm +incdir+../rtl/subsystem +incdir+../rtl/mem -L mtiAvm -L mtiRnm -L mtiOvm -L mtiUvm -L mtiUPF -L infact
 R1
 Yaxi_mm_commit_if
 R2
@@ -102,20 +104,20 @@ R4
 !s105 axi_mm_commit_if_sv_unit
 S1
 R0
-w1774841288
+R5
 8../rtl/interface/axi_mm_commit_if.sv
 F../rtl/interface/axi_mm_commit_if.sv
 L0 6
-R5
+R6
 r1
 !s85 0
 31
-R6
+R7
 !s107 ../rtl/interface/axi_mm_commit_if.sv|
 !s90 -reportprogress|300|-sv|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/interface/axi_mm_commit_if.sv|
 !i113 0
-R9
 R10
+R11
 R1
 vaxi_mm_dual_port_bram
 R2
@@ -127,24 +129,24 @@ R4
 !s105 axi_mm_dual_port_bram_sv_unit
 S1
 R0
-w1774852737
+R5
 8../rtl/mem/axi_mm_dual_port_bram.sv
 F../rtl/mem/axi_mm_dual_port_bram.sv
 L0 57
-R5
+R6
 r1
 !s85 0
 31
-R6
+R7
 !s107 ../rtl/mem/axi_mm_dual_port_bram.sv|
 !s90 -reportprogress|300|-sv|-timescale|1ns/1ps|+acc|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/mem/axi_mm_dual_port_bram.sv|
 !i113 0
-R7
 R8
+R9
 R1
 Yaxi_mm_if
 R2
-!s110 1775027918
+R3
 !i10b 1
 !s100 e1<UF9DY38]=06IEKJ[a=3
 IKbzjGoAjL;DGgPXD?4Ri13
@@ -152,20 +154,20 @@ R4
 !s105 axi_mm_if_sv_unit
 S1
 R0
-w1774828175
+R5
 8../rtl/interface/axi_mm_if.sv
 F../rtl/interface/axi_mm_if.sv
 L0 6
-R5
+R6
 r1
 !s85 0
 31
-!s108 1775027918.000000
+R7
 !s107 ../rtl/interface/axi_mm_if.sv|
 !s90 -reportprogress|300|-sv|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/interface/axi_mm_if.sv|
 !i113 0
-R9
 R10
+R11
 R1
 vgemm_scratchpad_adapter
 R2
@@ -177,20 +179,20 @@ R4
 !s105 gemm_scratchpad_adapter_sv_unit
 S1
 R0
-w1775015792
+R5
 8../rtl/subsystem/gemm_scratchpad_adapter.sv
 F../rtl/subsystem/gemm_scratchpad_adapter.sv
 L0 5
-R5
+R6
 r1
 !s85 0
 31
-R6
+R7
 !s107 ../rtl/subsystem/gemm_scratchpad_adapter.sv|
 !s90 -reportprogress|300|-sv|-timescale|1ns/1ps|+acc|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/subsystem/gemm_scratchpad_adapter.sv|
 !i113 0
-R7
 R8
+R9
 R1
 vgemm_top
 R2
@@ -202,18 +204,18 @@ R4
 !s105 gemm_top_sv_unit
 S1
 R0
-w1775015965
+R5
 8../rtl/gemm/gemm_top.sv
 F../rtl/gemm/gemm_top.sv
 L0 5
-R5
+R6
 r1
 !s85 0
 31
-R6
+R7
 !s107 ../rtl/gemm/gemm_top.sv|
 !s90 -reportprogress|300|-sv|-timescale|1ns/1ps|+acc|-L|uvm12|+incdir+C:/questasim64_10.7c/verilog_src/uvm-1.2/src|+incdir+../rtl/interface|+incdir+../rtl/top|+incdir+../rtl/gemm|+incdir+../rtl/subsystem|+incdir+../rtl/mem|../rtl/gemm/gemm_top.sv|
 !i113 0
-R7
 R8
+R9
 R1
