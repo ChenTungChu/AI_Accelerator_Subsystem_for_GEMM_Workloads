@@ -211,21 +211,6 @@ begin
 end
 endtask
 
-task automatic compute_expected_c();
-    int signed acc;
-begin
-    for (i = 0; i < M_DIM; i++) begin
-        for (j = 0; j < N_DIM; j++) begin
-            acc = 0;
-            for (k = 0; k < K_DIM; k++) begin
-                acc += $signed(A_mat[i*K_DIM + k]) * $signed(B_mat[k*N_DIM + j]);
-            end
-            C_exp[i*N_DIM + j] = acc;
-        end
-    end
-end
-endtask
-
 task automatic preload_matrices();
 begin
     for (i = 0; i < 16; i++) begin
@@ -239,37 +224,12 @@ task automatic readback_c_matrix();
     logic [31:0] tmp;
 begin
     for (i = 0; i < 16; i++) begin
-        host_read_u32(BASE_C + (i * 4), tmp);
-        C_got[i] = $signed(tmp);
+        C_got[i] = 0;
     end
-end
-endtask
-
-task automatic compare_results(input int case_id);
-    int error_count;
-begin
-    error_count = 0;
 
     for (i = 0; i < 16; i++) begin
-        if (C_got[i] !== C_exp[i]) begin
-            $display("[ERROR] C[%0d] mismatch: got=%0d exp=%0d", i, C_got[i], C_exp[i]);
-            error_count++;
-        end
-        else begin
-            $display("[OK]    C[%0d] = %0d", i, C_got[i]);
-        end
-    end
-
-    if (error_count == 0) begin
-        $display("====================================================");
-        $display("DIRECTED TEST PASS (CASE=%0d)", case_id);
-        $display("====================================================");
-    end
-    else begin
-        $display("====================================================");
-        $display("DIRECTED TEST FAIL (CASE=%0d), error_count=%0d", case_id, error_count);
-        $display("====================================================");
-        $fatal(1);
+        host_read_u32(BASE_C + (i * 4), tmp);
+        C_got[i] = $signed(tmp);
     end
 end
 endtask
@@ -280,7 +240,12 @@ begin
     init_test_vectors(case_id);
 
     $display("[INFO] Compute expected C");
-    compute_expected_c();
+    if (case_id == 0) begin
+        refchk_compute_expected_identity_known_4x4();
+    end
+    else begin
+        refchk_compute_expected_c_compact(4, 4, 4);
+    end
 
     $display("[INFO] Clear C region");
     clear_c_region();
@@ -300,6 +265,9 @@ begin
     readback_c_matrix();
 
     $display("[INFO] Compare results");
-    compare_results(case_id);
+    refchk_compare_flat_region(
+        16,
+        $sformatf("fixed_baseline_case_%0d", case_id)
+    );
 end
 endtask

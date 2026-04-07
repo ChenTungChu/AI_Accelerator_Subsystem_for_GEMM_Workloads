@@ -307,10 +307,13 @@ module ai_accel_subsystem_tb_top;
     end
     endtask
 
+
 `include "../test/4x4_fixed_dimension_baseline_test.sv"
+`include "../test/subsystem_reference_check_helpers.sv"
 `include "../test/variable_dimension_smoke_test.sv"
 `include "../test/back_to_back_run_smoke_test.sv"
 `include "../test/reset_recovery_smoke_test.sv"
+`include "../test/configurable_base_address_smoke_test.sv"
 
     // ============================================================
     // Main sequence
@@ -333,6 +336,9 @@ module ai_accel_subsystem_tb_top;
         end
         else if ((CASE_ID >= 100) && (CASE_ID <= 105)) begin
             run_variable_dimension_smoke_test(CASE_ID);
+        end
+        else if ((CASE_ID >= 400) && (CASE_ID <= 403)) begin
+            run_configurable_base_address_smoke_test(CASE_ID);
         end
         else begin
             run_4x4_fixed_dimension_baseline_test(CASE_ID);

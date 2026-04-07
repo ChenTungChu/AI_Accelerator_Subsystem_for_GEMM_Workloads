@@ -13,6 +13,9 @@
 // - start_accel()
 // - wait_done()
 //
+// Also uses shared reference-check helpers from:
+// - subsystem_reference_check_helpers.sv
+//
 // CASE summary:
 //   CASE=100 : 1x1x1
 //   CASE=101 : 2x2x2
@@ -201,25 +204,6 @@ end
 endtask
 
 // ============================================================
-// Reference model
-// ============================================================
-task automatic compute_expected_c_variable();
-    int signed acc;
-begin
-    for (i = 0; i < TEST_DIM_M; i++) begin
-        for (j = 0; j < TEST_DIM_N; j++) begin
-            acc = 0;
-            for (k = 0; k < TEST_DIM_K; k++) begin
-                acc += $signed(A_mat[i*TEST_DIM_K + k]) *
-                       $signed(B_mat[k*TEST_DIM_N + j]);
-            end
-            C_exp[i*TEST_DIM_N + j] = acc;
-        end
-    end
-end
-endtask
-
-// ============================================================
 // Memory preload / readback
 //
 // Preload the contiguous valid storage region only.
@@ -248,46 +232,14 @@ task automatic readback_variable_c_matrix();
 begin
     c_elems = TEST_DIM_M * TEST_DIM_N;
 
+    // clear valid result slots before readback
+    for (i = 0; i < c_elems; i++) begin
+        C_got[i] = 0;
+    end
+
     for (i = 0; i < c_elems; i++) begin
         host_read_u32(BASE_C + (i * 4), tmp);
         C_got[i] = $signed(tmp);
-    end
-end
-endtask
-
-// ============================================================
-// Compare only valid output region
-// ============================================================
-task automatic compare_variable_results(input int case_id);
-    int error_count;
-begin
-    error_count = 0;
-
-    for (i = 0; i < TEST_DIM_M; i++) begin
-        for (j = 0; j < TEST_DIM_N; j++) begin
-            if (C_got[i*TEST_DIM_N + j] !== C_exp[i*TEST_DIM_N + j]) begin
-                $display("[ERROR] C[%0d,%0d] mismatch: got=%0d exp=%0d",
-                         i, j, C_got[i*TEST_DIM_N + j], C_exp[i*TEST_DIM_N + j]);
-                error_count++;
-            end
-            else begin
-                $display("[OK]    C[%0d,%0d] = %0d",
-                         i, j, C_got[i*TEST_DIM_N + j]);
-            end
-        end
-    end
-
-    if (error_count == 0) begin
-        $display("====================================================");
-        $display("VARIABLE-DIMENSION SMOKE PASS (CASE=%0d)", case_id);
-        $display("====================================================");
-    end
-    else begin
-        $display("====================================================");
-        $display("VARIABLE-DIMENSION SMOKE FAIL (CASE=%0d), error_count=%0d",
-                 case_id, error_count);
-        $display("====================================================");
-        $fatal(1);
     end
 end
 endtask
@@ -301,7 +253,7 @@ begin
     init_variable_test_vectors(case_id);
 
     $display("[INFO] Compute expected C for variable-dimension case");
-    compute_expected_c_variable();
+    refchk_compute_expected_c_compact(TEST_DIM_M, TEST_DIM_N, TEST_DIM_K);
 
     $display("[INFO] Clear C region");
     clear_c_region();
@@ -321,6 +273,10 @@ begin
     readback_variable_c_matrix();
 
     $display("[INFO] Compare results");
-    compare_variable_results(case_id);
+    refchk_compare_compact_region(
+        TEST_DIM_M,
+        TEST_DIM_N,
+        $sformatf("variable_case_%0d", case_id)
+    );
 end
 endtask
