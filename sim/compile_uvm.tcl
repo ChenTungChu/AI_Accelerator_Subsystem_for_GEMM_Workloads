@@ -1,4 +1,6 @@
+# --------------------------------------------------------
 # Clean & create work
+# --------------------------------------------------------
 if { [file exists work] } {
     vdel -lib work -all
 }
@@ -40,6 +42,16 @@ set INC_LIST [list \
   "+incdir+../rtl/gemm" \
   "+incdir+../rtl/subsystem" \
   "+incdir+../rtl/mem" \
+  "+incdir+../tb/interface" \
+  "+incdir+../tb/uvm/pkg" \
+  "+incdir+../tb/uvm/seq_item" \
+  "+incdir+../tb/uvm/sequencer" \
+  "+incdir+../tb/uvm/driver" \
+  "+incdir+../tb/uvm/agent" \
+  "+incdir+../tb/uvm/env" \
+  "+incdir+../tb/uvm/seq" \
+  "+incdir+../tb/uvm/test" \
+  "+incdir+../tb/top" \
 ]
 
 # --------------------------------------------------------
@@ -48,23 +60,25 @@ set INC_LIST [list \
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_apply_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_commit_if.sv
+vlog -sv -L uvm12 {*}$INC_LIST ../tb/interface/ai_accel_subsys_ctrl_if.sv
 
 # --------------------------------------------------------
-# Compile BRAM
+# Compile RTL / DUT
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/mem/axi_mm_dual_port_bram.sv
-
-# --------------------------------------------------------
-# Compile GEMM / Subsystem
-# --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/gemm/gemm_top.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/gemm_scratchpad_adapter.sv
-vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsystem.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys.sv
 
 # --------------------------------------------------------
-# Compile top
+# Compile UVM package
 # --------------------------------------------------------
-vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsystem_tb_top.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+
+# --------------------------------------------------------
+# Compile UVM top
+# --------------------------------------------------------
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_uvm_top.sv
 
 puts "\n==============================="
 puts "Compilation Completed!"

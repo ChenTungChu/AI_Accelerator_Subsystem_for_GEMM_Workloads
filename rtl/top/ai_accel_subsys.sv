@@ -1,8 +1,8 @@
-// File: rtl/top/ai_accel_subsystem.sv
-`ifndef AI_ACCEL_SUBSYSTEM_SV
-`define AI_ACCEL_SUBSYSTEM_SV
+// File: rtl/top/ai_accel_subsys.sv
+`ifndef AI_ACCEL_SUBSYS_SV
+`define AI_ACCEL_SUBSYS_SV
 
-module ai_accel_subsystem #(
+module ai_accel_subsys #(
     parameter int ADDR_WIDTH      = 32,
     parameter int DATA_WIDTH      = 64,
     parameter int ID_WIDTH        = 4,

@@ -1,8 +1,8 @@
-// File: tb/top/ai_accel_subsystem_tb_top.sv
+// File: tb/top/ai_accel_subsys_baseline_top.sv
 
 `timescale 1ns/1ps
 
-module ai_accel_subsystem_tb_top;
+module ai_accel_subsystem_baseline_top;
 
     // ============================================================
     // Parameters
@@ -69,7 +69,7 @@ module ai_accel_subsystem_tb_top;
     // ============================================================
     // DUT
     // ============================================================
-    ai_accel_subsystem #(
+    ai_accel_subsys #(
         .ADDR_WIDTH      (ADDR_WIDTH),
         .DATA_WIDTH      (DATA_WIDTH),
         .ID_WIDTH        (ID_WIDTH),
