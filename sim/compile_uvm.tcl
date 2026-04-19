@@ -44,9 +44,14 @@ set INC_LIST [list \
   "+incdir+../rtl/mem" \
   "+incdir+../tb/interface" \
   "+incdir+../tb/uvm/pkg" \
+  "+incdir+../tb/uvm/item" \
+  "+incdir+../tb/uvm/helper" \
+  "+incdir+../tb/uvm/bridge" \
   "+incdir+../tb/uvm/seq_item" \
   "+incdir+../tb/uvm/sequencer" \
   "+incdir+../tb/uvm/driver" \
+  "+incdir+../tb/uvm/monitor" \
+  "+incdir+../tb/uvm/scoreboard" \
   "+incdir+../tb/uvm/agent" \
   "+incdir+../tb/uvm/env" \
   "+incdir+../tb/uvm/seq" \

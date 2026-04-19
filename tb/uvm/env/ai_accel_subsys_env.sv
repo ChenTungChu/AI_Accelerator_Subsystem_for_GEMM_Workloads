@@ -8,8 +8,9 @@ class ai_accel_subsys_env extends uvm_env;
     // ------------------------------------------------------------
     // Components
     // ------------------------------------------------------------
-    ai_accel_subsys_agent      agent;
-    ai_accel_subsys_scoreboard scoreboard;
+    ai_accel_subsys_agent         agent;
+    ai_accel_subsys_scoreboard    scoreboard;
+    ai_accel_subsys_result_bridge result_bridge;
 
     // ------------------------------------------------------------
     // Virtual interface
@@ -35,9 +36,10 @@ class ai_accel_subsys_env extends uvm_env;
                 "virtual interface ai_accel_subsys_ctrl_if is not set for ai_accel_subsys_env")
         end
 
-        // Build minimal env with one active agent + scoreboard
-        agent      = ai_accel_subsys_agent     ::type_id::create("agent",      this);
-        scoreboard = ai_accel_subsys_scoreboard::type_id::create("scoreboard", this);
+        // Build env components
+        agent         = ai_accel_subsys_agent        ::type_id::create("agent",         this);
+        scoreboard    = ai_accel_subsys_scoreboard   ::type_id::create("scoreboard",    this);
+        result_bridge = ai_accel_subsys_result_bridge::type_id::create("result_bridge", this);
 
         // Pass vif down to agent
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
@@ -50,7 +52,11 @@ class ai_accel_subsys_env extends uvm_env;
     function void connect_phase(uvm_phase phase);
         super.connect_phase(phase);
 
-        agent.monitor.ap.connect(scoreboard.analysis_export);
+        // Control observation path
+        agent.monitor.ap.connect(scoreboard.ctrl_analysis_export);
+
+        // Result compare path
+        result_bridge.ap.connect(scoreboard.result_analysis_export);
     endfunction
 
 endclass

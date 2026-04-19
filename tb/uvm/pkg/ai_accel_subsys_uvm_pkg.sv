@@ -13,6 +13,22 @@ package ai_accel_subsys_uvm_pkg;
     `include "../seq_item/ai_accel_subsys_seq_item.sv"
 
     // ------------------------------------------------------------
+    // Result item
+    // ------------------------------------------------------------
+    `include "../item/ai_accel_subsys_result_item.sv"
+
+    // ------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------
+    `include "../helper/ai_accel_subsys_case_helper.sv"
+    `include "../helper/ai_accel_subsys_axi_host_helper.sv"
+
+    // ------------------------------------------------------------
+    // Result bridge
+    // ------------------------------------------------------------
+    `include "../bridge/ai_accel_subsys_result_bridge.sv"
+
+    // ------------------------------------------------------------
     // Sequencer
     // ------------------------------------------------------------
     `include "../sequencer/ai_accel_subsys_sequencer.sv"

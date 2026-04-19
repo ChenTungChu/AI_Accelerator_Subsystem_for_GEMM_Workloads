@@ -21,6 +21,16 @@ module ai_accel_subsys_uvm_top;
     localparam int GEMM_DIM_WIDTH  = 8;
 
     // ============================================================
+    // AXI host vif typedef for UVM config_db handoff
+    // ============================================================
+    typedef virtual axi_mm_if #(
+        .ADDR_WIDTH (ADDR_WIDTH),
+        .DATA_WIDTH (DATA_WIDTH),
+        .ID_WIDTH   (ID_WIDTH),
+        .HAS_BURST  (1)
+    ) axi0_vif_t;
+
+    // ============================================================
     // Clocks / resets
     // ============================================================
     logic dma_clk;
@@ -36,7 +46,6 @@ module ai_accel_subsys_uvm_top;
 
     // ============================================================
     // External AXI-MM host interface (Port0)
-    //   For first-step UVM smoke, keep it idle.
     // ============================================================
     axi_mm_if #(
         .ADDR_WIDTH (ADDR_WIDTH),
@@ -137,7 +146,6 @@ module ai_accel_subsys_uvm_top;
 
     // ============================================================
     // Default idle values
-    //   First-step UVM smoke does not yet drive AXI preload/readback.
     // ============================================================
     initial begin
         // ctrl_if defaults
@@ -180,6 +188,10 @@ module ai_accel_subsys_uvm_top;
     initial begin
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
             null, "*", "vif", ctrl_if
+        );
+
+        uvm_config_db#(axi0_vif_t)::set(
+            null, "*", "axi0_vif", axi0_if
         );
 
         run_test();

@@ -1,5 +1,4 @@
 // File: tb/uvm/seq_item/ai_accel_subsys_seq_item.sv
-
 `ifndef AI_ACCEL_SUBSYS_SEQ_ITEM_SV
 `define AI_ACCEL_SUBSYS_SEQ_ITEM_SV
 
@@ -32,6 +31,15 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     rand int unsigned dim_m;
     rand int unsigned dim_n;
     rand int unsigned dim_k;
+
+    // ------------------------------------------------------------
+    // Runtime observation fields
+    //   Filled by monitor / scoreboard flow
+    // ------------------------------------------------------------
+    bit          done_seen;
+    int unsigned start_cycle;
+    int unsigned done_cycle;
+    int unsigned latency_cycles;
 
     // ------------------------------------------------------------
     // Optional metadata
@@ -74,6 +82,11 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
         `uvm_field_int(dim_n,       UVM_DEFAULT)
         `uvm_field_int(dim_k,       UVM_DEFAULT)
 
+        `uvm_field_int(done_seen,       UVM_DEFAULT)
+        `uvm_field_int(start_cycle,     UVM_DEFAULT)
+        `uvm_field_int(done_cycle,      UVM_DEFAULT)
+        `uvm_field_int(latency_cycles,  UVM_DEFAULT)
+
         `uvm_field_string(test_name, UVM_DEFAULT)
     `uvm_object_utils_end
 
@@ -82,6 +95,11 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     function new(string name = "ai_accel_subsys_seq_item");
         super.new(name);
+
+        done_seen      = 1'b0;
+        start_cycle    = 0;
+        done_cycle     = 0;
+        latency_cycles = 0;
     endfunction
 
     // ------------------------------------------------------------
@@ -99,6 +117,11 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
         dim_m = 4;
         dim_n = 4;
         dim_k = 4;
+
+        done_seen      = 1'b0;
+        start_cycle    = 0;
+        done_cycle     = 0;
+        latency_cycles = 0;
     endfunction
 
     function void apply_variable_dim_case(int unsigned id);
@@ -119,6 +142,11 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             105: begin dim_m = 2; dim_n = 3; dim_k = 4; end
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
+
+        done_seen      = 1'b0;
+        start_cycle    = 0;
+        done_cycle     = 0;
+        latency_cycles = 0;
     endfunction
 
     function void apply_configurable_base_case(int unsigned id);
@@ -157,6 +185,11 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
                 base_addr_c = 32'h0000_0200;
             end
         endcase
+
+        done_seen      = 1'b0;
+        start_cycle    = 0;
+        done_cycle     = 0;
+        latency_cycles = 0;
     endfunction
 
     // ------------------------------------------------------------
@@ -164,9 +197,9 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     virtual function string convert2string();
         return $sformatf(
-            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d",
+            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
             test_name, case_id, test_kind, base_addr_a, base_addr_b, base_addr_c,
-            dim_m, dim_n, dim_k
+            dim_m, dim_n, dim_k, done_seen, start_cycle, done_cycle, latency_cycles
         );
     endfunction
 

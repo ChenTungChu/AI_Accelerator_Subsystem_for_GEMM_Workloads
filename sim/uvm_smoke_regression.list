@@ -1,0 +1,13 @@
+# fixed baseline
+ai_accel_subsys_smoke_test CASE_ID 5
+
+# variable-dimension
+ai_accel_subsys_smoke_test CASE_ID 100
+ai_accel_subsys_smoke_test CASE_ID 101
+ai_accel_subsys_smoke_test CASE_ID 105
+
+# configurable-base
+ai_accel_subsys_smoke_test CASE_ID 400
+ai_accel_subsys_smoke_test CASE_ID 401
+ai_accel_subsys_smoke_test CASE_ID 402
+ai_accel_subsys_smoke_test CASE_ID 403
