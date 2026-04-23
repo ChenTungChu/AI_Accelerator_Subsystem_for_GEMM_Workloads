@@ -28,7 +28,7 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     localparam bit [31:0] CFG403_BASE_C = 32'h0000_00A0;
 
     // ------------------------------------------------------------
-    // First-step latency sanity range
+    // Latency sanity range
     // ------------------------------------------------------------
     localparam int unsigned MIN_VALID_LATENCY = 1;
     localparam int unsigned MAX_VALID_LATENCY = 50000;
@@ -40,20 +40,32 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     uvm_analysis_imp_result #(ai_accel_subsys_result_item, ai_accel_subsys_scoreboard) result_analysis_export;
 
     // ------------------------------------------------------------
-    // Control-path state
+    // Control-path summary
     // ------------------------------------------------------------
     int unsigned observed_start_count;
     int unsigned observed_done_count;
-    ai_accel_subsys_seq_item last_seen_item;
 
     // ------------------------------------------------------------
-    // Result-path state
+    // Result-path summary
     // ------------------------------------------------------------
     bit          result_check_enable;
     int unsigned observed_result_count;
     int unsigned result_pass_count;
     int unsigned result_fail_count;
-    ai_accel_subsys_result_item last_result_item;
+
+    // ------------------------------------------------------------
+    // Multi-job pairing state
+    //
+    // Only DONE-side ctrl items participate in result pairing.
+    // START-side items are observed/logged, but not queued here.
+    // ------------------------------------------------------------
+    ai_accel_subsys_seq_item    ctrl_q[$];
+    ai_accel_subsys_result_item result_q[$];
+
+    int unsigned matched_job_count;
+    int unsigned ctrl_profile_pass_count;
+    int unsigned ctrl_latency_pass_count;
+    int unsigned ctrl_result_pair_pass_count;
 
     // ------------------------------------------------------------
     // Constructor
@@ -70,66 +82,170 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
 
-        observed_start_count = 0;
-        observed_done_count  = 0;
+        observed_start_count        = 0;
+        observed_done_count         = 0;
 
-        observed_result_count = 0;
-        result_pass_count     = 0;
-        result_fail_count     = 0;
+        observed_result_count       = 0;
+        result_pass_count           = 0;
+        result_fail_count           = 0;
 
-        result_check_enable   = 1'b0;
+        matched_job_count           = 0;
+        ctrl_profile_pass_count     = 0;
+        ctrl_latency_pass_count     = 0;
+        ctrl_result_pair_pass_count = 0;
+
+        result_check_enable         = 1'b0;
 
         void'(uvm_config_db#(bit)::get(this, "", "result_check_enable", result_check_enable));
     endfunction
 
     // ------------------------------------------------------------
+    // Clone helpers
+    // ------------------------------------------------------------
+    function ai_accel_subsys_seq_item clone_ctrl_item(ai_accel_subsys_seq_item src);
+        ai_accel_subsys_seq_item dst;
+        dst = ai_accel_subsys_seq_item::type_id::create("dst");
+        dst.copy(src);
+        return dst;
+    endfunction
+
+    function ai_accel_subsys_result_item clone_result_item(ai_accel_subsys_result_item src);
+        ai_accel_subsys_result_item dst;
+        dst = ai_accel_subsys_result_item::type_id::create("dst");
+        dst.copy(src);
+        return dst;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Ctrl-event classification helpers
+    //
+    // Legacy compatibility:
+    //   if ctrl_event_kind == CTRL_EVENT_NONE, fall back to done_seen
+    // ------------------------------------------------------------
+    function bit is_start_side_ctrl(ai_accel_subsys_seq_item item);
+        if (item == null)
+            return 1'b0;
+
+        if (item.ctrl_event_kind == ai_accel_subsys_seq_item::CTRL_EVENT_START)
+            return 1'b1;
+
+        if (item.ctrl_event_kind == ai_accel_subsys_seq_item::CTRL_EVENT_DONE)
+            return 1'b0;
+
+        // Legacy fallback
+        return !item.done_seen;
+    endfunction
+
+    function bit is_done_side_ctrl(ai_accel_subsys_seq_item item);
+        if (item == null)
+            return 1'b0;
+
+        if (item.ctrl_event_kind == ai_accel_subsys_seq_item::CTRL_EVENT_DONE)
+            return 1'b1;
+
+        if (item.ctrl_event_kind == ai_accel_subsys_seq_item::CTRL_EVENT_START)
+            return 1'b0;
+
+        // Legacy fallback
+        return item.done_seen;
+    endfunction
+
+    function string ctrl_event_kind_name(ai_accel_subsys_seq_item item);
+        if (item == null)
+            return "NULL";
+
+        case (item.ctrl_event_kind)
+            ai_accel_subsys_seq_item::CTRL_EVENT_NONE:  return "NONE";
+            ai_accel_subsys_seq_item::CTRL_EVENT_START: return "START";
+            ai_accel_subsys_seq_item::CTRL_EVENT_DONE:  return "DONE";
+            default:                                    return "UNKNOWN";
+        endcase
+    endfunction
+
+    // ------------------------------------------------------------
     // CTRL write callback
+    //
+    // Phase-aware behavior on the same ctrl path:
+    //   - START events are observed/logged only
+    //   - DONE  events go through profile/latency/pairing flow
     // ------------------------------------------------------------
     function void write_ctrl(ai_accel_subsys_seq_item t);
-        observed_start_count++;
+        ai_accel_subsys_seq_item item;
 
-        if (t.done_seen)
+        item = clone_ctrl_item(t);
+
+        if (is_start_side_ctrl(item)) begin
+            observed_start_count++;
+
+            `uvm_info("SB",
+                $sformatf(
+                    "Observed ctrl START event #%0d: case_id=%0d test_kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim=(%0d,%0d,%0d) event_kind=%s done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d test_name=%s",
+                    observed_start_count,
+                    item.case_id, item.test_kind,
+                    item.base_addr_a, item.base_addr_b, item.base_addr_c,
+                    item.dim_m, item.dim_n, item.dim_k,
+                    ctrl_event_kind_name(item),
+                    item.done_seen, item.start_cycle, item.done_cycle, item.latency_cycles,
+                    item.test_name
+                ),
+                UVM_MEDIUM)
+
+            return;
+        end
+
+        if (is_done_side_ctrl(item)) begin
             observed_done_count++;
 
-        last_seen_item = ai_accel_subsys_seq_item::type_id::create("last_seen_item");
-        last_seen_item.copy(t);
+            `uvm_info("SB",
+                $sformatf(
+                    "Observed ctrl DONE event #%0d: case_id=%0d test_kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim=(%0d,%0d,%0d) event_kind=%s done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d test_name=%s",
+                    observed_done_count,
+                    item.case_id, item.test_kind,
+                    item.base_addr_a, item.base_addr_b, item.base_addr_c,
+                    item.dim_m, item.dim_n, item.dim_k,
+                    ctrl_event_kind_name(item),
+                    item.done_seen, item.start_cycle, item.done_cycle, item.latency_cycles,
+                    item.test_name
+                ),
+                UVM_MEDIUM)
 
-        `uvm_info("SB",
-            $sformatf(
-                "Observed ctrl event #%0d: case_id=%0d test_kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim=(%0d,%0d,%0d) done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d test_name=%s",
-                observed_start_count,
-                t.case_id, t.test_kind,
-                t.base_addr_a, t.base_addr_b, t.base_addr_c,
-                t.dim_m, t.dim_n, t.dim_k,
-                t.done_seen, t.start_cycle, t.done_cycle, t.latency_cycles,
-                t.test_name
-            ),
-            UVM_MEDIUM)
+            check_ctrl_item_profile(item);
+            check_ctrl_item_done_latency(item);
+
+            ctrl_q.push_back(item);
+            try_match_jobs();
+            return;
+        end
+
+        `uvm_warning("SB/CTRL_EVENT_UNKNOWN",
+            $sformatf("Ignoring ctrl item with unsupported event classification: case_id=%0d test_kind=%0d event_kind=%s done_seen=%0d",
+                item.case_id, item.test_kind, ctrl_event_kind_name(item), item.done_seen))
     endfunction
 
     // ------------------------------------------------------------
     // RESULT write callback
     // ------------------------------------------------------------
     function void write_result(ai_accel_subsys_result_item t);
+        ai_accel_subsys_result_item item;
+
         observed_result_count++;
 
-        last_result_item = ai_accel_subsys_result_item::type_id::create("last_result_item");
-        last_result_item.copy(t);
+        item = clone_result_item(t);
 
-        if (!last_result_item.compare_done)
-            last_result_item.run_compare();
+        if (!item.compare_done)
+            item.run_compare();
 
-        if (last_result_item.compare_pass) begin
+        if (item.compare_pass) begin
             result_pass_count++;
             `uvm_info("SB",
                 $sformatf(
                     "Result compare PASS: case_id=%0d test_kind=%0d dim=(%0d,%0d,%0d) elements=%0d",
-                    last_result_item.case_id,
-                    last_result_item.test_kind,
-                    last_result_item.dim_m,
-                    last_result_item.dim_n,
-                    last_result_item.dim_k,
-                    last_result_item.element_count
+                    item.case_id,
+                    item.test_kind,
+                    item.dim_m,
+                    item.dim_n,
+                    item.dim_k,
+                    item.element_count
                 ),
                 UVM_MEDIUM)
         end
@@ -137,79 +253,91 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             result_fail_count++;
             `uvm_error("SB/RESULT_MISMATCH",
                 $sformatf(
-                    "Result compare FAIL: case_id=%0d test_kind=%0d mismatch_count=%0d first_idx=%0d exp=%0d act=%0d",
-                    last_result_item.case_id,
-                    last_result_item.test_kind,
-                    last_result_item.mismatch_count,
-                    last_result_item.first_mismatch_idx,
-                    last_result_item.first_expected,
-                    last_result_item.first_actual
+                    "Result compare FAIL: case_id=%0d test_kind=%0d mismatch_count=%0d first_idx=%0d first_row=%0d first_col=%0d exp=%0d act=%0d",
+                    item.case_id,
+                    item.test_kind,
+                    item.mismatch_count,
+                    item.first_mismatch_idx,
+                    item.first_mismatch_row,
+                    item.first_mismatch_col,
+                    item.first_expected,
+                    item.first_actual
                 ))
         end
+
+        result_q.push_back(item);
+        try_match_jobs();
     endfunction
 
     // ------------------------------------------------------------
-    // Utility helpers
+    // Common expect helpers
     // ------------------------------------------------------------
-    function void expect_base_map(
+    function void expect_base_map_item(
+        ai_accel_subsys_seq_item item,
         bit [31:0] a_exp,
         bit [31:0] b_exp,
         bit [31:0] c_exp,
         string profile_name
     );
-        if (last_seen_item.base_addr_a !== a_exp) begin
+        if (item.base_addr_a !== a_exp) begin
             `uvm_error("SB/BASE_A",
                 $sformatf("[%s] base_addr_a mismatch: got=0x%08h exp=0x%08h",
-                    profile_name, last_seen_item.base_addr_a, a_exp))
+                    profile_name, item.base_addr_a, a_exp))
         end
 
-        if (last_seen_item.base_addr_b !== b_exp) begin
+        if (item.base_addr_b !== b_exp) begin
             `uvm_error("SB/BASE_B",
                 $sformatf("[%s] base_addr_b mismatch: got=0x%08h exp=0x%08h",
-                    profile_name, last_seen_item.base_addr_b, b_exp))
+                    profile_name, item.base_addr_b, b_exp))
         end
 
-        if (last_seen_item.base_addr_c !== c_exp) begin
+        if (item.base_addr_c !== c_exp) begin
             `uvm_error("SB/BASE_C",
                 $sformatf("[%s] base_addr_c mismatch: got=0x%08h exp=0x%08h",
-                    profile_name, last_seen_item.base_addr_c, c_exp))
+                    profile_name, item.base_addr_c, c_exp))
         end
     endfunction
 
-    function void expect_dims(
+    function void expect_dims_item(
+        ai_accel_subsys_seq_item item,
         int unsigned m_exp,
         int unsigned n_exp,
         int unsigned k_exp,
         string profile_name
     );
-        if (last_seen_item.dim_m !== m_exp) begin
+        if (item.dim_m !== m_exp) begin
             `uvm_error("SB/DIM_M",
                 $sformatf("[%s] dim_m mismatch: got=%0d exp=%0d",
-                    profile_name, last_seen_item.dim_m, m_exp))
+                    profile_name, item.dim_m, m_exp))
         end
 
-        if (last_seen_item.dim_n !== n_exp) begin
+        if (item.dim_n !== n_exp) begin
             `uvm_error("SB/DIM_N",
                 $sformatf("[%s] dim_n mismatch: got=%0d exp=%0d",
-                    profile_name, last_seen_item.dim_n, n_exp))
+                    profile_name, item.dim_n, n_exp))
         end
 
-        if (last_seen_item.dim_k !== k_exp) begin
+        if (item.dim_k !== k_exp) begin
             `uvm_error("SB/DIM_K",
                 $sformatf("[%s] dim_k mismatch: got=%0d exp=%0d",
-                    profile_name, last_seen_item.dim_k, k_exp))
+                    profile_name, item.dim_k, k_exp))
         end
     endfunction
 
     // ------------------------------------------------------------
     // Fixed-baseline checks
     // ------------------------------------------------------------
-    function void check_fixed_baseline_case(int unsigned case_id);
+    function void check_fixed_baseline_case(
+        ai_accel_subsys_seq_item item,
+        int unsigned case_id
+    );
         case (case_id)
             0, 1, 2, 3, 4, 5, 6, 7: begin
-                expect_base_map(BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT,
-                                $sformatf("fixed_case_%0d", case_id));
-                expect_dims(4, 4, 4, $sformatf("fixed_case_%0d", case_id));
+                expect_base_map_item(item, BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT,
+                                     $sformatf("fixed_case_%0d", case_id));
+                expect_dims_item(item, 4, 4, 4, $sformatf("fixed_case_%0d", case_id));
+
+                ctrl_profile_pass_count++;
 
                 `uvm_info("SB",
                     $sformatf("Matched fixed-baseline case %0d", case_id),
@@ -225,23 +353,28 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     // ------------------------------------------------------------
     // Variable-dimension checks
     // ------------------------------------------------------------
-    function void check_variable_dim_case(int unsigned case_id);
-        expect_base_map(BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT,
-                        $sformatf("var_case_%0d", case_id));
+    function void check_variable_dim_case(
+        ai_accel_subsys_seq_item item,
+        int unsigned case_id
+    );
+        expect_base_map_item(item, BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT,
+                             $sformatf("var_case_%0d", case_id));
 
         case (case_id)
-            100: expect_dims(1, 1, 1, "var100");
-            101: expect_dims(2, 2, 2, "var101");
-            102: expect_dims(4, 4, 1, "var102");
-            103: expect_dims(1, 4, 4, "var103");
-            104: expect_dims(4, 1, 4, "var104");
-            105: expect_dims(2, 3, 4, "var105");
+            100: expect_dims_item(item, 1, 1, 1, "var100");
+            101: expect_dims_item(item, 2, 2, 2, "var101");
+            102: expect_dims_item(item, 4, 4, 1, "var102");
+            103: expect_dims_item(item, 1, 4, 4, "var103");
+            104: expect_dims_item(item, 4, 1, 4, "var104");
+            105: expect_dims_item(item, 2, 3, 4, "var105");
             default: begin
                 `uvm_error("SB/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))
                 return;
             end
         endcase
+
+        ctrl_profile_pass_count++;
 
         `uvm_info("SB",
             $sformatf("Matched variable-dimension case %0d", case_id),
@@ -251,20 +384,25 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     // ------------------------------------------------------------
     // Configurable-base checks
     // ------------------------------------------------------------
-    function void check_configurable_base_case(int unsigned case_id);
-        expect_dims(4, 4, 4, $sformatf("cfg_case_%0d", case_id));
+    function void check_configurable_base_case(
+        ai_accel_subsys_seq_item item,
+        int unsigned case_id
+    );
+        expect_dims_item(item, 4, 4, 4, $sformatf("cfg_case_%0d", case_id));
 
         case (case_id)
-            400: expect_base_map(BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT, "cfg400");
-            401: expect_base_map(CFG401_BASE_A, CFG401_BASE_B, CFG401_BASE_C, "cfg401");
-            402: expect_base_map(CFG402_BASE_A, CFG402_BASE_B, CFG402_BASE_C, "cfg402");
-            403: expect_base_map(CFG403_BASE_A, CFG403_BASE_B, CFG403_BASE_C, "cfg403");
+            400: expect_base_map_item(item, BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT, "cfg400");
+            401: expect_base_map_item(item, CFG401_BASE_A, CFG401_BASE_B, CFG401_BASE_C, "cfg401");
+            402: expect_base_map_item(item, CFG402_BASE_A, CFG402_BASE_B, CFG402_BASE_C, "cfg402");
+            403: expect_base_map_item(item, CFG403_BASE_A, CFG403_BASE_B, CFG403_BASE_C, "cfg403");
             default: begin
                 `uvm_error("SB/CFG_BAD_CASE",
                     $sformatf("Unsupported configurable-base case_id=%0d", case_id))
                 return;
             end
         endcase
+
+        ctrl_profile_pass_count++;
 
         `uvm_info("SB",
             $sformatf("Matched configurable-base case %0d", case_id),
@@ -273,77 +411,161 @@ class ai_accel_subsys_scoreboard extends uvm_component;
 
     // ------------------------------------------------------------
     // Top-level control-profile check
+    //
+    // Only DONE-side ctrl items should reach here.
     // ------------------------------------------------------------
-    function void check_selected_profile();
-        if (last_seen_item == null) begin
-            `uvm_error("SB/NOLAST", "last_seen_item is null, cannot check selected profile")
+    function void check_ctrl_item_profile(ai_accel_subsys_seq_item item);
+        if (item == null) begin
+            `uvm_error("SB/NOCTRL", "ctrl item is null, cannot check selected profile")
             return;
         end
 
-        case (last_seen_item.test_kind)
+        case (item.test_kind)
             ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE:
-                check_fixed_baseline_case(last_seen_item.case_id);
+                check_fixed_baseline_case(item, item.case_id);
 
             ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE:
-                check_variable_dim_case(last_seen_item.case_id);
+                check_variable_dim_case(item, item.case_id);
 
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
-                check_configurable_base_case(last_seen_item.case_id);
+                check_configurable_base_case(item, item.case_id);
 
             default:
                 `uvm_error("SB/BAD_KIND",
                     $sformatf("Unsupported test_kind=%0d for case_id=%0d",
-                        last_seen_item.test_kind, last_seen_item.case_id))
+                        item.test_kind, item.case_id))
         endcase
     endfunction
 
     // ------------------------------------------------------------
     // Helper: check done / latency consistency
+    //
+    // Only DONE-side ctrl items should reach here.
     // ------------------------------------------------------------
-    function void check_done_latency();
+    function void check_ctrl_item_done_latency(ai_accel_subsys_seq_item item);
         int unsigned exp_latency;
     begin
-        if (last_seen_item == null) begin
-            `uvm_error("SB/NOLAST", "last_seen_item is null, cannot check done/latency")
+        if (item == null) begin
+            `uvm_error("SB/NOCTRL", "ctrl item is null, cannot check done/latency")
             return;
         end
 
-        if (!last_seen_item.done_seen) begin
-            `uvm_error("SB/NODONE", "Scoreboard transaction indicates done_seen=0")
+        if (!item.done_seen) begin
+            `uvm_error("SB/NODONE", "Scoreboard DONE-side transaction indicates done_seen=0")
             return;
         end
 
-        if (last_seen_item.done_cycle < last_seen_item.start_cycle) begin
+        if (item.done_cycle < item.start_cycle) begin
             `uvm_error("SB/CYCLE_ORDER",
                 $sformatf("done_cycle < start_cycle: start=%0d done=%0d",
-                    last_seen_item.start_cycle, last_seen_item.done_cycle))
+                    item.start_cycle, item.done_cycle))
         end
 
-        exp_latency = last_seen_item.done_cycle - last_seen_item.start_cycle;
+        exp_latency = item.done_cycle - item.start_cycle;
 
-        if (last_seen_item.latency_cycles !== exp_latency) begin
+        if (item.latency_cycles !== exp_latency) begin
             `uvm_error("SB/LATENCY_MISMATCH",
                 $sformatf("latency mismatch: got=%0d exp=%0d (start=%0d done=%0d)",
-                    last_seen_item.latency_cycles, exp_latency,
-                    last_seen_item.start_cycle, last_seen_item.done_cycle))
+                    item.latency_cycles, exp_latency,
+                    item.start_cycle, item.done_cycle))
         end
 
-        if (last_seen_item.latency_cycles < MIN_VALID_LATENCY) begin
+        if (item.latency_cycles < MIN_VALID_LATENCY) begin
             `uvm_error("SB/LATENCY_TOO_SMALL",
-                $sformatf("latency too small: %0d", last_seen_item.latency_cycles))
+                $sformatf("latency too small: %0d", item.latency_cycles))
         end
 
-        if (last_seen_item.latency_cycles > MAX_VALID_LATENCY) begin
+        if (item.latency_cycles > MAX_VALID_LATENCY) begin
             `uvm_error("SB/LATENCY_TOO_LARGE",
-                $sformatf("latency too large: %0d", last_seen_item.latency_cycles))
+                $sformatf("latency too large: %0d", item.latency_cycles))
         end
+
+        ctrl_latency_pass_count++;
 
         `uvm_info("SB",
-            $sformatf("Latency check passed: start=%0d done=%0d latency=%0d cycles",
-                last_seen_item.start_cycle,
-                last_seen_item.done_cycle,
-                last_seen_item.latency_cycles),
+            $sformatf("Latency check passed: case_id=%0d start=%0d done=%0d latency=%0d cycles",
+                item.case_id, item.start_cycle, item.done_cycle, item.latency_cycles),
             UVM_LOW)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Pairing check between ctrl/result
+    // ------------------------------------------------------------
+    function void check_ctrl_result_alignment(
+        ai_accel_subsys_seq_item ctrl_item,
+        ai_accel_subsys_result_item result_item
+    );
+        if (ctrl_item.case_id !== result_item.case_id) begin
+            `uvm_error("SB/PAIR_CASE_ID",
+                $sformatf("ctrl/result case_id mismatch: ctrl=%0d result=%0d",
+                    ctrl_item.case_id, result_item.case_id))
+        end
+
+        if (ctrl_item.test_kind !== result_item.test_kind) begin
+            `uvm_error("SB/PAIR_KIND",
+                $sformatf("ctrl/result test_kind mismatch: ctrl=%0d result=%0d",
+                    ctrl_item.test_kind, result_item.test_kind))
+        end
+
+        if (ctrl_item.base_addr_a !== result_item.base_addr_a) begin
+            `uvm_error("SB/PAIR_BASE_A",
+                $sformatf("ctrl/result base_addr_a mismatch: ctrl=0x%08h result=0x%08h",
+                    ctrl_item.base_addr_a, result_item.base_addr_a))
+        end
+
+        if (ctrl_item.base_addr_b !== result_item.base_addr_b) begin
+            `uvm_error("SB/PAIR_BASE_B",
+                $sformatf("ctrl/result base_addr_b mismatch: ctrl=0x%08h result=0x%08h",
+                    ctrl_item.base_addr_b, result_item.base_addr_b))
+        end
+
+        if (ctrl_item.base_addr_c !== result_item.base_addr_c) begin
+            `uvm_error("SB/PAIR_BASE_C",
+                $sformatf("ctrl/result base_addr_c mismatch: ctrl=0x%08h result=0x%08h",
+                    ctrl_item.base_addr_c, result_item.base_addr_c))
+        end
+
+        if (ctrl_item.dim_m !== result_item.dim_m) begin
+            `uvm_error("SB/PAIR_DIM_M",
+                $sformatf("ctrl/result dim_m mismatch: ctrl=%0d result=%0d",
+                    ctrl_item.dim_m, result_item.dim_m))
+        end
+
+        if (ctrl_item.dim_n !== result_item.dim_n) begin
+            `uvm_error("SB/PAIR_DIM_N",
+                $sformatf("ctrl/result dim_n mismatch: ctrl=%0d result=%0d",
+                    ctrl_item.dim_n, result_item.dim_n))
+        end
+
+        if (ctrl_item.dim_k !== result_item.dim_k) begin
+            `uvm_error("SB/PAIR_DIM_K",
+                $sformatf("ctrl/result dim_k mismatch: ctrl=%0d result=%0d",
+                    ctrl_item.dim_k, result_item.dim_k))
+        end
+
+        ctrl_result_pair_pass_count++;
+
+        `uvm_info("SB",
+            $sformatf("Paired ctrl/result job #%0d: case_id=%0d test_kind=%0d",
+                matched_job_count + 1, ctrl_item.case_id, ctrl_item.test_kind),
+            UVM_LOW)
+    endfunction
+
+    // ------------------------------------------------------------
+    // Try to pair queued DONE-side ctrl items with result items
+    // ------------------------------------------------------------
+    function void try_match_jobs();
+        ai_accel_subsys_seq_item    ctrl_item;
+        ai_accel_subsys_result_item result_item;
+    begin
+        while ((ctrl_q.size() > 0) && (result_q.size() > 0)) begin
+            ctrl_item   = ctrl_q.pop_front();
+            result_item = result_q.pop_front();
+
+            check_ctrl_result_alignment(ctrl_item, result_item);
+            matched_job_count++;
+        end
     end
     endfunction
 
@@ -371,6 +593,45 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     endfunction
 
     // ------------------------------------------------------------
+    // Pairing summary check
+    // ------------------------------------------------------------
+    function void check_pairing_summary();
+        if (ctrl_q.size() != 0) begin
+            `uvm_error("SB/CTRL_Q_NOT_EMPTY",
+                $sformatf("Unpaired DONE-side ctrl items remain in queue: %0d", ctrl_q.size()))
+        end
+
+        if (result_q.size() != 0) begin
+            `uvm_error("SB/RESULT_Q_NOT_EMPTY",
+                $sformatf("Unpaired result items remain in queue: %0d", result_q.size()))
+        end
+
+        if (result_check_enable) begin
+            if (observed_done_count != observed_result_count) begin
+                `uvm_error("SB/CTRL_RESULT_COUNT",
+                    $sformatf("DONE/result count mismatch: done=%0d result=%0d",
+                        observed_done_count, observed_result_count))
+            end
+        end
+
+        if (result_check_enable) begin
+            if (matched_job_count != observed_done_count) begin
+                `uvm_error("SB/MATCH_COUNT",
+                    $sformatf("matched job count mismatch: matched=%0d done=%0d",
+                        matched_job_count, observed_done_count))
+            end
+        end
+
+        `uvm_info("SB",
+            $sformatf("Pairing summary: matched=%0d ctrl_profile_pass=%0d ctrl_latency_pass=%0d ctrl_result_pair_pass=%0d",
+                matched_job_count,
+                ctrl_profile_pass_count,
+                ctrl_latency_pass_count,
+                ctrl_result_pair_pass_count),
+            UVM_LOW)
+    endfunction
+
+    // ------------------------------------------------------------
     // Report phase
     // ------------------------------------------------------------
     function void report_phase(uvm_phase phase);
@@ -386,21 +647,14 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             return;
         end
 
-        if (observed_start_count != 1) begin
-            `uvm_error("SB/COUNT",
-                $sformatf("Expected exactly 1 start event, but observed %0d",
-                    observed_start_count))
-        end
-
-        if (observed_done_count != 1) begin
+        if (observed_done_count != observed_start_count) begin
             `uvm_error("SB/DONE_COUNT",
-                $sformatf("Expected exactly 1 completed event, but observed %0d",
-                    observed_done_count))
+                $sformatf("Expected completed count to match start count, but start=%0d completed=%0d",
+                    observed_start_count, observed_done_count))
         end
 
-        check_selected_profile();
-        check_done_latency();
         check_result_summary();
+        check_pairing_summary();
     endfunction
 
 endclass

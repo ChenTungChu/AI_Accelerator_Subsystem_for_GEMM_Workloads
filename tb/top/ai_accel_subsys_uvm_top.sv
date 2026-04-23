@@ -34,8 +34,14 @@ module ai_accel_subsys_uvm_top;
     // Clocks / resets
     // ============================================================
     logic dma_clk;
-    logic dma_rst_n;
     logic core_clk;
+
+    // POR resets
+    logic dma_rst_n_por;
+    logic core_rst_n_por;
+
+    // Final resets feeding DUT / interfaces
+    logic dma_rst_n;
     logic core_rst_n;
 
     // ============================================================
@@ -66,6 +72,17 @@ module ai_accel_subsys_uvm_top;
     ) ctrl_if (
         .clk (dma_clk)
     );
+
+    // ============================================================
+    // Final reset mux
+    // ============================================================
+    assign dma_rst_n  = (ctrl_if.tb_reset_override_en) ?
+                        ctrl_if.tb_dma_rst_n_override  :
+                        dma_rst_n_por;
+
+    assign core_rst_n = (ctrl_if.tb_reset_override_en) ?
+                        ctrl_if.tb_core_rst_n_override :
+                        core_rst_n_por;
 
     // ============================================================
     // DUT
@@ -131,17 +148,17 @@ module ai_accel_subsys_uvm_top;
     end
 
     // ============================================================
-    // Reset generation
+    // POR reset generation
     // ============================================================
     initial begin
-        dma_rst_n  = 1'b0;
-        core_rst_n = 1'b0;
+        dma_rst_n_por  = 1'b0;
+        core_rst_n_por = 1'b0;
 
         repeat (5) @(posedge dma_clk);
-        dma_rst_n = 1'b1;
+        dma_rst_n_por = 1'b1;
 
         repeat (5) @(posedge core_clk);
-        core_rst_n = 1'b1;
+        core_rst_n_por = 1'b1;
     end
 
     // ============================================================
@@ -156,6 +173,11 @@ module ai_accel_subsys_uvm_top;
         ctrl_if.dim_m       = '0;
         ctrl_if.dim_n       = '0;
         ctrl_if.dim_k       = '0;
+
+        // reset override defaults
+        ctrl_if.tb_reset_override_en  = 1'b0;
+        ctrl_if.tb_dma_rst_n_override = 1'b1;
+        ctrl_if.tb_core_rst_n_override= 1'b1;
 
         // axi0_if idle defaults
         axi0_if.awid    = '0;

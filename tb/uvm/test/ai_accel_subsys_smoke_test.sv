@@ -2,6 +2,25 @@
 `ifndef AI_ACCEL_SUBSYS_SMOKE_TEST_SV
 `define AI_ACCEL_SUBSYS_SMOKE_TEST_SV
 
+// ------------------------------------------------------------
+// Smoke test
+//
+// This is the base single-job subsystem test.
+//
+// Main responsibilities:
+//   - decode CASE_ID into one supported test profile
+//   - prepare expected data and pre-start memory setup
+//   - launch the subsystem control sequence
+//   - collect post-done data and publish compare payload
+//
+// Memory path policy:
+//   - default path  = host agent
+//   - fallback path = helper
+//
+// Helper remains available for fallback / debug, but is no
+// longer the primary path.
+// ------------------------------------------------------------
+
 class ai_accel_subsys_smoke_test extends uvm_test;
     `uvm_component_utils(ai_accel_subsys_smoke_test)
 
@@ -42,9 +61,23 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     ai_accel_subsys_seq_item::test_kind_e selected_test_kind;
 
     // ------------------------------------------------------------
-    // Result-check control
+    // Result check / memory path policy
+    //
+    // Policy B:
+    //   - ENABLE_RESULT_CHECK=1
+    //       -> default memory path uses host agent
+    //   - FORCE_HELPER_MEM_PATH=1
+    //       -> force helper fallback path
+    //
+    // Legacy per-path knobs are still kept for path-level debug,
+    // but they are not the normal way to run the test.
     // ------------------------------------------------------------
     bit enable_result_check;
+    bit force_helper_mem_path;
+
+    bit use_host_agent_clear_c;
+    bit use_host_agent_readback_c;
+    bit use_host_agent_preload_ab;
 
     // ------------------------------------------------------------
     // Constructor
@@ -92,9 +125,11 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     endfunction
 
     // ------------------------------------------------------------
-    // Parse optional result-check enable
-    //   usage:
-    //     +ENABLE_RESULT_CHECK=1
+    // Parse result-check enable
+    //
+    // When enabled, smoke_test prepares expected data, performs
+    // post-done readback, and publishes compare payload to the
+    // scoreboard.
     // ------------------------------------------------------------
     function void parse_result_check_enable();
         int unsigned tmp;
@@ -107,6 +142,183 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
         `uvm_info("SMOKE_TEST",
             $sformatf("enable_result_check=%0d", enable_result_check),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Parse helper-fallback force knob
+    //
+    // Default:
+    //   result check enabled -> host-agent memory path
+    //
+    // Override:
+    //   FORCE_HELPER_MEM_PATH=1 -> helper fallback path
+    // ------------------------------------------------------------
+    function void parse_force_helper_mem_path_enable();
+        int unsigned tmp;
+    begin
+        force_helper_mem_path = 1'b0;
+
+        if ($value$plusargs("FORCE_HELPER_MEM_PATH=%d", tmp)) begin
+            force_helper_mem_path = (tmp != 0);
+        end
+
+        if (force_helper_mem_path && !enable_result_check) begin
+            `uvm_warning("SMOKE_TEST/FORCE_HELPER_UNUSED",
+                "FORCE_HELPER_MEM_PATH=1 but enable_result_check=0, so memory-path policy is not exercised")
+        end
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("force_helper_mem_path=%0d", force_helper_mem_path),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Default policy for one mem path
+    // ------------------------------------------------------------
+    function bit default_use_host_agent_mem_path();
+    begin
+        if (!enable_result_check)
+            return 1'b0;
+
+        if (force_helper_mem_path)
+            return 1'b0;
+
+        return 1'b1;
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Helper: any mem path currently uses host agent
+    // ------------------------------------------------------------
+    function bit any_host_agent_mem_path_enabled();
+    begin
+        return (use_host_agent_clear_c ||
+                use_host_agent_readback_c ||
+                use_host_agent_preload_ab);
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Parse optional clear-C path override
+    //
+    // Default comes from Policy B.
+    // USE_HOST_AGENT_CLEAR_C is kept only for path-level debug.
+    // ------------------------------------------------------------
+    function void parse_host_agent_clear_c_enable();
+        int unsigned tmp;
+        int unsigned force_tmp;
+        bit          explicit_override;
+    begin
+        explicit_override = 1'b0;
+
+        // Defensive re-parse so subclasses that do not explicitly call
+        // parse_force_helper_mem_path_enable() still inherit Policy B.
+        if ($value$plusargs("FORCE_HELPER_MEM_PATH=%d", force_tmp)) begin
+            force_helper_mem_path = (force_tmp != 0);
+        end
+
+        use_host_agent_clear_c = default_use_host_agent_mem_path();
+
+        if ($value$plusargs("USE_HOST_AGENT_CLEAR_C=%d", tmp)) begin
+            use_host_agent_clear_c = (tmp != 0);
+            explicit_override      = 1'b1;
+        end
+
+        if (explicit_override && force_helper_mem_path) begin
+            `uvm_warning("SMOKE_TEST/CLEAR_POLICY_MIXED",
+                "FORCE_HELPER_MEM_PATH=1 together with USE_HOST_AGENT_CLEAR_C override; explicit per-path override takes precedence")
+        end
+
+        if (use_host_agent_clear_c && !enable_result_check) begin
+            `uvm_warning("SMOKE_TEST/HOST_CLEAR_UNUSED",
+                "USE_HOST_AGENT_CLEAR_C resolves to 1 but enable_result_check=0, so clear-C path will not be exercised")
+        end
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("use_host_agent_clear_c=%0d", use_host_agent_clear_c),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Parse optional readback-C path override
+    //
+    // Default comes from Policy B.
+    // USE_HOST_AGENT_READBACK_C is kept only for path-level debug.
+    // ------------------------------------------------------------
+    function void parse_host_agent_readback_c_enable();
+        int unsigned tmp;
+        int unsigned force_tmp;
+        bit          explicit_override;
+    begin
+        explicit_override = 1'b0;
+
+        if ($value$plusargs("FORCE_HELPER_MEM_PATH=%d", force_tmp)) begin
+            force_helper_mem_path = (force_tmp != 0);
+        end
+
+        use_host_agent_readback_c = default_use_host_agent_mem_path();
+
+        if ($value$plusargs("USE_HOST_AGENT_READBACK_C=%d", tmp)) begin
+            use_host_agent_readback_c = (tmp != 0);
+            explicit_override         = 1'b1;
+        end
+
+        if (explicit_override && force_helper_mem_path) begin
+            `uvm_warning("SMOKE_TEST/READBACK_POLICY_MIXED",
+                "FORCE_HELPER_MEM_PATH=1 together with USE_HOST_AGENT_READBACK_C override; explicit per-path override takes precedence")
+        end
+
+        if (use_host_agent_readback_c && !enable_result_check) begin
+            `uvm_warning("SMOKE_TEST/HOST_READBACK_UNUSED",
+                "USE_HOST_AGENT_READBACK_C resolves to 1 but enable_result_check=0, so readback-C path will not be exercised")
+        end
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("use_host_agent_readback_c=%0d", use_host_agent_readback_c),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Parse optional preload-A/B path override
+    //
+    // Default comes from Policy B.
+    // USE_HOST_AGENT_PRELOAD_AB is kept only for path-level debug.
+    // ------------------------------------------------------------
+    function void parse_host_agent_preload_ab_enable();
+        int unsigned tmp;
+        int unsigned force_tmp;
+        bit          explicit_override;
+    begin
+        explicit_override = 1'b0;
+
+        if ($value$plusargs("FORCE_HELPER_MEM_PATH=%d", force_tmp)) begin
+            force_helper_mem_path = (force_tmp != 0);
+        end
+
+        use_host_agent_preload_ab = default_use_host_agent_mem_path();
+
+        if ($value$plusargs("USE_HOST_AGENT_PRELOAD_AB=%d", tmp)) begin
+            use_host_agent_preload_ab = (tmp != 0);
+            explicit_override         = 1'b1;
+        end
+
+        if (explicit_override && force_helper_mem_path) begin
+            `uvm_warning("SMOKE_TEST/PRELOAD_POLICY_MIXED",
+                "FORCE_HELPER_MEM_PATH=1 together with USE_HOST_AGENT_PRELOAD_AB override; explicit per-path override takes precedence")
+        end
+
+        if (use_host_agent_preload_ab && !enable_result_check) begin
+            `uvm_warning("SMOKE_TEST/HOST_PRELOAD_UNUSED",
+                "USE_HOST_AGENT_PRELOAD_AB resolves to 1 but enable_result_check=0, so preload-A/B path will not be exercised")
+        end
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("use_host_agent_preload_ab=%0d", use_host_agent_preload_ab),
             UVM_MEDIUM)
     end
     endfunction
@@ -137,6 +349,30 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         endcase
 
         return item;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Helper: current path names
+    // ------------------------------------------------------------
+    function string get_clear_c_path_name();
+        if (use_host_agent_clear_c)
+            return "host_agent";
+        else
+            return "helper";
+    endfunction
+
+    function string get_readback_c_path_name();
+        if (use_host_agent_readback_c)
+            return "host_agent";
+        else
+            return "helper";
+    endfunction
+
+    function string get_preload_ab_path_name();
+        if (use_host_agent_preload_ab)
+            return "host_agent";
+        else
+            return "helper";
     endfunction
 
     // ------------------------------------------------------------
@@ -185,12 +421,298 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     endtask
 
     // ------------------------------------------------------------
-    // Prepare fixed-baseline case:
-    //   - build canonical profile
-    //   - build A/B flat vectors
-    //   - build expected_c
-    //   - clear C region
-    //   - preload A/B
+    // Clear C region before acc_start
+    //
+    // Route:
+    //   - host agent in default mode
+    //   - helper in fallback mode
+    // ------------------------------------------------------------
+    task automatic clear_c_region_pre_start(
+        input ai_accel_subsys_seq_item profile_item,
+        input int unsigned             c_elems
+    );
+        axi_mm_host_seq      host_seq;
+        axi_mm_host_seq_item rsp_item;
+    begin
+        if (!use_host_agent_clear_c) begin
+            axi_host_helper.clear_u32_region(profile_item.base_addr_c, c_elems);
+            return;
+        end
+
+        if (env == null) begin
+            `uvm_fatal("SMOKE_TEST/NOENV",
+                "env is null in clear_c_region_pre_start()")
+        end
+
+        if (env.host_agent == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTAGENT",
+                "env.host_agent is null in clear_c_region_pre_start()")
+        end
+
+        if (env.host_agent.sequencer == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTSEQ",
+                "env.host_agent.sequencer is null; host-agent path is selected for clear-C")
+        end
+
+        host_seq = axi_mm_host_seq::type_id::create("host_clear_c_seq");
+
+        host_seq.set_enable_log(1'b1);
+        host_seq.set_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        host_seq.queue_clear_c(profile_item.base_addr_c, c_elems);
+
+        env.set_host_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Clearing C via host_agent: case_id=%0d test_kind=%0d addr=0x%08h words=%0d",
+                profile_item.case_id,
+                profile_item.test_kind,
+                profile_item.base_addr_c,
+                c_elems),
+            UVM_MEDIUM)
+
+        host_seq.start(env.host_agent.sequencer);
+
+        env.clear_host_case_context();
+
+        if (host_seq.get_response_count() != 1) begin
+            `uvm_fatal("SMOKE_TEST/HOST_CLEAR_RSP_COUNT",
+                $sformatf("Expected 1 host clear-C response, got %0d",
+                    host_seq.get_response_count()))
+        end
+
+        rsp_item = host_seq.get_response_item(0);
+        if (rsp_item == null) begin
+            `uvm_fatal("SMOKE_TEST/HOST_CLEAR_NULL_RSP",
+                "Host clear-C response item is null")
+        end
+
+        if (!rsp_item.response_valid) begin
+            `uvm_fatal("SMOKE_TEST/HOST_CLEAR_BAD_RSP",
+                "Host clear-C response_valid=0")
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Preload A/B before acc_start
+    //
+    // Route:
+    //   - host agent in default mode
+    //   - helper in fallback mode
+    // ------------------------------------------------------------
+    task automatic preload_ab_pre_start(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[]
+    );
+        axi_mm_host_seq      host_seq;
+        axi_mm_host_seq_item rsp_item;
+    begin
+        if (!use_host_agent_preload_ab) begin
+            axi_host_helper.preload_u8_vector(profile_item.base_addr_a, a_flat);
+            axi_host_helper.preload_u8_vector(profile_item.base_addr_b, b_flat);
+            return;
+        end
+
+        if (env == null) begin
+            `uvm_fatal("SMOKE_TEST/NOENV",
+                "env is null in preload_ab_pre_start()")
+        end
+
+        if (env.host_agent == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTAGENT",
+                "env.host_agent is null in preload_ab_pre_start()")
+        end
+
+        if (env.host_agent.sequencer == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTSEQ",
+                "env.host_agent.sequencer is null; host-agent path is selected for preload-A/B")
+        end
+
+        host_seq = axi_mm_host_seq::type_id::create("host_preload_ab_seq");
+
+        host_seq.set_enable_log(1'b1);
+        host_seq.set_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        host_seq.queue_preload_a(profile_item.base_addr_a, a_flat);
+        host_seq.queue_preload_b(profile_item.base_addr_b, b_flat);
+
+        env.set_host_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Preloading A/B via host_agent: case_id=%0d test_kind=%0d base_a=0x%08h base_b=0x%08h a_bytes=%0d b_bytes=%0d",
+                profile_item.case_id,
+                profile_item.test_kind,
+                profile_item.base_addr_a,
+                profile_item.base_addr_b,
+                a_flat.size(),
+                b_flat.size()),
+            UVM_MEDIUM)
+
+        host_seq.start(env.host_agent.sequencer);
+
+        env.clear_host_case_context();
+
+        if (host_seq.get_response_count() != 2) begin
+            `uvm_fatal("SMOKE_TEST/HOST_PRELOAD_RSP_COUNT",
+                $sformatf("Expected 2 host preload responses, got %0d",
+                    host_seq.get_response_count()))
+        end
+
+        rsp_item = host_seq.get_response_item(0);
+        if (rsp_item == null) begin
+            `uvm_fatal("SMOKE_TEST/HOST_PRELOAD_NULL_RSP0",
+                "Host preload response[0] is null")
+        end
+        if (!rsp_item.response_valid) begin
+            `uvm_fatal("SMOKE_TEST/HOST_PRELOAD_BAD_RSP0",
+                "Host preload response[0] response_valid=0")
+        end
+
+        rsp_item = host_seq.get_response_item(1);
+        if (rsp_item == null) begin
+            `uvm_fatal("SMOKE_TEST/HOST_PRELOAD_NULL_RSP1",
+                "Host preload response[1] is null")
+        end
+        if (!rsp_item.response_valid) begin
+            `uvm_fatal("SMOKE_TEST/HOST_PRELOAD_BAD_RSP1",
+                "Host preload response[1] response_valid=0")
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Read back C region after acc_done
+    //
+    // Route:
+    //   - host agent in default mode
+    //   - helper in fallback mode
+    // ------------------------------------------------------------
+    task automatic readback_c_region_post_done(
+        input  ai_accel_subsys_seq_item profile_item,
+        input  int unsigned             c_elems,
+        output int signed               actual_c[],
+        output bit                      have_actual_payload
+    );
+        axi_mm_host_seq      host_seq;
+        axi_mm_host_seq_item rsp_item;
+        int unsigned         i;
+    begin
+        have_actual_payload = 1'b0;
+
+        repeat (5) @(posedge axi0_vif.clk);
+
+        if (!use_host_agent_readback_c) begin
+            axi_host_helper.readback_s32_vector(
+                profile_item.base_addr_c,
+                c_elems,
+                actual_c
+            );
+            have_actual_payload = 1'b1;
+            return;
+        end
+
+        if (env == null) begin
+            `uvm_fatal("SMOKE_TEST/NOENV",
+                "env is null in readback_c_region_post_done()")
+        end
+
+        if (env.host_agent == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTAGENT",
+                "env.host_agent is null in readback_c_region_post_done()")
+        end
+
+        if (env.host_agent.sequencer == null) begin
+            `uvm_fatal("SMOKE_TEST/NOHOSTSEQ",
+                "env.host_agent.sequencer is null; host-agent path is selected for readback-C")
+        end
+
+        host_seq = axi_mm_host_seq::type_id::create("host_readback_c_seq");
+
+        host_seq.set_enable_log(1'b1);
+        host_seq.set_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        host_seq.queue_readback_c(profile_item.base_addr_c, c_elems);
+
+        env.set_host_case_context(
+            profile_item.case_id,
+            profile_item.test_kind,
+            profile_item.test_name,
+            0
+        );
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Reading back C via host_agent: case_id=%0d test_kind=%0d addr=0x%08h words=%0d",
+                profile_item.case_id,
+                profile_item.test_kind,
+                profile_item.base_addr_c,
+                c_elems),
+            UVM_MEDIUM)
+
+        host_seq.start(env.host_agent.sequencer);
+
+        env.clear_host_case_context();
+
+        if (host_seq.get_response_count() != 1) begin
+            `uvm_fatal("SMOKE_TEST/HOST_READBACK_RSP_COUNT",
+                $sformatf("Expected 1 host readback response, got %0d",
+                    host_seq.get_response_count()))
+        end
+
+        rsp_item = host_seq.get_response_item(0);
+        if (rsp_item == null) begin
+            `uvm_fatal("SMOKE_TEST/HOST_READBACK_NULL_RSP",
+                "Host readback response item is null")
+        end
+
+        if (!rsp_item.response_valid) begin
+            `uvm_fatal("SMOKE_TEST/HOST_READBACK_BAD_RSP",
+                "Host readback response_valid=0")
+        end
+
+        if (rsp_item.read_data_s32.size() != c_elems) begin
+            `uvm_fatal("SMOKE_TEST/HOST_READBACK_SIZE",
+                $sformatf("Host readback size mismatch: got=%0d exp=%0d",
+                    rsp_item.read_data_s32.size(), c_elems))
+        end
+
+        actual_c = new[c_elems];
+        for (i = 0; i < c_elems; i++) begin
+            actual_c[i] = rsp_item.read_data_s32[i];
+        end
+
+        have_actual_payload = 1'b1;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Prepare fixed-baseline case
     // ------------------------------------------------------------
     task automatic prepare_fixed_case_pre_start(
         output int signed expected_c[],
@@ -214,27 +736,21 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         c_elems = 16;
 
         `uvm_info("SMOKE_TEST",
-            $sformatf("Pre-start prep for fixed case %0d: preload A=%0d bytes B=%0d bytes, clear C=%0d words",
-                selected_case_id, a_flat.size(), b_flat.size(), c_elems),
+            $sformatf("Pre-start prep for fixed case %0d: preload A=%0d bytes B=%0d bytes via %s, clear C=%0d words via %s",
+                selected_case_id, a_flat.size(), b_flat.size(),
+                get_preload_ab_path_name(),
+                c_elems, get_clear_c_path_name()),
             UVM_MEDIUM)
 
-        axi_host_helper.clear_u32_region(profile_item.base_addr_c, c_elems);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_a, a_flat);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_b, b_flat);
+        clear_c_region_pre_start(profile_item, c_elems);
+        preload_ab_pre_start(profile_item, a_flat, b_flat);
 
         have_expected_payload = 1'b1;
     end
     endtask
 
     // ------------------------------------------------------------
-    // Prepare variable-dimension case:
-    //   - build canonical profile
-    //   - build A/B flat vectors
-    //   - build expected_c
-    //   - clear C region
-    //   - preload A/B
-    //
-    // First version only implements VARIABLE_DIM_SMOKE result path.
+    // Prepare variable-dimension case
     // ------------------------------------------------------------
     task automatic prepare_variable_case_pre_start(
         output int signed expected_c[],
@@ -258,29 +774,21 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         c_elems = profile_item.dim_m * profile_item.dim_n;
 
         `uvm_info("SMOKE_TEST",
-            $sformatf("Pre-start prep for variable case %0d: preload A=%0d bytes B=%0d bytes, clear C=%0d words",
-                selected_case_id, a_flat.size(), b_flat.size(), c_elems),
+            $sformatf("Pre-start prep for variable case %0d: preload A=%0d bytes B=%0d bytes via %s, clear C=%0d words via %s",
+                selected_case_id, a_flat.size(), b_flat.size(),
+                get_preload_ab_path_name(),
+                c_elems, get_clear_c_path_name()),
             UVM_MEDIUM)
 
-        axi_host_helper.clear_u32_region(profile_item.base_addr_c, c_elems);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_a, a_flat);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_b, b_flat);
+        clear_c_region_pre_start(profile_item, c_elems);
+        preload_ab_pre_start(profile_item, a_flat, b_flat);
 
         have_expected_payload = 1'b1;
     end
     endtask
 
     // ------------------------------------------------------------
-    // Prepare configurable-base case:
-    //   - build canonical profile
-    //   - build A/B flat vectors
-    //   - build expected_c
-    //   - clear C region
-    //   - preload A/B
-    //
-    // Payload policy:
-    //   Reuse identity(4x4) x known(4x4), but honor configurable
-    //   base_addr_a/base_addr_b/base_addr_c from profile_item.
+    // Prepare configurable-base case
     // ------------------------------------------------------------
     task automatic prepare_configurable_base_case_pre_start(
         output int signed expected_c[],
@@ -304,14 +812,15 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         c_elems = 16;
 
         `uvm_info("SMOKE_TEST",
-            $sformatf("Pre-start prep for configurable-base case %0d: preload A=%0d bytes B=%0d bytes, clear C=%0d words at A=0x%08h B=0x%08h C=0x%08h",
-                selected_case_id, a_flat.size(), b_flat.size(), c_elems,
+            $sformatf("Pre-start prep for configurable-base case %0d: preload A=%0d bytes B=%0d bytes via %s, clear C=%0d words via %s at A=0x%08h B=0x%08h C=0x%08h",
+                selected_case_id, a_flat.size(), b_flat.size(),
+                get_preload_ab_path_name(),
+                c_elems, get_clear_c_path_name(),
                 profile_item.base_addr_a, profile_item.base_addr_b, profile_item.base_addr_c),
             UVM_MEDIUM)
 
-        axi_host_helper.clear_u32_region(profile_item.base_addr_c, c_elems);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_a, a_flat);
-        axi_host_helper.preload_u8_vector(profile_item.base_addr_b, b_flat);
+        clear_c_region_pre_start(profile_item, c_elems);
+        preload_ab_pre_start(profile_item, a_flat, b_flat);
 
         have_expected_payload = 1'b1;
     end
@@ -332,16 +841,17 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         profile_item = build_selected_profile_item();
         c_elems      = 16;
 
-        // Keep same spirit as legacy flow: wait a few dma_clk cycles
-        repeat (5) @(posedge axi0_vif.clk);
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Post-done readback for fixed case %0d: C=%0d words via %s",
+                selected_case_id, c_elems, get_readback_c_path_name()),
+            UVM_MEDIUM)
 
-        axi_host_helper.readback_s32_vector(
-            profile_item.base_addr_c,
+        readback_c_region_post_done(
+            profile_item,
             c_elems,
-            actual_c
+            actual_c,
+            have_actual_payload
         );
-
-        have_actual_payload = 1'b1;
     end
     endtask
 
@@ -360,16 +870,17 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         profile_item = build_selected_profile_item();
         c_elems      = profile_item.dim_m * profile_item.dim_n;
 
-        // Keep same spirit as legacy flow: wait a few dma_clk cycles
-        repeat (5) @(posedge axi0_vif.clk);
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Post-done readback for variable case %0d: C=%0d words via %s",
+                selected_case_id, c_elems, get_readback_c_path_name()),
+            UVM_MEDIUM)
 
-        axi_host_helper.readback_s32_vector(
-            profile_item.base_addr_c,
+        readback_c_region_post_done(
+            profile_item,
             c_elems,
-            actual_c
+            actual_c,
+            have_actual_payload
         );
-
-        have_actual_payload = 1'b1;
     end
     endtask
 
@@ -388,21 +899,22 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         profile_item = build_selected_profile_item();
         c_elems      = 16;
 
-        // Keep same spirit as legacy flow: wait a few dma_clk cycles
-        repeat (5) @(posedge axi0_vif.clk);
+        `uvm_info("SMOKE_TEST",
+            $sformatf("Post-done readback for configurable-base case %0d: C=%0d words via %s",
+                selected_case_id, c_elems, get_readback_c_path_name()),
+            UVM_MEDIUM)
 
-        axi_host_helper.readback_s32_vector(
-            profile_item.base_addr_c,
+        readback_c_region_post_done(
+            profile_item,
             c_elems,
-            actual_c
+            actual_c,
+            have_actual_payload
         );
-
-        have_actual_payload = 1'b1;
     end
     endtask
 
     // ------------------------------------------------------------
-    // Dispatcher: pre-start case prep
+    // Dispatch pre-start preparation for the selected case
     // ------------------------------------------------------------
     task automatic prepare_case_result_pre_start(
         output int signed expected_c[],
@@ -434,7 +946,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     endtask
 
     // ------------------------------------------------------------
-    // Dispatcher: post-done actual readback
+    // Dispatch post-done actual-data collection for the selected case
     // ------------------------------------------------------------
     task automatic collect_case_actual_post_done(
         output int signed actual_c[],
@@ -467,6 +979,12 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Build phase
+    //
+    // Responsibilities:
+    //   - parse case selection and memory-path policy
+    //   - fetch required virtual interfaces
+    //   - pass runtime context down to env / monitor / scoreboard
+    //   - decide whether host agent should be ACTIVE or PASSIVE
     // ------------------------------------------------------------
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
@@ -477,22 +995,26 @@ class ai_accel_subsys_smoke_test extends uvm_test;
                 "virtual interface ai_accel_subsys_ctrl_if is not set for ai_accel_subsys_smoke_test")
         end
 
-        // Parse selection early so child components can get it in build_phase
         parse_test_selection();
         parse_result_check_enable();
+        parse_force_helper_mem_path_enable();
+        parse_host_agent_clear_c_enable();
+        parse_host_agent_readback_c_enable();
+        parse_host_agent_preload_ab_enable();
 
-        // When result check is enabled, smoke_test also needs AXI host vif
-        if (enable_result_check) begin
-            if (!uvm_config_db#(axi0_vif_t)::get(
-                    this, "", "axi0_vif", axi0_vif)) begin
-                `uvm_fatal("TEST/NOAXIVIF",
-                    "axi0_vif is not set for ai_accel_subsys_smoke_test")
-            end
+        if (!uvm_config_db#(axi0_vif_t)::get(
+                this, "", "axi0_vif", axi0_vif)) begin
+            `uvm_fatal("TEST/NOAXIVIF",
+                "axi0_vif is not set for ai_accel_subsys_smoke_test")
         end
 
         // Pass vif down to env
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
             this, "env", "vif", vif);
+
+        // Pass axi0_vif down to env explicitly
+        uvm_config_db#(axi0_vif_t)::set(
+            this, "env", "axi0_vif", axi0_vif);
 
         // Pass selected case context down to monitor
         uvm_config_db#(int unsigned)::set(
@@ -500,6 +1022,18 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
         uvm_config_db#(ai_accel_subsys_seq_item::test_kind_e)::set(
             this, "env.agent.monitor", "selected_test_kind", selected_test_kind);
+
+        // Policy B:
+        //   host agent is ACTIVE only when at least one memory path
+        //   is routed through host agent for this run.
+        if (enable_result_check && any_host_agent_mem_path_enabled()) begin
+            uvm_config_db#(uvm_active_passive_enum)::set(
+                this, "env", "host_is_active", UVM_ACTIVE);
+        end
+        else begin
+            uvm_config_db#(uvm_active_passive_enum)::set(
+                this, "env", "host_is_active", UVM_PASSIVE);
+        end
 
         // Pass result-check enable down to scoreboard
         uvm_config_db#(bit)::set(
@@ -510,9 +1044,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         case_helper     = ai_accel_subsys_case_helper    ::type_id::create("case_helper");
         axi_host_helper = ai_accel_subsys_axi_host_helper::type_id::create("axi_host_helper");
 
-        if (enable_result_check) begin
-            axi_host_helper.set_vif(axi0_vif);
-        end
+        axi_host_helper.set_vif(axi0_vif);
     endfunction
 
     // ------------------------------------------------------------
@@ -554,6 +1086,13 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Run phase
+    //
+    // Flow:
+    //   1. wait for reset release
+    //   2. prepare pre-start payload / memory state when enabled
+    //   3. launch subsystem control sequence
+    //   4. wait for acc_done
+    //   5. collect post-done data and publish compare payload
     // ------------------------------------------------------------
     task run_phase(uvm_phase phase);
         ai_accel_subsys_smoke_seq seq;
@@ -582,7 +1121,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
         seq = ai_accel_subsys_smoke_seq::type_id::create("seq");
 
-        // Pass selected case profile to sequence
         seq.case_id   = selected_case_id;
         seq.test_kind = selected_test_kind;
 

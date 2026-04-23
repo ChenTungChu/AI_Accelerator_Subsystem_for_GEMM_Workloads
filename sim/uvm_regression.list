@@ -1,0 +1,29 @@
+# ------------------------------------------------------------
+# Smoke test
+# ------------------------------------------------------------
+# fixed baseline
+ai_accel_subsys_smoke_test CASE_ID 5
+
+# variable-dimension
+ai_accel_subsys_smoke_test CASE_ID 100
+ai_accel_subsys_smoke_test CASE_ID 101
+ai_accel_subsys_smoke_test CASE_ID 105
+
+# configurable-base
+ai_accel_subsys_smoke_test CASE_ID 400
+ai_accel_subsys_smoke_test CASE_ID 401
+ai_accel_subsys_smoke_test CASE_ID 402
+ai_accel_subsys_smoke_test CASE_ID 403
+
+# ------------------------------------------------------------
+# Back to back test
+# ------------------------------------------------------------
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=5   +JOB1_CASE_ID=0
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=3 +JOB0_CASE_ID=5   +JOB1_CASE_ID=101 +JOB2_CASE_ID=400
+
+# ------------------------------------------------------------
+# Reset recovery test
+# ------------------------------------------------------------
+ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
+ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=400

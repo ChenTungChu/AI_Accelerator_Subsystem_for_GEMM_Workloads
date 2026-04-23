@@ -17,6 +17,13 @@ interface ai_accel_subsys_ctrl_if #(
     logic core_rst_n;
 
     // ------------------------------------------------------------
+    // Testbench reset override control
+    // ------------------------------------------------------------
+    logic tb_reset_override_en;
+    logic tb_dma_rst_n_override;
+    logic tb_core_rst_n_override;
+
+    // ------------------------------------------------------------
     // Accelerator control / status
     // ------------------------------------------------------------
     logic acc_start;
@@ -48,6 +55,10 @@ interface ai_accel_subsys_ctrl_if #(
         output dim_n;
         output dim_k;
 
+        output tb_reset_override_en;
+        output tb_dma_rst_n_override;
+        output tb_core_rst_n_override;
+
         input  dma_rst_n;
         input  core_rst_n;
 
@@ -73,6 +84,10 @@ interface ai_accel_subsys_ctrl_if #(
         input dim_m;
         input dim_n;
         input dim_k;
+
+        input tb_reset_override_en;
+        input tb_dma_rst_n_override;
+        input tb_core_rst_n_override;
     endclocking
 
     // ------------------------------------------------------------

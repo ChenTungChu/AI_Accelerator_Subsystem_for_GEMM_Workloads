@@ -1,570 +1,308 @@
-AI Accelerator Subsystem for GEMM Workloads
-
-# AI Accelerator Subsystem v1 Baseline
-## 4x4 Fixed-Dimension Directed Baseline
+# AI Accelerator Subsystem for GEMM Workloads
 
 ## Overview
 
-This baseline captures the first stable subsystem-level verification milestone for the AI Accelerator Subsystem targeting GEMM workloads.
+This project is a subsystem-level RTL and verification exercise for a GEMM-oriented AI accelerator path.
 
-At this point, the subsystem dataflow has been validated end-to-end for a fixed 4x4 configuration:
+The current subsystem focuses on a simple but practical end-to-end flow:
 
-- Host preload of matrix A and B into scratchpad
-- GEMM core reads A/B through the local-memory path
-- GEMM compute and accumulation
-- Result matrix C writeback into scratchpad
-- Host readback and compare against reference model
-
-This baseline is intended to serve as the first regression checkpoint before moving on to variable-dimension validation.
-
----
-## Current subsystem structure
-
-The validated subsystem path is:
-
-- `ai_accel_subsystem`
-- `gemm_top`
-- `gemm_scratchpad_adapter`
-- `axi_mm_dual_port_bram`
-
-The scratchpad BRAM remains the previously verified baseline model and is not modified as part of this milestone.
-
----
-
-## Fixed configuration
-
-Current directed baseline assumptions:
-
-- Matrix dimensions fixed to 4x4x4
-- Base addresses:
-  - `A = 0x0000`
-  - `B = 0x0100`
-  - `C = 0x0200`
-- A/B element width: signed 8-bit
-- Accumulator / C element width: signed 32-bit
-
----
-
-## Directed baseline test
-
-Current baseline testbench structure:
-
-- Top:
-  - `tb/top/ai_accel_subsystem_tb_top.sv`
-- Baseline include:
-  - `tb/top/4x4_fixed_dimension_baseline_test.sv`
-
-The baseline test is selected by `+CASE=<id>`.
-
-### Implemented directed cases
-
-- `CASE=0` : identity × known
-- `CASE=1` : all-ones × known
-- `CASE=2` : signed mixed
-- `CASE=3` : zero A × known
-- `CASE=4` : known × identity
-- `CASE=5` : diagonal × diagonal
-- `CASE=6` : sparse / checkerboard-like
-- `CASE=7` : larger signed magnitude (safe range)
-
----
-
-## Verification status
-
-All 8 fixed-dimension directed baseline cases pass.
-
-This gives confidence in the following areas:
-
-- Scratchpad preload/readback flow
-- A/B address generation
-- C writeback address generation
-- GEMM accumulation flow
-- Signed multiply-accumulate behavior
-- Zero / identity / diagonal / sparse / larger signed-value patterns
-
----
-
-## Notes on observability interfaces
-
-The BRAM model exposes apply/commit observation interfaces with handshake behavior.
-For this non-UVM baseline testbench, the corresponding `ready` signals are forced high in the top-level testbench so the BRAM commit engine can drain normally.
-
-This is a testbench-side integration choice only and does not modify the BRAM RTL.
-
----
-
-## Why this baseline matters
-
-This milestone confirms that the subsystem is no longer only structurally connected, but functionally operational for fixed 4x4 GEMM execution.
-
-It serves as the stable checkpoint before the next verification step:
-
-- variable-dimension smoke testing
-
----
-
-## Next step
-
-Planned next milestone:
-
-- `variable_dimension_smoke_test.sv`
-
-Initial target cases include:
-
-- 1x1x1
-- 2x2x2
-- 4x4x1
-- 1x4x4
-- 4x1x4
-
-The goal is to verify that `dim_m`, `dim_n`, and `dim_k` are truly functional and not only fixed-value placeholders.
-
-
-# AI Accelerator Subsystem v1
-## Variable-Dimension Smoke Test Milestone
-
-## Overview
-
-This milestone extends the subsystem verification beyond the original 4x4 fixed-dimension directed baseline.
-
-The main goal of this test stage is to verify that:
-
-- `dim_m`
-- `dim_n`
-- `dim_k`
-
-are functionally active and correctly affect:
-
-- GEMM loop bounds
-- A/B address generation
-- C writeback region
-
-This confirms that the current subsystem is not limited to only a fixed 4x4 execution pattern.
-
----
-
-## Test structure
-
-Current testbench organization:
-
-- Top:
-  - `tb/top/ai_accel_subsystem_tb_top.sv`
-- Fixed baseline test:
-  - `tb/top/4x4_fixed_dimension_baseline_test.sv`
-- Variable-dimension smoke test:
-  - `tb/test/variable_dimension_smoke_test.sv`
-
-The top-level testbench selects between fixed-baseline cases and variable-dimension smoke cases using `+CASE=<id>`.
-
----
-
-## Variable-dimension smoke cases
-
-Implemented smoke cases:
-
-- `CASE=100` : `1x1x1`
-- `CASE=101` : `2x2x2`
-- `CASE=102` : `4x4x1`
-- `CASE=103` : `1x4x4`
-- `CASE=104` : `4x1x4`
-- `CASE=105` : `2x3x4`
-
-These cases were chosen to cover:
-
-- minimum dimension behavior
-- small square matrix behavior
-- `K=1` edge behavior
-- single-row output
-- single-column output
-- non-square output shape
-
----
-
-## Verification intent
-
-This milestone verifies the following areas:
-
-- `dim_m`, `dim_n`, `dim_k` are functionally effective
-- loop termination depends on runtime dimensions
-- address generation follows compact row-major indexing with variable dimensions
-- only the valid output region is compared
-- subsystem control path (`start`, `busy`, `done`) remains correct under variable dimensions
-
----
-
-## Important testbench policy
-
-For the variable-dimension smoke test:
-
-- matrix storage is preloaded in compact row-major layout
-- only valid matrix regions are preloaded
-- only valid output regions are compared
-- result region `C` is cleared before each run
-
-This is a testbench-side validation policy and does not modify the BRAM RTL baseline.
-
----
-
-## Current status
-
-All variable-dimension smoke cases pass:
-
-- `CASE=100`
-- `CASE=101`
-- `CASE=102`
-- `CASE=103`
-- `CASE=104`
-- `CASE=105`
-
-This means the subsystem has now been validated at two levels:
-
-1. fixed 4x4 directed baseline
-2. variable-dimension smoke baseline
-
----
-
-## What this milestone proves
-
-At this point, the subsystem has demonstrated:
-
-- end-to-end matrix preload / compute / writeback / readback flow
-- correct behavior under fixed and variable dimensions
-- correct signed multiply-accumulate behavior
-- correct output region generation for multiple output shapes
-
-This milestone serves as the verification checkpoint before moving to repeated-run robustness testing.
-
----
-
-## Next milestone
-
-Planned next step:
-
-- `back_to_back_run_smoke_test.sv`
-
-Primary goal:
-
-- run multiple GEMM jobs in the same simulation
-- verify repeated use of `start / busy / done`
-- verify no stale state remains across consecutive runs
-- verify result clearing and re-use of the subsystem path
-
-# AI Accelerator Subsystem v1
-## Back-to-Back Run Smoke Milestone
-
-## Overview
-
-This milestone extends subsystem verification beyond single-run correctness.
-
-At this stage, the subsystem has already passed:
-
-- fixed 4x4 directed baseline tests
-- variable-dimension smoke tests
-
-The purpose of this milestone is to verify that the subsystem can be reused multiple times within the same simulation without requiring re-elaboration.
-
-This checks repeated use of:
-
-- `acc_start`
-- `acc_busy`
-- `acc_done`
-
-and verifies that no stale state remains across consecutive runs.
-
----
-
-## Test structure
-
-Current testbench organization includes:
-
-- Top:
-  - `tb/top/ai_accel_subsystem_tb_top.sv`
-- Fixed baseline test:
-  - `tb/top/4x4_fixed_dimension_baseline_test.sv`
-- Variable-dimension smoke test:
-  - `tb/test/variable_dimension_smoke_test.sv`
-- Back-to-back run smoke test:
-  - `tb/test/back_to_back_run_smoke_test.sv`
-
-The top-level testbench selects tests by `+CASE=<id>`.
-
----
-
-## Back-to-back run smoke intent
-
-This milestone verifies that:
-
-- multiple GEMM jobs can run in one simulation
-- state machines return to a reusable idle condition
-- `start / busy / done` behavior remains valid across repeated runs
-- scratchpad result clearing prevents stale result contamination
-- both fixed-dimension and variable-dimension jobs can run sequentially
-
----
-
-## Current back-to-back sequence
-
-Current smoke sequence:
-
-- `RUN 0` : fixed baseline `CASE=0`
-- `RUN 1` : fixed baseline `CASE=2`
-- `RUN 2` : variable-dimension `CASE=101`
-
-This sequence was chosen to cover:
-
-- a simple fixed baseline case
-- a signed arithmetic fixed baseline case
-- a variable-dimension case
-
-within the same simulation.
-
----
-
-## Current status
-
-The back-to-back run smoke test passes.
-
-This means the subsystem has demonstrated:
-
-- repeated GEMM job execution in one simulation
-- no stale GEMM core state across runs
-- no stale adapter transaction state across runs
-- correct result generation after multiple consecutive launches
-
----
-
-## Verification significance
-
-This milestone moves the subsystem beyond "single-run functional correctness".
-
-It provides confidence that the subsystem is reusable across multiple jobs and that the current control/dataflow implementation is stable under consecutive operation.
-
-This is an important checkpoint before reset robustness testing.
-
----
-
-## Relationship to earlier milestones
-
-At this point, the verification baseline consists of three layers:
-
-1. fixed 4x4 directed baseline
-2. variable-dimension smoke baseline
-3. back-to-back run smoke baseline
-
-Together, these establish the first practical subsystem-level verification baseline for v1.
-
----
-
-## Next milestone
-
-Planned next step:
-
-- `reset_recovery_smoke_test.sv`
-
-Primary goal:
-
-- verify reset between runs
-- verify reset recovery after completed runs
-- verify subsystem can re-enter a clean operational state after reset
-# AI Accelerator Subsystem v1 Milestone
-
-## Overview
-
-This milestone marks the completion of the first functional verification baseline for the AI Accelerator Subsystem targeting GEMM workloads.
-
-At this stage, the subsystem has been validated end-to-end through:
-
-- fixed-dimension directed baseline testing
-- variable-dimension smoke testing
-- back-to-back run smoke testing
-- reset recovery smoke testing
-
-The goal of v1 was to establish a stable, working subsystem dataflow before moving into broader configurability and UVM-based subsystem verification.
-
----
-
-## v1 scope
-
-The v1 implementation focuses on a GEMM-centered subsystem path:
-
-- host-side preload of matrix data into scratchpad memory
-- GEMM core access through a local-memory-to-AXI adapter
-- scratchpad writeback of result matrix C
+- host-side matrix preload into scratchpad memory
+- GEMM core access through a local scratchpad adapter
+- result writeback into scratchpad
 - host-side readback and comparison against a reference model
 
-The verified subsystem stack includes:
+The verified subsystem stack is:
 
 - `ai_accel_subsystem`
 - `gemm_top`
 - `gemm_scratchpad_adapter`
 - `axi_mm_dual_port_bram`
 
-The BRAM model remains the previously verified baseline and is not modified as part of this milestone.
+The BRAM model is treated as an already-established baseline and is not being reworked as part of this subsystem verification stage.
 
 ---
 
-## Current verification structure
+## Current project status
 
-Current non-UVM verification structure:
+The project is no longer at the earlier non-UVM subsystem baseline stage.
 
-- top-level testbench:
-  - `tb/top/ai_accel_subsystem_tb_top.sv`
-- fixed-dimension directed baseline:
-  - `tb/top/4x4_fixed_dimension_baseline_test.sv`
-- variable-dimension smoke test:
-  - `tb/test/variable_dimension_smoke_test.sv`
-- back-to-back run smoke test:
-  - `tb/test/back_to_back_run_smoke_test.sv`
-- reset recovery smoke test:
-  - `tb/test/reset_recovery_smoke_test.sv`
+The current verification flow is now centered on a **UVM-based subsystem environment** with:
 
-The testbench currently uses `+CASE=<id>` style selection in the top-level flow. The fixed baseline, variable-dimension cases, repeated-run flow, and reset-recovery flow are all orchestrated from the same subsystem testbench top. :contentReference[oaicite:0]{index=0} :contentReference[oaicite:1]{index=1}
+- control-path monitoring
+- result compare / pairing
+- host-side AXI memory access through a dedicated host agent
+- host traffic checking on the host memory path
 
----
+Recent UVM runs show:
 
-## Fixed-dimension directed baseline
+- `ai_accel_subsys_smoke_test` passes with control summary `start=1 completed=1`, scoreboard result pass, and host traffic checker summary `start_events=1 done_events=1 jobs_created=1 pass=1 fail=0`
+- `ai_accel_subsys_back_to_back_test` passes with control summary `start=2 completed=2`, scoreboard pairing `matched=2`, and host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0`
+- `ai_accel_subsys_reset_recovery_test` passes with control summary `start=2 completed=2`, scoreboard pairing `matched=2`, and host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
 
-The fixed-dimension baseline validates a 4x4x4 GEMM configuration with signed 8-bit A/B elements and signed 32-bit accumulation/result behavior.
-
-Implemented directed cases:
-
-- `CASE=0` : identity × known
-- `CASE=1` : all-ones × known
-- `CASE=2` : signed mixed
-- `CASE=3` : zero A × known
-- `CASE=4` : known × identity
-- `CASE=5` : diagonal × diagonal
-- `CASE=6` : sparse / checkerboard-like
-- `CASE=7` : larger signed magnitude (safe range)
-
-These cases establish the first correctness baseline for:
-
-- preload / compute / writeback / readback flow
-- signed MAC behavior
-- structured matrix patterns
-- sparse patterns
-- result stability across a range of fixed 4x4 patterns
-
-The fixed baseline testbench organization and case structure are reflected in the current top-level testbench flow. :contentReference[oaicite:2]{index=2}
+At this point, the subsystem has a working UVM sanity / regression layer for the main execution path.
 
 ---
 
-## Variable-dimension smoke baseline
+## Data model and assumptions
 
-The variable-dimension smoke test verifies that:
+Current GEMM-oriented assumptions:
 
-- `dim_m`
-- `dim_n`
-- `dim_k`
+- A / B elements are signed 8-bit
+- C / accumulator elements are signed 32-bit
+- matrix data is stored in compact row-major layout
+- result region C is read back as signed 32-bit words
 
-are functionally active and affect:
+Default base map used by the common baseline cases:
 
-- GEMM loop bounds
-- compact row-major address generation
-- valid output region sizing
+- `A = 0x0000_0000`
+- `B = 0x0000_0100`
+- `C = 0x0000_0200`
 
-Implemented variable-dimension smoke cases:
-
-- `CASE=100` : `1x1x1`
-- `CASE=101` : `2x2x2`
-- `CASE=102` : `4x4x1`
-- `CASE=103` : `1x4x4`
-- `CASE=104` : `4x1x4`
-- `CASE=105` : `2x3x4`
-
-These cases confirm that the subsystem is not limited to only a fixed 4x4 execution pattern. The current variable-dimension test structure, case IDs, and compact indexing model are captured in the dedicated smoke test file. :contentReference[oaicite:3]{index=3}
+The configurable-base smoke cases also exercise shifted but non-overlapping base maps.
 
 ---
 
-## Repeated-run robustness
+## Verification architecture
 
-Two repeated-use robustness layers have been validated.
+### 1. Control path
 
-### Back-to-back run smoke
+The subsystem control path is exercised through a UVM control agent and monitor.
 
-Multiple GEMM jobs are executed within the same simulation without re-elaboration.
+The monitor now publishes **phase-aware control events on the same control analysis path**:
 
-Current back-to-back sequence:
+- `START`
+- `DONE`
 
-- fixed baseline `CASE=0`
-- fixed baseline `CASE=2`
-- variable-dimension `CASE=101`
+This lets the environment track job boundaries without introducing a second parallel control stream.
 
-This confirms:
+### 2. Result checking
 
-- repeated use of `acc_start`
-- repeated observation of `acc_done`
-- no stale core/adapter state blocking subsequent runs
-- correct result clearing and re-use of the subsystem path
+A dedicated result bridge publishes post-run result items into the scoreboard.
 
-### Reset recovery smoke
+The scoreboard checks:
 
-The subsystem is reset between completed runs and then exercised again.
+- control profile consistency
+- latency sanity
+- ctrl/result pairing
+- result compare correctness
 
-Current reset recovery sequence:
+For the current passing UVM runs, the scoreboard summaries show clean matching counts and zero errors. :contentReference[oaicite:5]{index=5} :contentReference[oaicite:6]{index=6} :contentReference[oaicite:7]{index=7}
 
-- run fixed baseline `CASE=0`
-- apply reset
-- run fixed baseline `CASE=2`
-- apply reset
-- run variable-dimension `CASE=101`
+### 3. Host memory path
 
-This confirms that the subsystem can recover from reset and return to a clean operational state for subsequent jobs.
+Host-side memory operations are driven through a UVM AXI-MM host agent.
+
+That path is used for:
+
+- clearing C before a run
+- preloading A and B
+- reading back C after completion
+
+This replaced the earlier direct helper-style memory path as the main verification path for current UVM result-check runs.
+
+### 4. Host traffic checker
+
+The environment also includes a host traffic checker.
+
+Its current role is to verify that the observed host traffic matches the intended memory flow for each job:
+
+- A preload writes
+- B preload writes
+- C clear writes
+- C readback reads
+
+It also uses the same phase-aware control stream to enforce simple phase rules:
+
+- pre-start traffic must contain only preload / clear behavior
+- compute phase should not see host traffic
+- post-done traffic should contain only C readback
+
+The recent smoke, back-to-back, and reset-recovery UVM runs all pass with this checker enabled in strict mode. :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9} :contentReference[oaicite:10]{index=10}
 
 ---
 
-## BRAM observation interface policy
+## Implemented test coverage
 
-The BRAM model exposes apply/commit observation interfaces with handshake behavior.  
-For the current non-UVM subsystem testbench, the corresponding `ready` signals are forced high at the testbench top so the BRAM commit engine can drain normally.
+## 1. Smoke test
 
-This is strictly a testbench-side integration policy and does not modify the BRAM RTL baseline. The top-level testbench currently applies these ready-forcing connections. :contentReference[oaicite:4]{index=4}
+Main UVM test:
+- `ai_accel_subsys_smoke_test`
+
+This test currently covers three useful groups of cases.
+
+### Fixed 4x4 directed baseline
+Implemented fixed cases:
+
+- `CASE_ID=0` : identity × known
+- `CASE_ID=1` : all-ones × known
+- `CASE_ID=2` : signed mixed
+- `CASE_ID=3` : zero A × known
+- `CASE_ID=4` : known × identity
+- `CASE_ID=5` : diagonal × diagonal
+- `CASE_ID=6` : sparse / checkerboard-like
+- `CASE_ID=7` : larger signed magnitude (safe range)
+
+These remain the main fixed-dimension correctness baseline. The older README already documented these fixed baseline cases, and that part is still valid. :contentReference[oaicite:11]{index=11}
+
+### Variable-dimension smoke
+Implemented variable-dimension cases:
+
+- `CASE_ID=100` : `1x1x1`
+- `CASE_ID=101` : `2x2x2`
+- `CASE_ID=102` : `4x4x1`
+- `CASE_ID=103` : `1x4x4`
+- `CASE_ID=104` : `4x1x4`
+- `CASE_ID=105` : `2x3x4`
+
+These verify that `dim_m`, `dim_n`, and `dim_k` are functionally active, not just fixed placeholders. The legacy variable-dimension payload/reference extraction still reflects this compact row-major model. :contentReference[oaicite:12]{index=12} :contentReference[oaicite:13]{index=13}
+
+### Configurable base-address smoke
+Implemented configurable-base cases:
+
+- `CASE_ID=400` : baseline base map
+- `CASE_ID=401` : shifted base map #1
+- `CASE_ID=402` : shifted base map #2
+- `CASE_ID=403` : tighter non-overlapping base map
+
+These cases exercise the same functional path while moving the A/B/C regions to different legal locations. The earlier extracted configurable-base flow documents these four base-map variants. :contentReference[oaicite:14]{index=14}
 
 ---
 
-## What v1 proves
+## 2. Back-to-back test
 
-At the end of v1, the subsystem has demonstrated:
+Main UVM test:
+- `ai_accel_subsys_back_to_back_test`
 
-- end-to-end GEMM subsystem dataflow
+Purpose:
+
+- run multiple GEMM jobs in one simulation
+- verify reusable control behavior across consecutive launches
+- verify result compare and host traffic checking remain aligned across multiple jobs
+
+A recent passing run used:
+
+- `JOB_COUNT=2`
+- `JOB0_CASE_ID=100`
+- `JOB1_CASE_ID=101`
+
+That run completed with:
+
+- scoreboard control summary `start=2 completed=2`
+- scoreboard pairing `matched=2`
+- host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:15]{index=15} :contentReference[oaicite:16]{index=16}
+
+---
+
+## 3. Reset recovery test
+
+Main UVM test:
+- `ai_accel_subsys_reset_recovery_test`
+
+Purpose:
+
+- run a valid job
+- apply a controlled recovery reset
+- verify the subsystem returns to a clean state
+- run another valid job after reset
+
+A recent passing run used:
+
+- `PRE_RESET_CASE_ID=5`
+- `POST_RESET_CASE_ID=101`
+
+That run completed with:
+
+- successful recovery reset
+- scoreboard control summary `start=2 completed=2`
+- scoreboard pairing `matched=2`
+- host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:17]{index=17}
+
+---
+
+## Legacy baseline vs current flow
+
+The older repository milestone writeups were useful for establishing the original non-UVM subsystem baseline:
+
+- fixed 4x4 directed baseline
+- variable-dimension smoke
+- back-to-back smoke
+- reset-recovery smoke
+
+That history is still useful, but it is no longer the best description of the **current** verification flow. The older README still describes non-UVM top-level tests and presents minimal UVM as a future step. That is now outdated. :contentReference[oaicite:18]{index=18} :contentReference[oaicite:19]{index=19}
+
+Today, the main working path is:
+
+- UVM control agent
+- UVM host agent
+- scoreboard with ctrl/result pairing
+- host traffic checker using the same control path
+
+---
+
+## Notes on the reference model
+
+The current environment still benefits from helper/reference extraction from the earlier non-UVM subsystem tests.
+
+In particular, the compact row-major GEMM reference model and several directed payload builders were extracted forward into the UVM flow rather than being rewritten from scratch. The legacy helper snippets for fixed and variable cases still reflect the same reference computation style used by the current subsystem tests. :contentReference[oaicite:20]{index=20} :contentReference[oaicite:21]{index=21}
+
+---
+
+## What the current baseline proves
+
+At the current checkpoint, the subsystem has demonstrated:
+
+- end-to-end GEMM preload / compute / writeback / readback flow
 - correct fixed-dimension directed behavior
 - correct variable-dimension smoke behavior
+- correct configurable-base smoke behavior
 - repeated-run robustness in one simulation
-- reset recovery across multiple runs
+- reset recovery between completed runs
+- phase-aware control observation on the existing ctrl path
+- host memory traffic consistency checks on the main UVM memory path
 
-This means v1 is no longer just a structural or bring-up stage. It is now a stable functional baseline.
-
----
-
-## v1 completion statement
-
-v1 is considered complete with the following verification baseline established:
-
-1. fixed 4x4 directed baseline
-2. variable-dimension smoke baseline
-3. back-to-back run smoke baseline
-4. reset recovery smoke baseline
-
-This milestone serves as the checkpoint before entering v2.
+This is no longer just a bring-up environment. It is now a usable UVM subsystem verification baseline.
 
 ---
 
-## Transition to v2
+## Current top-level verification view
 
-With v1 complete, the next phase is v2.
+A simple way to think about the current verification stack is:
 
-### Planned v2 directions
+1. `ai_accel_subsys_smoke_test`  
+   single-job correctness and case coverage
 
-- parameterized `M / N / K`
-- truly configurable base addresses
-- more directed and limited random testing
-- subsystem-level scoreboard
-- start of minimal UVM subsystem environment
+2. `ai_accel_subsys_back_to_back_test`  
+   repeated-run robustness
 
-The intent is to preserve the current non-UVM baseline as a fast sanity layer, while beginning the first structured UVM verification infrastructure in parallel.
+3. `ai_accel_subsys_reset_recovery_test`  
+   post-reset recovery robustness
+
+Together, these form the current subsystem regression baseline.
 
 ---
 
-## Reference note
+## What is next
 
-The original v1 direction was to first stabilize the subsystem dataflow before expanding toward greater configurability and later subsystem-level/UVM-oriented verification. That staged intent remains consistent with the current milestone closure and v2 transition. :contentReference[oaicite:5]{index=5}
+Near-term work can go in a few directions:
+
+- cleanup and documentation alignment
+- helper fallback sanity runs
+- tighter host traffic rules if needed
+- additional directed corner coverage
+- broader regression organization
+
+The main structural step that is already complete is the move from the earlier non-UVM milestone description to a working UVM subsystem environment.
+
+---
+
+## Summary
+
+This repository currently contains a working GEMM-oriented AI accelerator subsystem baseline with:
+
+- stable scratchpad-backed subsystem integration
+- UVM-based subsystem verification
+- multiple reusable smoke / robustness tests
+- scoreboard-based result checking
+- phase-aware host traffic checking
+
+That is the current baseline to build on.

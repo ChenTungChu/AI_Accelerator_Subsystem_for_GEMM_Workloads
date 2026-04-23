@@ -16,6 +16,26 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     } test_kind_e;
 
     // ------------------------------------------------------------
+    // Control event kind
+    //
+    // Same ctrl path, now phase-aware.
+    //
+    // CTRL_EVENT_NONE:
+    //   profile-only / request-style item
+    //
+    // CTRL_EVENT_START:
+    //   monitor observed acc_start
+    //
+    // CTRL_EVENT_DONE:
+    //   monitor observed acc_done
+    // ------------------------------------------------------------
+    typedef enum int {
+        CTRL_EVENT_NONE  = 0,
+        CTRL_EVENT_START = 1,
+        CTRL_EVENT_DONE  = 2
+    } ctrl_event_kind_e;
+
+    // ------------------------------------------------------------
     // Basic control fields
     // ------------------------------------------------------------
     rand int unsigned case_id;
@@ -33,18 +53,19 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     rand int unsigned dim_k;
 
     // ------------------------------------------------------------
-    // Runtime observation fields
-    //   Filled by monitor / scoreboard flow
+    // Optional metadata
     // ------------------------------------------------------------
+    string test_name;
+
+    // ------------------------------------------------------------
+    // Control-event metadata
+    // ------------------------------------------------------------
+    ctrl_event_kind_e ctrl_event_kind;
+
     bit          done_seen;
     int unsigned start_cycle;
     int unsigned done_cycle;
     int unsigned latency_cycles;
-
-    // ------------------------------------------------------------
-    // Optional metadata
-    // ------------------------------------------------------------
-    string test_name;
 
     // ------------------------------------------------------------
     // Constraints
@@ -71,23 +92,24 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // UVM automation
     // ------------------------------------------------------------
     `uvm_object_utils_begin(ai_accel_subsys_seq_item)
-        `uvm_field_int(case_id,     UVM_DEFAULT)
+        `uvm_field_int(case_id, UVM_DEFAULT)
         `uvm_field_enum(test_kind_e, test_kind, UVM_DEFAULT)
 
         `uvm_field_int(base_addr_a, UVM_DEFAULT | UVM_HEX)
         `uvm_field_int(base_addr_b, UVM_DEFAULT | UVM_HEX)
         `uvm_field_int(base_addr_c, UVM_DEFAULT | UVM_HEX)
 
-        `uvm_field_int(dim_m,       UVM_DEFAULT)
-        `uvm_field_int(dim_n,       UVM_DEFAULT)
-        `uvm_field_int(dim_k,       UVM_DEFAULT)
-
-        `uvm_field_int(done_seen,       UVM_DEFAULT)
-        `uvm_field_int(start_cycle,     UVM_DEFAULT)
-        `uvm_field_int(done_cycle,      UVM_DEFAULT)
-        `uvm_field_int(latency_cycles,  UVM_DEFAULT)
+        `uvm_field_int(dim_m, UVM_DEFAULT)
+        `uvm_field_int(dim_n, UVM_DEFAULT)
+        `uvm_field_int(dim_k, UVM_DEFAULT)
 
         `uvm_field_string(test_name, UVM_DEFAULT)
+
+        `uvm_field_enum(ctrl_event_kind_e, ctrl_event_kind, UVM_DEFAULT)
+        `uvm_field_int(done_seen, UVM_DEFAULT)
+        `uvm_field_int(start_cycle, UVM_DEFAULT)
+        `uvm_field_int(done_cycle, UVM_DEFAULT)
+        `uvm_field_int(latency_cycles, UVM_DEFAULT)
     `uvm_object_utils_end
 
     // ------------------------------------------------------------
@@ -96,10 +118,77 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     function new(string name = "ai_accel_subsys_seq_item");
         super.new(name);
 
-        done_seen      = 1'b0;
-        start_cycle    = 0;
-        done_cycle     = 0;
-        latency_cycles = 0;
+        case_id   = 0;
+        test_kind = TEST_KIND_FIXED_BASELINE;
+
+        base_addr_a = 32'h0000_0000;
+        base_addr_b = 32'h0000_0100;
+        base_addr_c = 32'h0000_0200;
+
+        dim_m = 4;
+        dim_n = 4;
+        dim_k = 4;
+
+        test_name = "";
+
+        clear_ctrl_event();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Clear control-event fields
+    // ------------------------------------------------------------
+    function void clear_ctrl_event();
+        ctrl_event_kind = CTRL_EVENT_NONE;
+        done_seen       = 1'b0;
+        start_cycle     = 0;
+        done_cycle      = 0;
+        latency_cycles  = 0;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Mark START event
+    // ------------------------------------------------------------
+    function void mark_start_event(
+        input int unsigned start_cycle_in
+    );
+        ctrl_event_kind = CTRL_EVENT_START;
+        done_seen       = 1'b0;
+        start_cycle     = start_cycle_in;
+        done_cycle      = 0;
+        latency_cycles  = 0;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Mark DONE event
+    // ------------------------------------------------------------
+    function void mark_done_event(
+        input int unsigned start_cycle_in,
+        input int unsigned done_cycle_in
+    );
+        ctrl_event_kind = CTRL_EVENT_DONE;
+        done_seen       = 1'b1;
+        start_cycle     = start_cycle_in;
+        done_cycle      = done_cycle_in;
+
+        if (done_cycle_in >= start_cycle_in)
+            latency_cycles = done_cycle_in - start_cycle_in;
+        else
+            latency_cycles = 0;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Helper predicates
+    // ------------------------------------------------------------
+    function bit is_ctrl_event();
+        return (ctrl_event_kind != CTRL_EVENT_NONE);
+    endfunction
+
+    function bit is_ctrl_start_event();
+        return (ctrl_event_kind == CTRL_EVENT_START);
+    endfunction
+
+    function bit is_ctrl_done_event();
+        return (ctrl_event_kind == CTRL_EVENT_DONE);
     endfunction
 
     // ------------------------------------------------------------
@@ -118,10 +207,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
         dim_n = 4;
         dim_k = 4;
 
-        done_seen      = 1'b0;
-        start_cycle    = 0;
-        done_cycle     = 0;
-        latency_cycles = 0;
+        clear_ctrl_event();
     endfunction
 
     function void apply_variable_dim_case(int unsigned id);
@@ -143,10 +229,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
 
-        done_seen      = 1'b0;
-        start_cycle    = 0;
-        done_cycle     = 0;
-        latency_cycles = 0;
+        clear_ctrl_event();
     endfunction
 
     function void apply_configurable_base_case(int unsigned id);
@@ -186,10 +269,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             end
         endcase
 
-        done_seen      = 1'b0;
-        start_cycle    = 0;
-        done_cycle     = 0;
-        latency_cycles = 0;
+        clear_ctrl_event();
     endfunction
 
     // ------------------------------------------------------------
@@ -197,9 +277,21 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     virtual function string convert2string();
         return $sformatf(
-            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
-            test_name, case_id, test_kind, base_addr_a, base_addr_b, base_addr_c,
-            dim_m, dim_n, dim_k, done_seen, start_cycle, done_cycle, latency_cycles
+            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d ctrl_event_kind=%0d done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
+            test_name,
+            case_id,
+            test_kind,
+            base_addr_a,
+            base_addr_b,
+            base_addr_c,
+            dim_m,
+            dim_n,
+            dim_k,
+            ctrl_event_kind,
+            done_seen,
+            start_cycle,
+            done_cycle,
+            latency_cycles
         );
     endfunction
 

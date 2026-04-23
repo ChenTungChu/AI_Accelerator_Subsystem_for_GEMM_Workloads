@@ -29,14 +29,34 @@ package ai_accel_subsys_uvm_pkg;
     `include "../bridge/ai_accel_subsys_result_bridge.sv"
 
     // ------------------------------------------------------------
+    // Host sequence item
+    // ------------------------------------------------------------
+    `include "../item/axi_mm_host_seq_item.sv"
+
+    // ------------------------------------------------------------
+    // Host sequencer
+    // ------------------------------------------------------------
+    `include "../sequencer/axi_mm_host_sequencer.sv"
+
+    // ------------------------------------------------------------
     // Sequencer
     // ------------------------------------------------------------
     `include "../sequencer/ai_accel_subsys_sequencer.sv"
 
     // ------------------------------------------------------------
+    // Host driver
+    // ------------------------------------------------------------
+    `include "../driver/axi_mm_host_driver.sv"
+
+    // ------------------------------------------------------------
     // Driver
     // ------------------------------------------------------------
     `include "../driver/ai_accel_subsys_driver.sv"
+
+    // ------------------------------------------------------------
+    // Host monitor
+    // ------------------------------------------------------------
+    `include "../monitor/axi_mm_host_monitor.sv"
 
     // ------------------------------------------------------------
     // Monitor
@@ -49,6 +69,16 @@ package ai_accel_subsys_uvm_pkg;
     `include "../scoreboard/ai_accel_subsys_scoreboard.sv"
 
     // ------------------------------------------------------------
+    // Host traffic checker
+    // ------------------------------------------------------------
+    `include "../checker/ai_accel_subsys_host_traffic_checker.sv"
+
+    // ------------------------------------------------------------
+    // Host agent
+    // ------------------------------------------------------------
+    `include "../agent/axi_mm_host_agent.sv"
+
+    // ------------------------------------------------------------
     // Agent
     // ------------------------------------------------------------
     `include "../agent/ai_accel_subsys_agent.sv"
@@ -59,6 +89,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../env/ai_accel_subsys_env.sv"
 
     // ------------------------------------------------------------
+    // Host sequence
+    // ------------------------------------------------------------
+    `include "../seq/axi_mm_host_seq.sv"
+
+    // ------------------------------------------------------------
     // Sequences
     // ------------------------------------------------------------
     `include "../seq/ai_accel_subsys_smoke_seq.sv"
@@ -67,6 +102,8 @@ package ai_accel_subsys_uvm_pkg;
     // Tests
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_smoke_test.sv"
+    `include "../test/ai_accel_subsys_back_to_back_test.sv"
+    `include "../test/ai_accel_subsys_reset_recovery_test.sv"
 
 endpackage
 
