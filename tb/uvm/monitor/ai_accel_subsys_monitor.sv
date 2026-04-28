@@ -204,16 +204,15 @@ class ai_accel_subsys_monitor extends uvm_monitor;
     );
         ai_accel_subsys_seq_item tr_done;
     begin
-        tr_done = ai_accel_subsys_seq_item::type_id::create("tr_done");
+        if (active_job == null) begin
+            `uvm_error("MON/DONE_NO_ACTIVE_JOB",
+                "publish_done_event called with null active_job; dropping DONE event")
+            return;
+        end
 
-        if (active_job != null) begin
-            tr_done.copy(active_job);
-            tr_done.mark_done_event(active_job.start_cycle, mon_cycle);
-        end
-        else begin
-            fill_ctrl_profile(tr_done);
-            tr_done.mark_done_event(mon_cycle, mon_cycle);
-        end
+        tr_done = ai_accel_subsys_seq_item::type_id::create("tr_done");
+        tr_done.copy(active_job);
+        tr_done.mark_done_event(active_job.start_cycle, mon_cycle);
 
         `uvm_info("MON",
             $sformatf("Observed acc_done: case_id=%0d test_kind=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
@@ -254,8 +253,9 @@ class ai_accel_subsys_monitor extends uvm_monitor;
             // and wait until reset is released again.
             if ((vif.cb_mon.dma_rst_n !== 1'b1) || (vif.cb_mon.core_rst_n !== 1'b1)) begin
                 if (has_active_job) begin
-                    `uvm_warning("MON/RESET_DROPPED_ACTIVE_JOB",
-                        "Reset asserted while monitor still had an active ctrl job; dropping pending state")
+                    `uvm_info("MON/RESET_DROPPED_ACTIVE_JOB",
+                        "Reset asserted while monitor still had an active ctrl job; dropping pending state",
+                        UVM_MEDIUM)
                 end
 
                 has_active_job = 1'b0;
@@ -273,24 +273,26 @@ class ai_accel_subsys_monitor extends uvm_monitor;
             if ((vif.cb_mon.acc_start === 1'b1) && (prev_acc_start === 1'b0)) begin
                 if (has_active_job) begin
                     `uvm_error("MON/START_WHILE_ACTIVE",
-                        "Observed new acc_start while previous ctrl job is still active")
+                        "Observed new acc_start while previous ctrl job is still active; ignoring new START edge")
                 end
-
-                publish_start_event(mon_cycle, active_job);
-                has_active_job = 1'b1;
+                else begin
+                    publish_start_event(mon_cycle, active_job);
+                    has_active_job = 1'b1;
+                end
             end
 
             // detect rising edge of acc_done
             if ((vif.cb_mon.acc_done === 1'b1) && (prev_acc_done === 1'b0)) begin
                 if (!has_active_job) begin
                     `uvm_warning("MON/DONE_WITHOUT_ACTIVE_JOB",
-                        "Observed acc_done without an active ctrl job; publishing fallback DONE event")
+                        "Observed acc_done without an active ctrl job; dropping DONE edge")
                 end
+                else begin
+                    publish_done_event(active_job, mon_cycle);
 
-                publish_done_event(active_job, mon_cycle);
-
-                has_active_job = 1'b0;
-                active_job     = null;
+                    has_active_job = 1'b0;
+                    active_job     = null;
+                end
             end
 
             prev_acc_start = vif.cb_mon.acc_start;

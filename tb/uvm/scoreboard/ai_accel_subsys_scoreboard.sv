@@ -54,6 +54,12 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     int unsigned result_fail_count;
 
     // ------------------------------------------------------------
+    // Mid-run reset / expected-abort support
+    // ------------------------------------------------------------
+    bit          midrun_reset_test_mode;
+    int unsigned expected_aborted_job_count;
+
+    // ------------------------------------------------------------
     // Multi-job pairing state
     //
     // Only DONE-side ctrl items participate in result pairing.
@@ -95,8 +101,12 @@ class ai_accel_subsys_scoreboard extends uvm_component;
         ctrl_result_pair_pass_count = 0;
 
         result_check_enable         = 1'b0;
+        midrun_reset_test_mode      = 1'b0;
+        expected_aborted_job_count  = 0;
 
         void'(uvm_config_db#(bit)::get(this, "", "result_check_enable", result_check_enable));
+        void'(uvm_config_db#(bit)::get(this, "", "midrun_reset_test_mode", midrun_reset_test_mode));
+        void'(uvm_config_db#(int unsigned)::get(this, "", "expected_aborted_job_count", expected_aborted_job_count));
     endfunction
 
     // ------------------------------------------------------------
@@ -114,6 +124,36 @@ class ai_accel_subsys_scoreboard extends uvm_component;
         dst = ai_accel_subsys_result_item::type_id::create("dst");
         dst.copy(src);
         return dst;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Summary expectation helpers
+    // ------------------------------------------------------------
+    function int unsigned get_expected_aborted_count();
+        if (midrun_reset_test_mode)
+            return expected_aborted_job_count;
+        return 0;
+    endfunction
+
+    function int unsigned get_expected_completed_count();
+        int unsigned exp_abort;
+    begin
+        exp_abort = get_expected_aborted_count();
+
+        if (observed_start_count < exp_abort)
+            return 0;
+
+        return (observed_start_count - exp_abort);
+    end
+    endfunction
+
+    function int unsigned get_observed_aborted_count();
+    begin
+        if (observed_start_count < observed_done_count)
+            return 0;
+
+        return (observed_start_count - observed_done_count);
+    end
     endfunction
 
     // ------------------------------------------------------------
@@ -573,12 +613,37 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     // Result-path summary check
     // ------------------------------------------------------------
     function void check_result_summary();
+        int unsigned expected_completed_count;
+    begin
         if (!result_check_enable)
             return;
 
-        if (observed_result_count == 0) begin
-            `uvm_error("SB/NORESULT", "Result checking is enabled, but no result_item was observed")
+        expected_completed_count = get_expected_completed_count();
+
+        if (expected_completed_count == 0) begin
+            if (observed_result_count != 0) begin
+                `uvm_error("SB/UNEXPECTED_RESULT",
+                    $sformatf("Expected zero completed jobs, but observed %0d result_item(s)",
+                        observed_result_count))
+            end
+
+            `uvm_info("SB",
+                $sformatf("Result summary: observed=%0d pass=%0d fail=%0d expected_completed=%0d",
+                    observed_result_count, result_pass_count, result_fail_count, expected_completed_count),
+                UVM_LOW)
             return;
+        end
+
+        if (observed_result_count == 0) begin
+            `uvm_error("SB/NORESULT",
+                "Result checking is enabled, but no result_item was observed")
+            return;
+        end
+
+        if (observed_result_count != expected_completed_count) begin
+            `uvm_error("SB/RESULT_COUNT",
+                $sformatf("Result count mismatch: observed=%0d expected_completed=%0d",
+                    observed_result_count, expected_completed_count))
         end
 
         if (result_fail_count != 0) begin
@@ -587,15 +652,20 @@ class ai_accel_subsys_scoreboard extends uvm_component;
         end
 
         `uvm_info("SB",
-            $sformatf("Result summary: observed=%0d pass=%0d fail=%0d",
-                observed_result_count, result_pass_count, result_fail_count),
+            $sformatf("Result summary: observed=%0d pass=%0d fail=%0d expected_completed=%0d",
+                observed_result_count, result_pass_count, result_fail_count, expected_completed_count),
             UVM_LOW)
+    end
     endfunction
 
     // ------------------------------------------------------------
     // Pairing summary check
     // ------------------------------------------------------------
     function void check_pairing_summary();
+        int unsigned expected_completed_count;
+    begin
+        expected_completed_count = get_expected_completed_count();
+
         if (ctrl_q.size() != 0) begin
             `uvm_error("SB/CTRL_Q_NOT_EMPTY",
                 $sformatf("Unpaired DONE-side ctrl items remain in queue: %0d", ctrl_q.size()))
@@ -622,6 +692,12 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             end
         end
 
+        if (observed_done_count != expected_completed_count) begin
+            `uvm_error("SB/EXPECTED_COMPLETED_COUNT",
+                $sformatf("completed count mismatch: done=%0d expected_completed=%0d",
+                    observed_done_count, expected_completed_count))
+        end
+
         `uvm_info("SB",
             $sformatf("Pairing summary: matched=%0d ctrl_profile_pass=%0d ctrl_latency_pass=%0d ctrl_result_pair_pass=%0d",
                 matched_job_count,
@@ -629,28 +705,62 @@ class ai_accel_subsys_scoreboard extends uvm_component;
                 ctrl_latency_pass_count,
                 ctrl_result_pair_pass_count),
             UVM_LOW)
+    end
     endfunction
 
     // ------------------------------------------------------------
     // Report phase
     // ------------------------------------------------------------
     function void report_phase(uvm_phase phase);
+        int unsigned expected_aborted_count;
+        int unsigned expected_completed_count;
+        int unsigned observed_aborted_count;
+
         super.report_phase(phase);
+
+        expected_aborted_count   = get_expected_aborted_count();
+        expected_completed_count = get_expected_completed_count();
+        observed_aborted_count   = get_observed_aborted_count();
 
         `uvm_info("SB",
             $sformatf("Control summary: start=%0d completed=%0d",
                 observed_start_count, observed_done_count),
             UVM_LOW)
 
+        if (midrun_reset_test_mode) begin
+            `uvm_info("SB",
+                $sformatf("Abort summary: expected_aborted=%0d observed_aborted=%0d expected_completed=%0d",
+                    expected_aborted_count, observed_aborted_count, expected_completed_count),
+                UVM_LOW)
+        end
+
         if (observed_start_count == 0) begin
             `uvm_error("SB/NOSTART", "Scoreboard did not observe any acc_start event")
             return;
         end
 
-        if (observed_done_count != observed_start_count) begin
-            `uvm_error("SB/DONE_COUNT",
-                $sformatf("Expected completed count to match start count, but start=%0d completed=%0d",
-                    observed_start_count, observed_done_count))
+        if (observed_start_count < expected_aborted_count) begin
+            `uvm_error("SB/ABORT_COUNT_BAD",
+                $sformatf("observed_start_count=%0d is smaller than expected_aborted_job_count=%0d",
+                    observed_start_count, expected_aborted_count))
+        end
+
+        if (midrun_reset_test_mode) begin
+            if (observed_done_count != expected_completed_count) begin
+                `uvm_error("SB/DONE_COUNT",
+                    $sformatf("Expected completed count to match (start - expected_aborted), but start=%0d expected_aborted=%0d completed=%0d expected_completed=%0d",
+                        observed_start_count,
+                        expected_aborted_count,
+                        observed_done_count,
+                        expected_completed_count))
+            end
+        end
+        else begin
+            if (observed_done_count != observed_start_count) begin
+                `uvm_error("SB/DONE_COUNT",
+                    $sformatf("Expected completed count to match start count, but start=%0d completed=%0d",
+                        observed_start_count, observed_done_count))
+            end
         end
 
         check_result_summary();

@@ -1084,6 +1084,47 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     end
     endtask
 
+
+    task automatic wait_for_acc_done_rearmed(
+        int unsigned timeout_cycles = DEFAULT_DONE_TIMEOUT_CYCLES
+    );
+        int unsigned cnt;
+    begin
+        cnt = 0;
+
+        @vif.cb_mon;
+
+        // If previous job/reset state left acc_done high, wait for it to clear
+        while (vif.cb_mon.acc_done === 1'b1) begin
+            @vif.cb_mon;
+            cnt++;
+
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("MIDRESET_DONE_STUCK_HIGH",
+                    $sformatf("Timed out waiting for stale acc_done to deassert after %0d cycles",
+                        timeout_cycles))
+            end
+        end
+
+        // Wait for a new acc_done assertion
+        while (vif.cb_mon.acc_done !== 1'b1) begin
+            @vif.cb_mon;
+            cnt++;
+
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("MIDRESET_TIMEOUT",
+                    $sformatf("Timed out waiting for new acc_done after %0d cycles",
+                        timeout_cycles))
+            end
+        end
+
+        `uvm_info("MIDRESET_TEST",
+            $sformatf("Observed new acc_done after %0d monitor cycles", cnt),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
     // ------------------------------------------------------------
     // Run phase
     //

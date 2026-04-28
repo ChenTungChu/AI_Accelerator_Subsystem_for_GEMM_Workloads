@@ -65,39 +65,39 @@ class ai_accel_subsys_host_traffic_job extends uvm_object;
     function new(string name = "ai_accel_subsys_host_traffic_job");
         super.new(name);
 
-        case_id             = 0;
-        test_kind           = ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
-        test_name           = "";
+        case_id              = 0;
+        test_kind            = ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
+        test_name            = "";
 
-        base_addr_a         = '0;
-        base_addr_b         = '0;
-        base_addr_c         = '0;
+        base_addr_a          = '0;
+        base_addr_b          = '0;
+        base_addr_c          = '0;
 
-        dim_m               = 0;
-        dim_n               = 0;
-        dim_k               = 0;
+        dim_m                = 0;
+        dim_n                = 0;
+        dim_k                = 0;
 
-        exp_a_write_count   = 0;
-        exp_b_write_count   = 0;
-        exp_c_clear_count   = 0;
-        exp_c_read_count    = 0;
+        exp_a_write_count    = 0;
+        exp_b_write_count    = 0;
+        exp_c_clear_count    = 0;
+        exp_c_read_count     = 0;
 
-        obs_a_write_count   = 0;
-        obs_b_write_count   = 0;
-        obs_c_clear_count   = 0;
-        obs_c_read_count    = 0;
-        obs_other_count     = 0;
+        obs_a_write_count    = 0;
+        obs_b_write_count    = 0;
+        obs_c_clear_count    = 0;
+        obs_c_read_count     = 0;
+        obs_other_count      = 0;
 
-        ctrl_start_seen     = 1'b0;
-        ctrl_done_seen      = 1'b0;
-        ctrl_profile_checked= 1'b0;
+        ctrl_start_seen      = 1'b0;
+        ctrl_done_seen       = 1'b0;
+        ctrl_profile_checked = 1'b0;
 
         host_readback_complete = 1'b0;
 
-        phase               = HOST_JOB_PHASE_PRESTART;
+        phase                = HOST_JOB_PHASE_PRESTART;
 
-        closed              = 1'b0;
-        failed              = 1'b0;
+        closed               = 1'b0;
+        failed               = 1'b0;
     endfunction
 
     function void mark_failed();
@@ -117,14 +117,17 @@ endclass
 // ------------------------------------------------------------
 // Host traffic checker
 //
-// v1.5 scope:
-//   - strict checking only in host-agent primary mode
+// v2 scope:
+//   - strict checking in host-agent primary mode
 //   - checks region / count / access width
 //   - uses the same ctrl path, now phase-aware
 //   - enforces simple phase rules:
 //       * PRESTART: allow A/B writes + C clear only
 //       * COMPUTE : no host traffic allowed
 //       * POSTDONE: allow C read only
+//   - supports expected aborted job semantics for mid-run reset:
+//       * one or more jobs may legally end after START but before DONE
+//       * aborted jobs do not require readback/result completion
 // ------------------------------------------------------------
 class ai_accel_subsys_host_traffic_checker extends uvm_component;
     `uvm_component_utils(ai_accel_subsys_host_traffic_checker)
@@ -145,6 +148,9 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     bit strict_check_enable;
     bit log_enable;
 
+    bit          midrun_reset_test_mode;
+    int unsigned expected_aborted_job_count;
+
     // ------------------------------------------------------------
     // Internal state
     // ------------------------------------------------------------
@@ -155,6 +161,7 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     int unsigned total_jobs_created;
     int unsigned total_jobs_passed;
     int unsigned total_jobs_failed;
+    int unsigned total_jobs_aborted_expected;
     int unsigned total_host_events_skipped;
 
     int unsigned total_start_events;
@@ -198,6 +205,14 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
 
         if (!uvm_config_db#(bit)::get(this, "", "log_enable", log_enable)) begin
             log_enable = 1'b1;
+        end
+
+        if (!uvm_config_db#(bit)::get(this, "", "midrun_reset_test_mode", midrun_reset_test_mode)) begin
+            midrun_reset_test_mode = 1'b0;
+        end
+
+        if (!uvm_config_db#(int unsigned)::get(this, "", "expected_aborted_job_count", expected_aborted_job_count)) begin
+            expected_aborted_job_count = 0;
         end
     endfunction
 
@@ -614,6 +629,109 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     end
     endfunction
 
+    // ------------------------------------------------------------
+    // Expected-abort helpers
+    // ------------------------------------------------------------
+    function bit job_can_be_expected_abort(
+        input ai_accel_subsys_host_traffic_job job
+    );
+    begin
+        if (job == null)
+            return 1'b0;
+
+        if (!midrun_reset_test_mode)
+            return 1'b0;
+
+        if (job.closed)
+            return 1'b0;
+
+        if (!job.ctrl_start_seen)
+            return 1'b0;
+
+        if (job.ctrl_done_seen)
+            return 1'b0;
+
+        if (job.phase != HOST_JOB_PHASE_COMPUTE)
+            return 1'b0;
+
+        if (job.failed)
+            return 1'b0;
+
+        if (job.obs_a_write_count != job.exp_a_write_count)
+            return 1'b0;
+
+        if (job.obs_b_write_count != job.exp_b_write_count)
+            return 1'b0;
+
+        if (job.obs_c_clear_count != job.exp_c_clear_count)
+            return 1'b0;
+
+        if (job.obs_c_read_count != 0)
+            return 1'b0;
+
+        if (job.obs_other_count != 0)
+            return 1'b0;
+
+        if (job.host_readback_complete)
+            return 1'b0;
+
+        return 1'b1;
+    end
+    endfunction
+
+    function bit can_accept_more_expected_aborts();
+        return (total_jobs_aborted_expected < expected_aborted_job_count);
+    endfunction
+
+    function bit close_job_as_expected_abort(
+        ref ai_accel_subsys_host_traffic_job job,
+        input string reason
+    );
+    begin
+        if (!job_can_be_expected_abort(job))
+            return 1'b0;
+
+        if (!can_accept_more_expected_aborts())
+            return 1'b0;
+
+        job.phase  = HOST_JOB_PHASE_CLOSED;
+        job.closed = 1'b1;
+
+        total_jobs_aborted_expected++;
+
+        `uvm_info("HOST_CHK",
+            $sformatf("Accepted expected aborted job #%0d: case_id=%0d test_kind=%0d test_name=%s reason=%s A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d",
+                total_jobs_aborted_expected,
+                job.case_id,
+                job.test_kind,
+                job.test_name,
+                reason,
+                job.obs_a_write_count, job.exp_a_write_count,
+                job.obs_b_write_count, job.exp_b_write_count,
+                job.obs_c_clear_count, job.exp_c_clear_count),
+            UVM_MEDIUM)
+
+        return 1'b1;
+    end
+    endfunction
+
+    function bit maybe_close_stale_open_job_before_reuse(
+        ref ai_accel_subsys_host_traffic_job job,
+        input string reason
+    );
+    begin
+        if (job == null)
+            return 1'b0;
+
+        if (close_job_as_expected_abort(job, reason)) begin
+            job = null;
+            return 1'b1;
+        end
+
+        return 1'b0;
+    end
+    endfunction
+
     function void maybe_finalize_job(ref ai_accel_subsys_host_traffic_job job);
     begin
         if (job.closed) begin
@@ -676,6 +794,15 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         if (job == null) begin
             job = find_open_job_by_case_kind(t.case_id, t.test_kind);
         end
+
+        // If a stale open job from a prior aborted run is being reused
+        // with the same identity, try to close it first.
+        if (is_ctrl_start_event(t) && (job != null)) begin
+            if (job.ctrl_start_seen && !job.ctrl_done_seen) begin
+                void'(maybe_close_stale_open_job_before_reuse(job, "new START event for reused identity"));
+            end
+        end
+
         if (job == null) begin
             job = create_job_from_identity(t.case_id, t.test_kind);
         end
@@ -793,6 +920,16 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         end
 
         job = find_open_job_by_identity(t.case_id, t.test_kind, t.test_name);
+
+        // If new host-prestart traffic appears with the same identity
+        // after a prior job was interrupted mid-run, try to close that
+        // stale job first and create a fresh one.
+        if (job != null) begin
+            if (job.ctrl_start_seen && !job.ctrl_done_seen) begin
+                void'(maybe_close_stale_open_job_before_reuse(job, "new host traffic for reused identity"));
+            end
+        end
+
         if (job == null) begin
             job = create_job_from_identity(t.case_id, t.test_kind);
         end
@@ -831,27 +968,44 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     // ------------------------------------------------------------
     function void report_phase(uvm_phase phase);
         ai_accel_subsys_host_traffic_job job;
+        int unsigned observed_aborted_jobs_in_report;
+
         super.report_phase(phase);
+
+        observed_aborted_jobs_in_report = 0;
 
         if (enable_check && strict_check_enable) begin
             foreach (active_jobs[i]) begin
                 job = active_jobs[i];
                 if (!job.closed) begin
-                    total_jobs_failed++;
-                    `uvm_error("HOST_CHK/INCOMPLETE_JOB",
-                        $sformatf("Incomplete host traffic job: case_id=%0d test_kind=%0d phase=%s A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d start_seen=%0d done_seen=%0d",
-                            job.case_id, job.test_kind, phase_name(job.phase),
-                            job.obs_a_write_count, job.exp_a_write_count,
-                            job.obs_b_write_count, job.exp_b_write_count,
-                            job.obs_c_clear_count, job.exp_c_clear_count,
-                            job.obs_c_read_count,  job.exp_c_read_count,
-                            job.ctrl_start_seen, job.ctrl_done_seen))
+                    if (close_job_as_expected_abort(job, "report_phase incomplete active job")) begin
+                        observed_aborted_jobs_in_report++;
+                    end
+                    else begin
+                        total_jobs_failed++;
+                        `uvm_error("HOST_CHK/INCOMPLETE_JOB",
+                            $sformatf("Incomplete host traffic job: case_id=%0d test_kind=%0d phase=%s A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d start_seen=%0d done_seen=%0d",
+                                job.case_id, job.test_kind, phase_name(job.phase),
+                                job.obs_a_write_count, job.exp_a_write_count,
+                                job.obs_b_write_count, job.exp_b_write_count,
+                                job.obs_c_clear_count, job.exp_c_clear_count,
+                                job.obs_c_read_count,  job.exp_c_read_count,
+                                job.ctrl_start_seen, job.ctrl_done_seen))
+                    end
+                end
+            end
+
+            if (midrun_reset_test_mode) begin
+                if (total_jobs_aborted_expected != expected_aborted_job_count) begin
+                    `uvm_error("HOST_CHK/ABORT_COUNT",
+                        $sformatf("Expected aborted job count mismatch: observed=%0d expected=%0d",
+                            total_jobs_aborted_expected, expected_aborted_job_count))
                 end
             end
         end
 
         `uvm_info("HOST_CHK",
-            $sformatf("Summary: enable=%0d strict=%0d ctrl_events=%0d start_events=%0d done_events=%0d host_events=%0d skipped_host_events=%0d jobs_created=%0d pass=%0d fail=%0d",
+            $sformatf("Summary: enable=%0d strict=%0d ctrl_events=%0d start_events=%0d done_events=%0d host_events=%0d skipped_host_events=%0d jobs_created=%0d pass=%0d fail=%0d aborted_expected=%0d",
                 enable_check,
                 strict_check_enable,
                 total_ctrl_events,
@@ -861,7 +1015,8 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
                 total_host_events_skipped,
                 total_jobs_created,
                 total_jobs_passed,
-                total_jobs_failed),
+                total_jobs_failed,
+                total_jobs_aborted_expected),
             UVM_LOW)
     endfunction
 

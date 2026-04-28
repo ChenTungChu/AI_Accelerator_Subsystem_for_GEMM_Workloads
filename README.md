@@ -2,44 +2,49 @@
 
 ## Overview
 
-This project is a subsystem-level RTL and verification exercise for a GEMM-oriented AI accelerator path.
+This repository is a subsystem-level RTL and verification project for a GEMM-oriented accelerator path.
 
-The current subsystem focuses on a simple but practical end-to-end flow:
+The current subsystem focuses on a practical end-to-end flow:
 
-- host-side matrix preload into scratchpad memory
-- GEMM core access through a local scratchpad adapter
-- result writeback into scratchpad
-- host-side readback and comparison against a reference model
+- preload matrices A and B into scratchpad memory
+- launch the GEMM core through the local scratchpad adapter
+- write results into scratchpad memory
+- read C back and compare against a software reference model
 
-The verified subsystem stack is:
+The main RTL stack in this stage is:
 
 - `ai_accel_subsystem`
 - `gemm_top`
 - `gemm_scratchpad_adapter`
 - `axi_mm_dual_port_bram`
 
-The BRAM model is treated as an already-established baseline and is not being reworked as part of this subsystem verification stage.
+The BRAM model is treated as an established subsystem baseline. The current work is focused on subsystem verification and execution flow robustness on top of that memory model.
 
 ---
 
-## Current project status
+## Current status
 
-The project is no longer at the earlier non-UVM subsystem baseline stage.
+The project is now running on a UVM-based subsystem environment rather than the earlier non-UVM top-level bring-up flow.
 
-The current verification flow is now centered on a **UVM-based subsystem environment** with:
+The current environment includes:
 
-- control-path monitoring
-- result compare / pairing
-- host-side AXI memory access through a dedicated host agent
-- host traffic checking on the host memory path
+- phase-aware control monitoring
+- scoreboard-based result compare
+- ctrl/result pairing
+- a dedicated AXI-MM host agent for the main memory path
+- a host traffic checker for the primary host-agent path
+- helper fallback coverage for sanity checking
 
-Recent UVM runs show:
+At the current checkpoint, the main regression baseline is green for:
 
-- `ai_accel_subsys_smoke_test` passes with control summary `start=1 completed=1`, scoreboard result pass, and host traffic checker summary `start_events=1 done_events=1 jobs_created=1 pass=1 fail=0`
-- `ai_accel_subsys_back_to_back_test` passes with control summary `start=2 completed=2`, scoreboard pairing `matched=2`, and host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0`
-- `ai_accel_subsys_reset_recovery_test` passes with control summary `start=2 completed=2`, scoreboard pairing `matched=2`, and host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:2]{index=2} :contentReference[oaicite:3]{index=3} :contentReference[oaicite:4]{index=4}
+- primary-path smoke tests
+- primary-path back-to-back tests
+- primary-path reset recovery tests
+- primary-path corner recipe
+- primary-path mid-run reset / abort recovery test
+- helper fallback sanity runs
 
-At this point, the subsystem has a working UVM sanity / regression layer for the main execution path.
+This is the current subsystem verification baseline.
 
 ---
 
@@ -47,18 +52,18 @@ At this point, the subsystem has a working UVM sanity / regression layer for the
 
 Current GEMM-oriented assumptions:
 
-- A / B elements are signed 8-bit
+- A and B elements are signed 8-bit
 - C / accumulator elements are signed 32-bit
 - matrix data is stored in compact row-major layout
 - result region C is read back as signed 32-bit words
 
-Default base map used by the common baseline cases:
+Default common base map:
 
 - `A = 0x0000_0000`
 - `B = 0x0000_0100`
 - `C = 0x0000_0200`
 
-The configurable-base smoke cases also exercise shifted but non-overlapping base maps.
+Some smoke cases also move these regions to shifted but non-overlapping legal base maps.
 
 ---
 
@@ -66,18 +71,18 @@ The configurable-base smoke cases also exercise shifted but non-overlapping base
 
 ### 1. Control path
 
-The subsystem control path is exercised through a UVM control agent and monitor.
+The subsystem control path is observed through a UVM control agent and monitor.
 
-The monitor now publishes **phase-aware control events on the same control analysis path**:
+The control monitor publishes phase-aware events on a single control analysis path:
 
 - `START`
 - `DONE`
 
-This lets the environment track job boundaries without introducing a second parallel control stream.
+This keeps job boundary tracking simple and lets the scoreboard and checker reason about execution phase without introducing a separate parallel control stream.
 
-### 2. Result checking
+### 2. Scoreboard and result path
 
-A dedicated result bridge publishes post-run result items into the scoreboard.
+A dedicated result bridge publishes result items into the scoreboard after post-run readback.
 
 The scoreboard checks:
 
@@ -86,25 +91,23 @@ The scoreboard checks:
 - ctrl/result pairing
 - result compare correctness
 
-For the current passing UVM runs, the scoreboard summaries show clean matching counts and zero errors. :contentReference[oaicite:5]{index=5} :contentReference[oaicite:6]{index=6} :contentReference[oaicite:7]{index=7}
+The scoreboard also supports the expected-abort case used by the mid-run reset test, where a started job is intentionally interrupted before completion.
 
 ### 3. Host memory path
 
-Host-side memory operations are driven through a UVM AXI-MM host agent.
-
-That path is used for:
+The main UVM path uses a dedicated AXI-MM host agent for memory-side activity such as:
 
 - clearing C before a run
 - preloading A and B
-- reading back C after completion
+- reading C after completion
 
-This replaced the earlier direct helper-style memory path as the main verification path for current UVM result-check runs.
+This is the primary path for normal strict subsystem verification.
 
 ### 4. Host traffic checker
 
 The environment also includes a host traffic checker.
 
-Its current role is to verify that the observed host traffic matches the intended memory flow for each job:
+On the primary host-agent path, it runs in strict mode and checks that observed host activity matches the intended per-job flow:
 
 - A preload writes
 - B preload writes
@@ -113,11 +116,17 @@ Its current role is to verify that the observed host traffic matches the intende
 
 It also uses the same phase-aware control stream to enforce simple phase rules:
 
-- pre-start traffic must contain only preload / clear behavior
-- compute phase should not see host traffic
-- post-done traffic should contain only C readback
+- pre-start phase: preload / clear only
+- compute phase: no host traffic
+- post-done phase: C readback only
 
-The recent smoke, back-to-back, and reset-recovery UVM runs all pass with this checker enabled in strict mode. :contentReference[oaicite:8]{index=8} :contentReference[oaicite:9]{index=9} :contentReference[oaicite:10]{index=10}
+For helper fallback sanity runs, the checker remains present but operates in passive non-strict mode. In that mode, the goal is not strict host-path enforcement, but confirming that helper fallback still preserves scoreboard pairing and result correctness.
+
+### 5. Reset-aware monitoring
+
+The control monitor now drops pending active control state when reset is asserted mid-run.
+
+This matters for abort-style testing because it prevents a reset-interrupted job from being incorrectly paired with the next completed job after reset.
 
 ---
 
@@ -126,11 +135,13 @@ The recent smoke, back-to-back, and reset-recovery UVM runs all pass with this c
 ## 1. Smoke test
 
 Main UVM test:
+
 - `ai_accel_subsys_smoke_test`
 
-This test currently covers three useful groups of cases.
+This test currently covers three groups of cases.
 
 ### Fixed 4x4 directed baseline
+
 Implemented fixed cases:
 
 - `CASE_ID=0` : identity × known
@@ -140,11 +151,12 @@ Implemented fixed cases:
 - `CASE_ID=4` : known × identity
 - `CASE_ID=5` : diagonal × diagonal
 - `CASE_ID=6` : sparse / checkerboard-like
-- `CASE_ID=7` : larger signed magnitude (safe range)
+- `CASE_ID=7` : larger signed magnitude within safe range
 
-These remain the main fixed-dimension correctness baseline. The older README already documented these fixed baseline cases, and that part is still valid. :contentReference[oaicite:11]{index=11}
+These remain the main fixed-dimension correctness baseline.
 
 ### Variable-dimension smoke
+
 Implemented variable-dimension cases:
 
 - `CASE_ID=100` : `1x1x1`
@@ -154,9 +166,10 @@ Implemented variable-dimension cases:
 - `CASE_ID=104` : `4x1x4`
 - `CASE_ID=105` : `2x3x4`
 
-These verify that `dim_m`, `dim_n`, and `dim_k` are functionally active, not just fixed placeholders. The legacy variable-dimension payload/reference extraction still reflects this compact row-major model. :contentReference[oaicite:12]{index=12} :contentReference[oaicite:13]{index=13}
+These verify that `dim_m`, `dim_n`, and `dim_k` are functionally active rather than fixed placeholders.
 
 ### Configurable base-address smoke
+
 Implemented configurable-base cases:
 
 - `CASE_ID=400` : baseline base map
@@ -164,109 +177,123 @@ Implemented configurable-base cases:
 - `CASE_ID=402` : shifted base map #2
 - `CASE_ID=403` : tighter non-overlapping base map
 
-These cases exercise the same functional path while moving the A/B/C regions to different legal locations. The earlier extracted configurable-base flow documents these four base-map variants. :contentReference[oaicite:14]{index=14}
+These cases exercise the same functional flow while moving A/B/C to different valid locations.
 
 ---
 
 ## 2. Back-to-back test
 
 Main UVM test:
+
 - `ai_accel_subsys_back_to_back_test`
 
 Purpose:
 
 - run multiple GEMM jobs in one simulation
-- verify reusable control behavior across consecutive launches
-- verify result compare and host traffic checking remain aligned across multiple jobs
+- verify repeated launch behavior
+- verify result pairing remains aligned across consecutive jobs
+- verify host traffic checking remains aligned across multiple jobs on the primary path
 
-A recent passing run used:
+Current regression examples include:
 
-- `JOB_COUNT=2`
-- `JOB0_CASE_ID=100`
-- `JOB1_CASE_ID=101`
-
-That run completed with:
-
-- scoreboard control summary `start=2 completed=2`
-- scoreboard pairing `matched=2`
-- host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:15]{index=15} :contentReference[oaicite:16]{index=16}
+- `100 -> 101`
+- `5 -> 0`
+- `5 -> 101 -> 400`
 
 ---
 
 ## 3. Reset recovery test
 
 Main UVM test:
+
 - `ai_accel_subsys_reset_recovery_test`
 
 Purpose:
 
-- run a valid job
+- run one valid job
 - apply a controlled recovery reset
 - verify the subsystem returns to a clean state
 - run another valid job after reset
 
-A recent passing run used:
+Current regression examples include:
 
-- `PRE_RESET_CASE_ID=5`
-- `POST_RESET_CASE_ID=101`
+- `5 -> 101`
+- `5 -> 400`
 
-That run completed with:
-
-- successful recovery reset
-- scoreboard control summary `start=2 completed=2`
-- scoreboard pairing `matched=2`
-- host traffic checker summary `start_events=2 done_events=2 jobs_created=2 pass=2 fail=0` :contentReference[oaicite:17]{index=17}
+This test is focused on reset between completed jobs.
 
 ---
 
-## Legacy baseline vs current flow
+## 4. Corner test
 
-The older repository milestone writeups were useful for establishing the original non-UVM subsystem baseline:
+Main UVM test:
 
-- fixed 4x4 directed baseline
-- variable-dimension smoke
-- back-to-back smoke
-- reset-recovery smoke
+- `ai_accel_subsys_corner_test`
 
-That history is still useful, but it is no longer the best description of the **current** verification flow. The older README still describes non-UVM top-level tests and presents minimal UVM as a future step. That is now outdated. :contentReference[oaicite:18]{index=18} :contentReference[oaicite:19]{index=19}
+Purpose:
 
-Today, the main working path is:
+- mix multiple case styles in one run
+- exercise repeated job sequencing across different payload shapes and base-map styles
+- keep the regression list compact while still covering a more realistic mixed recipe
 
-- UVM control agent
-- UVM host agent
-- scoreboard with ctrl/result pairing
-- host traffic checker using the same control path
+Current default recipe:
 
----
+- `5`
+- `101`
+- `105`
+- `403`
 
-## Notes on the reference model
-
-The current environment still benefits from helper/reference extraction from the earlier non-UVM subsystem tests.
-
-In particular, the compact row-major GEMM reference model and several directed payload builders were extracted forward into the UVM flow rather than being rewritten from scratch. The legacy helper snippets for fixed and variable cases still reflect the same reference computation style used by the current subsystem tests. :contentReference[oaicite:20]{index=20} :contentReference[oaicite:21]{index=21}
+This gives one fixed case, two variable-dimension cases, and one configurable-base case in a single run.
 
 ---
 
-## What the current baseline proves
+## 5. Mid-run reset / abort recovery test
 
-At the current checkpoint, the subsystem has demonstrated:
+Main UVM test:
 
-- end-to-end GEMM preload / compute / writeback / readback flow
-- correct fixed-dimension directed behavior
-- correct variable-dimension smoke behavior
-- correct configurable-base smoke behavior
-- repeated-run robustness in one simulation
-- reset recovery between completed runs
-- phase-aware control observation on the existing ctrl path
-- host memory traffic consistency checks on the main UVM memory path
+- `ai_accel_subsys_midrun_reset_test`
 
-This is no longer just a bring-up environment. It is now a usable UVM subsystem verification baseline.
+Purpose:
+
+- start a real job
+- wait until compute is active
+- assert reset before the job completes
+- confirm the interrupted job is treated as an expected abort
+- launch a clean recovery job after reset
+- confirm the recovery job still completes and compares cleanly
+
+Current default recipe:
+
+- abort job: `CASE_ID=5`
+- recovery job: `CASE_ID=101`
+
+This test is the main check for reset during active compute, not just reset between completed jobs.
 
 ---
 
-## Current top-level verification view
+## 6. Helper fallback sanity
 
-A simple way to think about the current verification stack is:
+The main execution path now prefers the host-agent memory path.
+
+That said, a small fallback sanity block is still kept in regression to confirm that helper-based memory access remains usable and does not break:
+
+- scoreboard control summary
+- ctrl/result pairing
+- result compare correctness
+
+Current fallback sanity runs include:
+
+- smoke fallback: `CASE_ID=101`
+- back-to-back fallback: `100 -> 101`
+- reset recovery fallback: `5 -> 101`
+
+This block is intentionally kept small.
+
+---
+
+## Current regression baseline
+
+A simple view of the current regression baseline is:
 
 1. `ai_accel_subsys_smoke_test`  
    single-job correctness and case coverage
@@ -275,9 +302,50 @@ A simple way to think about the current verification stack is:
    repeated-run robustness
 
 3. `ai_accel_subsys_reset_recovery_test`  
-   post-reset recovery robustness
+   recovery reset between completed jobs
+
+4. `ai_accel_subsys_corner_test`  
+   mixed-case sequencing coverage
+
+5. `ai_accel_subsys_midrun_reset_test`  
+   expected-abort behavior and post-reset recovery
+
+6. helper fallback sanity  
+   small non-primary-path confidence check
 
 Together, these form the current subsystem regression baseline.
+
+---
+
+## What the current baseline proves
+
+At this checkpoint, the subsystem has demonstrated:
+
+- end-to-end preload / compute / writeback / readback flow
+- correct fixed-dimension directed behavior
+- correct variable-dimension smoke behavior
+- correct configurable-base smoke behavior
+- repeated-run robustness in one simulation
+- reset recovery between completed runs
+- reset interruption handling during active compute
+- expected-abort semantics in scoreboard / checker flow
+- phase-aware control observation on a single ctrl path
+- host memory traffic consistency checks on the main UVM path
+- helper fallback still working as a small sanity path
+
+This is no longer just bring-up code. It is now a usable UVM subsystem verification baseline.
+
+---
+
+## Notes on the reference model
+
+The current UVM environment still reuses the same core reference ideas established in the earlier subsystem bring-up stage:
+
+- compact row-major payload layout
+- software-side GEMM reference calculation
+- directed payload generation for fixed and variable cases
+
+The newer UVM environment builds on those helpers rather than replacing the whole reference flow from scratch.
 
 ---
 
@@ -285,13 +353,14 @@ Together, these form the current subsystem regression baseline.
 
 Near-term work can go in a few directions:
 
-- cleanup and documentation alignment
-- helper fallback sanity runs
-- tighter host traffic rules if needed
-- additional directed corner coverage
-- broader regression organization
+- README / repo cleanup
+- regression script cleanup
+- additional corner recipes
+- optional fallback expansion if it becomes useful
+- more targeted stress cases around reset and sequencing
+- broader coverage organization if the environment grows further
 
-The main structural step that is already complete is the move from the earlier non-UVM milestone description to a working UVM subsystem environment.
+The current baseline is stable enough to branch from.
 
 ---
 
@@ -301,8 +370,10 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 
 - stable scratchpad-backed subsystem integration
 - UVM-based subsystem verification
-- multiple reusable smoke / robustness tests
+- reusable smoke / robustness / reset tests
 - scoreboard-based result checking
-- phase-aware host traffic checking
+- phase-aware control monitoring
+- host-agent-based main memory path verification
+- helper fallback sanity coverage
 
 That is the current baseline to build on.
