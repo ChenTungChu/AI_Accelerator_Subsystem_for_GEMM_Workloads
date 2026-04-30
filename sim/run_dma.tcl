@@ -19,6 +19,7 @@ set SUPPORTED_DMA_TB_TOPS [list \
     axi_mm2s_dma_to_loader_tb_top \
     dma_scratchpad_write_adapter_tb_top \
     axi_mm2s_dma_to_loader_to_adapter_tb_top \
+    dma_load_engine_tb_top \
 ]
 
 if {[lsearch -exact $SUPPORTED_DMA_TB_TOPS $DMA_TB_TOP] < 0} {

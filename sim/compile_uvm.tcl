@@ -78,6 +78,7 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/dma/axi_mm2s_dma.s
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/dma/axi_mm2s_dma_sink.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/dma/axi_stream_loader.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/dma_scratchpad_write_adapter.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/dma_load_engine.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/gemm_scratchpad_adapter.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys.sv
 
@@ -120,6 +121,11 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/dma/dma_scratchpad_
 # Compile DMA -> Loader -> Adapter integration TB
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/dma/axi_mm2s_dma_to_loader_to_adapter_tb_top.sv
+
+# --------------------------------------------------------
+# Compile DMA load engine unit-level TB
+# --------------------------------------------------------
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/dma/dma_load_engine_tb_top.sv
 
 puts "\n==============================="
 puts "Compilation Completed!"
