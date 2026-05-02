@@ -1,5 +1,5 @@
 # ------------------------------------------------------------
-# Smoke test (primary path)
+# Smoke test (primary host path)
 # ------------------------------------------------------------
 # fixed baseline
 ai_accel_subsys_smoke_test CASE_ID 5 +ENABLE_RESULT_CHECK=1
@@ -15,34 +15,61 @@ ai_accel_subsys_smoke_test CASE_ID 401 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 402 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
 
+
 # ------------------------------------------------------------
-# Back-to-back test (primary path)
+# DMA load smoke test (primary DMA-load path)
+#
+# Coverage:
+#   DMA source memory
+#     -> dma_load_engine
+#     -> scratchpad_port0_owner_mux
+#     -> BRAM Port0
+#     -> GEMM
+#     -> host AXI0 readback C
+#     -> local expected compare
+#
+# RUN_ALL recipe:
+#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+#
+# Note:
+#   This test uses local self-check.
+#   It does not require +ENABLE_RESULT_CHECK=1.
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1
+
+
+# ------------------------------------------------------------
+# Back-to-back test (primary host path)
 # ------------------------------------------------------------
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=5   +JOB1_CASE_ID=0
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=3 +JOB0_CASE_ID=5   +JOB1_CASE_ID=101 +JOB2_CASE_ID=400
 
+
 # ------------------------------------------------------------
-# Reset recovery test (primary path)
+# Reset recovery test (primary host path)
 # ------------------------------------------------------------
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=400
 
+
 # ------------------------------------------------------------
-# Corner test (primary path)
+# Corner test (primary host path)
 # ------------------------------------------------------------
 # class default mixed-corner recipe:
 #   5 -> 101 -> 105 -> 403
 ai_accel_subsys_corner_test +ENABLE_RESULT_CHECK=1
 
+
 # ------------------------------------------------------------
-# Mid-run reset / abort recovery test (primary path)
+# Mid-run reset / abort recovery test (primary host path)
 # ------------------------------------------------------------
 # default recipe:
-#   abort job   = CASE_ID 5
-#   recovery job= CASE_ID 101
+#   abort job    = CASE_ID 5
+#   recovery job = CASE_ID 101
 #   reset fires after acc_busy, before acc_done
 ai_accel_subsys_midrun_reset_test +ENABLE_RESULT_CHECK=1 +ABORT_CASE_ID=5 +RECOVERY_CASE_ID=101 +RESET_TRIGGER_CYCLES_AFTER_BUSY=8 +RESET_HOLD_CYCLES=5 +POST_RESET_SETTLE_CYCLES=5
+
 
 # ------------------------------------------------------------
 # Helper fallback sanity
