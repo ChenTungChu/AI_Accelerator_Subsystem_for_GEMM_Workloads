@@ -127,6 +127,31 @@ interface ai_accel_subsys_ctrl_if #(
     endtask
 
     // ------------------------------------------------------------
+    // DMA source RRESP error injection control
+    //
+    // Used by subsystem DMA load error tests.
+    //
+    // beat_index is zero-based relative to dma_src_ar_count in the
+    // responder model:
+    //   0 -> inject error on first source read response
+    //   1 -> inject error on second source read response
+    //
+    // Set enable=0 and beat_index=-1 to disable.
+    // ------------------------------------------------------------
+    logic      dma_src_inject_rresp_error;
+    int signed dma_src_inject_rresp_error_beat;
+
+    task automatic dma_src_set_rresp_error(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        dma_src_inject_rresp_error      = enable;
+        dma_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Driver clocking block
     // ------------------------------------------------------------
     clocking cb_drv @(posedge clk);

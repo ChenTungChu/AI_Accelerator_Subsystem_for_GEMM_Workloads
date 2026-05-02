@@ -107,6 +107,10 @@ module ai_accel_subsys_uvm_top;
     logic [ADDR_WIDTH-1:0] dma_src_rd_pending_addr;
     logic [ID_WIDTH-1:0]   dma_src_rd_pending_id;
     int unsigned           dma_src_rd_pending_delay;
+    int unsigned           dma_src_rd_pending_beat_idx;
+
+    logic                  dma_src_inject_enable_q;
+    int unsigned           dma_src_inject_base_ar_count;
 
     logic [ID_WIDTH-1:0]   dma_src_rid_q;
     logic [DATA_WIDTH-1:0] dma_src_rdata_q;
@@ -114,8 +118,6 @@ module ai_accel_subsys_uvm_top;
     logic                  dma_src_rlast_q;
     logic                  dma_src_rvalid_q;
 
-    logic                  dma_src_inject_rresp_error;
-    int signed             dma_src_inject_rresp_error_beat;
     int unsigned           dma_src_ar_count;
     int unsigned           dma_src_r_count;
 
@@ -199,16 +201,6 @@ module ai_accel_subsys_uvm_top;
     end
     endfunction
 
-    task automatic dma_src_set_rresp_error(
-        input bit        enable,
-        input int signed beat_index
-    );
-    begin
-        dma_src_inject_rresp_error      = enable;
-        dma_src_inject_rresp_error_beat = beat_index;
-    end
-    endtask
-
     // ============================================================
     // DMA source AXI read responder
     //
@@ -219,10 +211,14 @@ module ai_accel_subsys_uvm_top;
     // ============================================================
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
-            dma_src_rd_pending_valid <= 1'b0;
-            dma_src_rd_pending_addr  <= '0;
-            dma_src_rd_pending_id    <= '0;
-            dma_src_rd_pending_delay <= 0;
+            dma_src_rd_pending_valid    <= 1'b0;
+            dma_src_rd_pending_addr     <= '0;
+            dma_src_rd_pending_id       <= '0;
+            dma_src_rd_pending_delay    <= 0;
+            dma_src_rd_pending_beat_idx <= 0;
+
+            dma_src_inject_enable_q     <= 1'b0;
+            dma_src_inject_base_ar_count <= 0;
 
             dma_src_rid_q            <= '0;
             dma_src_rdata_q          <= '0;
@@ -234,6 +230,16 @@ module ai_accel_subsys_uvm_top;
             dma_src_r_count          <= 0;
         end
         else begin
+            // Capture the AR count when error injection becomes enabled.
+            // This makes ctrl_if.dma_src_inject_rresp_error_beat relative
+            // to the moment injection is enabled.
+            dma_src_inject_enable_q <= ctrl_if.dma_src_inject_rresp_error;
+
+            if (ctrl_if.dma_src_inject_rresp_error &&
+                !dma_src_inject_enable_q) begin
+                dma_src_inject_base_ar_count <= dma_src_ar_count;
+            end
+
             if (dma_src_ar_fire) begin
                 int unsigned ar_base_idx;
 
@@ -253,12 +259,13 @@ module ai_accel_subsys_uvm_top;
                     );
                 end
 
-                dma_src_rd_pending_valid <= 1'b1;
-                dma_src_rd_pending_addr  <= dma_src_axi_araddr;
-                dma_src_rd_pending_id    <= dma_src_axi_arid;
-                dma_src_rd_pending_delay <= DMA_SRC_READ_LATENCY_CYCLES;
+                dma_src_rd_pending_valid    <= 1'b1;
+                dma_src_rd_pending_addr     <= dma_src_axi_araddr;
+                dma_src_rd_pending_id       <= dma_src_axi_arid;
+                dma_src_rd_pending_delay    <= DMA_SRC_READ_LATENCY_CYCLES;
+                dma_src_rd_pending_beat_idx <= dma_src_ar_count;
 
-                dma_src_ar_count         <= dma_src_ar_count + 1;
+                dma_src_ar_count            <= dma_src_ar_count + 1;
             end
             else if (dma_src_rd_pending_valid && (dma_src_rd_pending_delay != 0)) begin
                 dma_src_rd_pending_delay <= dma_src_rd_pending_delay - 1;
@@ -283,9 +290,12 @@ module ai_accel_subsys_uvm_top;
                 dma_src_rid_q    <= dma_src_rd_pending_id;
                 dma_src_rdata_q  <= dma_src_pack_word(dma_src_rd_pending_addr);
 
-                if (dma_src_inject_rresp_error &&
-                    (dma_src_inject_rresp_error_beat >= 0) &&
-                    (int'(dma_src_ar_count) == dma_src_inject_rresp_error_beat)) begin
+                if (ctrl_if.dma_src_inject_rresp_error &&
+                    (ctrl_if.dma_src_inject_rresp_error_beat >= 0) &&
+                    (dma_src_rd_pending_beat_idx >= dma_src_inject_base_ar_count) &&
+                    (int'(dma_src_rd_pending_beat_idx - dma_src_inject_base_ar_count) ==
+                        ctrl_if.dma_src_inject_rresp_error_beat)) begin
+
                     dma_src_rresp_q <= AXI_RESP_SLVERR;
                 end
                 else begin
@@ -431,7 +441,7 @@ module ai_accel_subsys_uvm_top;
 
         // DMA source memory model defaults
         ctrl_if.dma_src_mem_clear();
-        dma_src_set_rresp_error(1'b0, -1);
+        ctrl_if.dma_src_set_rresp_error(1'b0, -1);
 
         // axi0_if idle defaults
         axi0_if.awid    = '0;

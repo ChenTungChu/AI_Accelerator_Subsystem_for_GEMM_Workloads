@@ -99,7 +99,7 @@ proc run_reg_item {name setup_body} {
     clear_uvm_run_vars
 
     # Stop previous sim context if any.
-    catch {quit -sim}
+    catch {quit -sim -f}
 
     # Apply item-specific variable setup.
     uplevel 1 $setup_body
@@ -182,6 +182,15 @@ run_reg_item "dma_load_smoke RUN_ALL" {
     set UVM_TEST ai_accel_subsys_dma_load_smoke_test
     set CASE_ID 100
     set RUN_ALL 1
+}
+
+# ============================================================
+# DMA load error / recovery test
+# ============================================================
+
+run_reg_item "dma_load_error invalid_launch_and_recovery" {
+    set UVM_TEST ai_accel_subsys_dma_load_error_test
+    set ENABLE_RESULT_CHECK 0
 }
 
 # ============================================================

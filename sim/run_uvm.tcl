@@ -11,6 +11,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_corner_test \
     ai_accel_subsys_midrun_reset_test \
     ai_accel_subsys_dma_load_smoke_test \
+    ai_accel_subsys_dma_load_error_test \
 ]
 
 # --------------------------------------------------

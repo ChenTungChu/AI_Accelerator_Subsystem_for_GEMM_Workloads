@@ -22,7 +22,9 @@ module dma_load_engine #(
     //   - src_base_addr and dst_base_addr must be beat-aligned
     //   - loader starts first
     //   - DMA starts one cycle later
-    //   - done after DMA, loader, and adapter all complete
+    //   - normal done after DMA, loader, and adapter all complete
+    //   - terminal error aborts the load job and soft-resets
+    //     the internal DMA/loader/adapter chain
     // ------------------------------------------------------------
     input  logic                     load_start,
     input  logic [ADDR_WIDTH-1:0]    src_base_addr,
@@ -50,9 +52,6 @@ module dma_load_engine #(
 
     // ------------------------------------------------------------
     // Source AXI-MM read master
-    //
-    // v1 exposes only the read side.
-    // The internal DMA write channels are tied inactive.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  src_axi_arid,
     output logic [ADDR_WIDTH-1:0]    src_axi_araddr,
@@ -71,9 +70,6 @@ module dma_load_engine #(
 
     // ------------------------------------------------------------
     // Scratchpad AXI-MM write master
-    //
-    // v1 exposes only the write side.
-    // The adapter read channels are tied inactive internally.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  spad_axi_awid,
     output logic [ADDR_WIDTH-1:0]    spad_axi_awaddr,
@@ -106,7 +102,8 @@ module dma_load_engine #(
         S_START_LOADER = 3'd1,
         S_START_DMA    = 3'd2,
         S_WAIT_DONE    = 3'd3,
-        S_DONE_PULSE   = 3'd4
+        S_ABORT_RESET  = 3'd4,
+        S_DONE_PULSE   = 3'd5
     } state_e;
 
     state_e state, state_n;
@@ -119,10 +116,12 @@ module dma_load_engine #(
     logic [31:0]           load_beats_q;
 
     // ------------------------------------------------------------
-    // Internal control pulses
+    // Internal control / reset
     // ------------------------------------------------------------
     logic dma_start;
     logic loader_start;
+
+    logic sub_rst_n;
 
     logic dma_busy;
     logic dma_done;
@@ -137,6 +136,7 @@ module dma_load_engine #(
     logic adapter_error;
 
     logic all_done_now;
+    logic terminal_error_now;
     logic load_req_valid;
 
     // ------------------------------------------------------------
@@ -218,9 +218,15 @@ module dma_load_engine #(
             addr_is_aligned(dst_base_addr);
     end
 
+    // Internal soft reset:
+    //   - normal system reset resets everything
+    //   - S_ABORT_RESET gives the internal chain one-cycle reset
+    //     after terminal error, allowing the next load job to recover
+    assign sub_rst_n = rst_n && (state != S_ABORT_RESET);
+
     always_comb begin
-        loader_start = (state == S_START_LOADER);
-        dma_start    = (state == S_START_DMA);
+        loader_start = (state == S_START_LOADER) && sub_rst_n;
+        dma_start    = (state == S_START_DMA)    && sub_rst_n;
     end
 
     always_comb begin
@@ -230,17 +236,25 @@ module dma_load_engine #(
             (adapter_done_seen || adapter_done);
     end
 
+    always_comb begin
+        terminal_error_now = dma_error | loader_error | adapter_error;
+    end
+
     // ------------------------------------------------------------
     // Public status
+    //
+    // Important:
+    //   Do not OR raw submodule busy into load_busy.
+    //   On terminal error, a downstream block can be waiting forever
+    //   for data that will never arrive. Wrapper ownership should be
+    //   controlled by wrapper state, not stuck child busy.
     // ------------------------------------------------------------
     always_comb begin
         load_busy =
             (state == S_START_LOADER) ||
             (state == S_START_DMA)    ||
             (state == S_WAIT_DONE)    ||
-            dma_busy                  ||
-            loader_busy               ||
-            adapter_busy;
+            (state == S_ABORT_RESET);
     end
 
     always_comb begin
@@ -274,9 +288,16 @@ module dma_load_engine #(
             end
 
             S_WAIT_DONE: begin
-                if (all_done_now) begin
+                if (terminal_error_now) begin
+                    state_n = S_ABORT_RESET;
+                end
+                else if (all_done_now) begin
                     state_n = S_DONE_PULSE;
                 end
+            end
+
+            S_ABORT_RESET: begin
+                state_n = S_DONE_PULSE;
             end
 
             S_DONE_PULSE: begin
@@ -352,6 +373,12 @@ module dma_load_engine #(
                     load_error <= load_error | dma_error | loader_error | adapter_error;
                 end
 
+                S_ABORT_RESET: begin
+                    // Terminal error path. Keep load_error sticky and
+                    // reset the child pipeline through sub_rst_n.
+                    load_error <= 1'b1;
+                end
+
                 S_DONE_PULSE: begin
                     // Hold sticky load_error until next load_start
                 end
@@ -373,7 +400,7 @@ module dma_load_engine #(
         .AXI_ARID     (DMA_ARID)
     ) u_dma (
         .clk            (clk),
-        .rst_n          (rst_n),
+        .rst_n          (sub_rst_n),
 
         .start          (dma_start),
         .src_addr       (src_base_addr_q),
@@ -434,7 +461,7 @@ module dma_load_engine #(
         .DATA_WIDTH (DATA_WIDTH)
     ) u_loader (
         .clk              (clk),
-        .rst_n            (rst_n),
+        .rst_n            (sub_rst_n),
 
         .start            (loader_start),
         .dst_base_addr    (dst_base_addr_q),
@@ -475,7 +502,7 @@ module dma_load_engine #(
         .AXI_AWID     (ADAPTER_AWID)
     ) u_adapter (
         .clk             (clk),
-        .rst_n           (rst_n),
+        .rst_n           (sub_rst_n),
 
         .src_wr_valid    (loader_wr_valid),
         .src_wr_ready    (loader_wr_ready),

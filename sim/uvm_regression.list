@@ -37,6 +37,18 @@ ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
 # ------------------------------------------------------------
 ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1
 
+# ------------------------------------------------------------
+# DMA load error / recovery test
+#
+# Coverage:
+#   - zero load_beats
+#   - unaligned source address
+#   - unaligned destination address
+#   - Port0 host recovery after DMA load error
+#   - valid DMA load + GEMM recovery after errors
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_error_test
+
 
 # ------------------------------------------------------------
 # Back-to-back test (primary host path)
