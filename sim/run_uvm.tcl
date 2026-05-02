@@ -1,3 +1,4 @@
+# File: sim/run_uvm.tcl
 file mkdir logs
 
 # --------------------------------------------------
@@ -13,6 +14,19 @@ set SUPPORTED_UVM_TESTS [list \
 ]
 
 # --------------------------------------------------
+# TESTNAME compatibility
+#
+# Preferred variable:
+#   UVM_TEST
+#
+# Backward-compatible alias:
+#   TESTNAME
+# --------------------------------------------------
+if {![info exists UVM_TEST] && [info exists TESTNAME]} {
+    set UVM_TEST $TESTNAME
+}
+
+# --------------------------------------------------
 # Select UVM test
 #   default: ai_accel_subsys_smoke_test
 # --------------------------------------------------
@@ -26,7 +40,10 @@ if {[lsearch -exact $SUPPORTED_UVM_TESTS $UVM_TEST] < 0} {
 
 # --------------------------------------------------
 # Smoke-test case selection
-#   used by ai_accel_subsys_smoke_test
+#
+# Used by:
+#   ai_accel_subsys_smoke_test
+#   ai_accel_subsys_dma_load_smoke_test
 # --------------------------------------------------
 if {![info exists CASE_ID]} {
     set CASE_ID 0
@@ -169,6 +186,28 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 }
 
 # --------------------------------------------------
+# DMA-load smoke knobs
+#
+#   used by ai_accel_subsys_dma_load_smoke_test
+#
+#   RUN_ALL=0:
+#     run selected CASE_ID only
+#
+#   RUN_ALL=1:
+#     run built-in DMA load smoke mini-regression
+#     currently: CASE_ID 100 -> 101
+# --------------------------------------------------
+set DMA_LOAD_ARG_LIST [list]
+
+if {$UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test"} {
+    if {![info exists RUN_ALL]} {
+        set RUN_ALL 0
+    }
+
+    lappend DMA_LOAD_ARG_LIST +RUN_ALL=$RUN_ALL
+}
+
+# --------------------------------------------------
 # Reset-recovery test knobs
 #   used by ai_accel_subsys_reset_recovery_test
 # --------------------------------------------------
@@ -189,18 +228,40 @@ if {![info exists POST_RESET_SETTLE_CYCLES]} {
 }
 
 # --------------------------------------------------
+# Extra plusargs
+#
+#   Optional escape hatch for temporary debug knobs.
+#
+#   Example:
+#     set EXTRA_PLUSARGS "+FOO=1 +BAR=2"
+# --------------------------------------------------
+if {![info exists EXTRA_PLUSARGS]} {
+    set EXTRA_PLUSARGS [list]
+}
+
+# --------------------------------------------------
 # Transcript log naming
 # --------------------------------------------------
 if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_FILE logs/${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
 } elseif {$UVM_TEST eq "ai_accel_subsys_corner_test"} {
     if {[llength $JOB_ARG_LIST] == 0} {
         set LOG_FILE logs/${UVM_TEST}_class_default_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
         set LOG_FILE logs/${UVM_TEST}_job_override_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     }
+
 } elseif {$UVM_TEST eq "ai_accel_subsys_reset_recovery_test"} {
     set LOG_FILE logs/${UVM_TEST}_pre_${PRE_RESET_CASE_ID}_post_${POST_RESET_CASE_ID}_hold_${RESET_HOLD_CYCLES}_settle_${POST_RESET_SETTLE_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
+} elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test"} {
+    if {$RUN_ALL} {
+        set LOG_FILE logs/${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    } else {
+        set LOG_FILE logs/${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    }
+
 } else {
     set LOG_FILE logs/${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 }
@@ -226,10 +287,12 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
   {*}$LEGACY_HOST_OVERRIDE_ARGS \
   {*}$JOB_ARG_LIST \
+  {*}$DMA_LOAD_ARG_LIST \
   +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
   +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
   +RESET_HOLD_CYCLES=$RESET_HOLD_CYCLES \
-  +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES
+  +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES \
+  {*}$EXTRA_PLUSARGS
 
 add wave -r sim:/*
 run -all

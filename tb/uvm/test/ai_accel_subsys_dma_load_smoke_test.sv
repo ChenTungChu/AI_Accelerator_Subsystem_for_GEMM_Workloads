@@ -14,14 +14,18 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     localparam int DATA_WIDTH = 64;
     localparam int ID_WIDTH   = 4;
 
+    localparam int DIM_WIDTH  = 8;
+    localparam int DMA_SRC_MEM_BYTES = 4096;
+
     localparam int BYTES_PER_BEAT = DATA_WIDTH / 8;
 
-    localparam logic [1:0] AXI_RESP_OKAY = 2'b00;
+    localparam logic [1:0] AXI_RESP_OKAY  = 2'b00;
     localparam logic [1:0] AXI_BURST_INCR = 2'b01;
 
     typedef virtual ai_accel_subsys_ctrl_if #(
-        .ADDR_WIDTH (ADDR_WIDTH),
-        .DIM_WIDTH  (8)
+        .ADDR_WIDTH        (ADDR_WIDTH),
+        .DIM_WIDTH         (DIM_WIDTH),
+        .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES)
     ) ctrl_vif_t;
 
     typedef virtual axi_mm_if #(
@@ -41,6 +45,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // Test configuration
     // ------------------------------------------------------------
     int unsigned case_id;
+    int unsigned run_all;
 
     logic [ADDR_WIDTH-1:0] base_a;
     logic [ADDR_WIDTH-1:0] base_b;
@@ -49,9 +54,17 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     logic [ADDR_WIDTH-1:0] dma_src_a;
     logic [ADDR_WIDTH-1:0] dma_src_b;
 
-    logic [7:0] a_value;
-    logic [7:0] b_value;
-    logic [31:0] expected_c;
+    int unsigned dim_m_i;
+    int unsigned dim_n_i;
+    int unsigned dim_k_i;
+
+    int unsigned a_bytes;
+    int unsigned b_bytes;
+    int unsigned c_words;
+
+    logic [7:0]  a_payload [0:63];
+    logic [7:0]  b_payload [0:63];
+    logic [31:0] expected_c [0:63];
 
     // ------------------------------------------------------------
     // Constructor
@@ -79,29 +92,248 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             case_id = 100;
         end
 
-        if (case_id != 100) begin
-            `uvm_warning("DMA_LOAD_SMOKE",
-                $sformatf("Only CASE_ID=100 is supported in v1. Overriding CASE_ID=%0d to 100.", case_id))
-            case_id = 100;
+        if (!$value$plusargs("RUN_ALL=%0d", run_all)) begin
+            run_all = 0;
         end
+    endfunction
 
-        // CASE_ID=100 equivalent:
-        //   dim=(1,1,1)
-        //   A: 1 byte
-        //   B: 1 byte
-        //   C: 1 int32 result
-        base_a    = 32'h0000_0000;
-        base_b    = 32'h0000_0100;
-        base_c    = 32'h0000_0200;
+    // ------------------------------------------------------------
+    // Utility
+    // ------------------------------------------------------------
+    function automatic int unsigned ceil_div(
+        input int unsigned value,
+        input int unsigned divisor
+    );
+        if (value == 0) begin
+            return 0;
+        end
+        return (value + divisor - 1) / divisor;
+    endfunction
 
+    function automatic logic [DATA_WIDTH/8-1:0] full_strb();
+        return {DATA_WIDTH/8{1'b1}};
+    endfunction
+
+    task automatic clear_payload_arrays();
+        int unsigned i;
+    begin
+        for (i = 0; i < 64; i++) begin
+            a_payload[i] = 8'h00;
+            b_payload[i] = 8'h00;
+            expected_c[i] = 32'h0000_0000;
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Configure supported cases
+    // ------------------------------------------------------------
+    task automatic configure_case(input int unsigned cid);
+        int unsigned i;
+    begin
+        clear_payload_arrays();
+
+        // Default DMA source locations.
+        // Source memory is independent from scratchpad address map.
         dma_src_a = 32'h0000_0000;
         dma_src_b = 32'h0000_0100;
 
-        // Use small positive values to avoid signed/overflow ambiguity.
-        a_value    = 8'd3;
-        b_value    = 8'd5;
-        expected_c = 32'd15;
-    endfunction
+        // Default scratchpad layout.
+        base_a = 32'h0000_0000;
+        base_b = 32'h0000_0100;
+        base_c = 32'h0000_0200;
+
+        case (cid)
+            100: begin
+                // 1x1x1:
+                // A = [3]
+                // B = [5]
+                // C = [15]
+                dim_m_i = 1;
+                dim_n_i = 1;
+                dim_k_i = 1;
+
+                a_bytes = 1;
+                b_bytes = 1;
+                c_words = 1;
+
+                a_payload[0] = 8'd3;
+                b_payload[0] = 8'd5;
+            end
+
+            101: begin
+                // 2x2x2:
+                //
+                // A = [ 1 2
+                //       3 4 ]
+                //
+                // B = [ 5 6
+                //       7 8 ]
+                //
+                // C = [ 19 22
+                //       43 50 ]
+                dim_m_i = 2;
+                dim_n_i = 2;
+                dim_k_i = 2;
+
+                a_bytes = 4;
+                b_bytes = 4;
+                c_words = 4;
+
+                // A row-major, MxK
+                a_payload[0] = 8'd1;
+                a_payload[1] = 8'd2;
+                a_payload[2] = 8'd3;
+                a_payload[3] = 8'd4;
+
+                // B row-major, KxN
+                b_payload[0] = 8'd5;
+                b_payload[1] = 8'd6;
+                b_payload[2] = 8'd7;
+                b_payload[3] = 8'd8;
+            end
+
+            105: begin
+                // 2x3x4:
+                // A shape: MxK = 2x4, 8 bytes
+                // B shape: KxN = 4x3, 12 bytes
+                // C shape: MxN = 2x3, 6 words
+                dim_m_i = 2;
+                dim_n_i = 3;
+                dim_k_i = 4;
+
+                a_bytes = 8;
+                b_bytes = 12;
+                c_words = 6;
+
+                // A row-major:
+                // [ 1 2 3 4
+                //   5 6 7 8 ]
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = i + 1;
+                end
+
+                // B row-major, KxN:
+                // [ 1 2 3
+                //   4 5 6
+                //   7 8 9
+                //   10 11 12 ]
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = i + 1;
+                end
+            end
+
+            5, 400, 401, 402, 403: begin
+                // 4x4x4:
+                // A shape: MxK = 4x4, 16 bytes
+                // B shape: KxN = 4x4, 16 bytes
+                // C shape: MxN = 4x4, 16 words
+                dim_m_i = 4;
+                dim_n_i = 4;
+                dim_k_i = 4;
+
+                a_bytes = 16;
+                b_bytes = 16;
+                c_words = 16;
+
+                // Configurable-base cases.
+                // CASE_ID=5 and 400 use default layout.
+                case (cid)
+                    5, 400: begin
+                        base_a = 32'h0000_0000;
+                        base_b = 32'h0000_0100;
+                        base_c = 32'h0000_0200;
+                    end
+
+                    401: begin
+                        base_a = 32'h0000_0040;
+                        base_b = 32'h0000_0140;
+                        base_c = 32'h0000_0240;
+                    end
+
+                    402: begin
+                        base_a = 32'h0000_0080;
+                        base_b = 32'h0000_0180;
+                        base_c = 32'h0000_0280;
+                    end
+
+                    403: begin
+                        base_a = 32'h0000_0020;
+                        base_b = 32'h0000_0060;
+                        base_c = 32'h0000_00a0;
+                    end
+
+                    default: begin
+                        // unreachable because outer case already filters
+                    end
+                endcase
+
+                // A row-major, simple deterministic pattern.
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (i % 8) + 1;
+                end
+
+                // B row-major, different deterministic pattern.
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 11) + 1;
+                end
+            end
+
+            default: begin
+                `uvm_fatal("DMA_LOAD_SMOKE",
+                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 400, 401, 402, 403", cid))
+            end
+        endcase
+
+        compute_expected_c();
+
+        `uvm_info("DMA_LOAD_SMOKE",
+            $sformatf("Configured CASE_ID=%0d dim=(%0d,%0d,%0d) A=0x%08h B=0x%08h C=0x%08h A_bytes=%0d B_bytes=%0d C_words=%0d",
+                cid,
+                dim_m_i, dim_n_i, dim_k_i,
+                base_a, base_b, base_c,
+                a_bytes, b_bytes, c_words),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Compute expected C = A x B
+    // A: MxK row-major, int8
+    // B: KxN row-major, int8
+    // C: MxN row-major, int32
+    // ------------------------------------------------------------
+    task automatic compute_expected_c();
+        int unsigned r;
+        int unsigned c;
+        int unsigned kk;
+        int signed sum;
+        int signed aa;
+        int signed bb;
+        int unsigned a_idx;
+        int unsigned b_idx;
+        int unsigned c_idx;
+    begin
+        for (r = 0; r < dim_m_i; r++) begin
+            for (c = 0; c < dim_n_i; c++) begin
+                sum = 0;
+
+                for (kk = 0; kk < dim_k_i; kk++) begin
+                    a_idx = r * dim_k_i + kk;
+                    b_idx = kk * dim_n_i + c;
+
+                    aa = $signed(a_payload[a_idx]);
+                    bb = $signed(b_payload[b_idx]);
+
+                    sum += aa * bb;
+                end
+
+                c_idx = r * dim_n_i + c;
+                expected_c[c_idx] = sum;
+            end
+        end
+    end
+    endtask
 
     // ------------------------------------------------------------
     // Wait for reset release
@@ -221,7 +453,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             end
 
             timeout++;
-            if (timeout > 1000) begin
+            if (timeout > 2000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE",
                     $sformatf("AXI0 write timeout waiting AW/W handshake addr=0x%08h", addr))
             end
@@ -232,7 +464,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             @(posedge axi0_vif.clk);
             timeout++;
 
-            if (timeout > 1000) begin
+            if (timeout > 2000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE",
                     $sformatf("AXI0 write timeout waiting B response addr=0x%08h", addr))
             end
@@ -245,11 +477,11 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         end
 
         @(posedge axi0_vif.clk);
-        axi0_vif.bready <= 1'b0;
-        axi0_vif.wlast  <= 1'b0;
-        axi0_vif.wstrb  <= '0;
-        axi0_vif.wdata  <= '0;
-        axi0_vif.awaddr <= '0;
+        axi0_vif.bready  <= 1'b0;
+        axi0_vif.wlast   <= 1'b0;
+        axi0_vif.wstrb   <= '0;
+        axi0_vif.wdata   <= '0;
+        axi0_vif.awaddr  <= '0;
     endtask
 
     // ------------------------------------------------------------
@@ -278,7 +510,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             @(posedge axi0_vif.clk);
             timeout++;
 
-            if (timeout > 1000) begin
+            if (timeout > 2000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE",
                     $sformatf("AXI0 read timeout waiting AR handshake addr=0x%08h", addr))
             end
@@ -292,7 +524,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             @(posedge axi0_vif.clk);
             timeout++;
 
-            if (timeout > 1000) begin
+            if (timeout > 2000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE",
                     $sformatf("AXI0 read timeout waiting R response addr=0x%08h", addr))
             end
@@ -318,33 +550,50 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     endtask
 
     // ------------------------------------------------------------
-    // Host clear C
+    // Host clear C region
     // ------------------------------------------------------------
     task automatic clear_c_region();
+        int unsigned total_c_bytes;
+        int unsigned beat_count;
+        int unsigned i;
+        logic [ADDR_WIDTH-1:0] addr;
+    begin
+        total_c_bytes = c_words * 4;
+        beat_count    = ceil_div(total_c_bytes, BYTES_PER_BEAT);
+
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("Clearing C via AXI0: base_c=0x%08h", base_c),
+            $sformatf("Clearing C via AXI0: base_c=0x%08h words=%0d beats=%0d",
+                base_c, c_words, beat_count),
             UVM_MEDIUM)
 
-        // CASE_ID=100 has one int32 C element.
-        // Clear full 64-bit beat to make debug easier.
-        axi0_write64(base_c, 64'h0000_0000_0000_0000, 8'hFF);
+        for (i = 0; i < beat_count; i++) begin
+            addr = base_c + ADDR_WIDTH'(i * BYTES_PER_BEAT);
+            axi0_write64(addr, 64'h0000_0000_0000_0000, full_strb());
+        end
+    end
     endtask
 
     // ------------------------------------------------------------
-    // Fill DMA source memory through top-level helper task
+    // Fill DMA source memory through ctrl_if helper tasks
     // ------------------------------------------------------------
     task automatic preload_dma_source_memory();
+        int unsigned i;
+    begin
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("Preloading DMA source memory: A src=0x%08h value=%0d, B src=0x%08h value=%0d",
-                dma_src_a, a_value, dma_src_b, b_value),
+            $sformatf("Preloading DMA source memory: A src=0x%08h bytes=%0d, B src=0x%08h bytes=%0d",
+                dma_src_a, a_bytes, dma_src_b, b_bytes),
             UVM_MEDIUM)
 
-        // These tasks live in ai_accel_subsys_uvm_top.sv.
-        // The source memory responder is byte-addressed.
         vif.dma_src_mem_clear();
 
-        vif.dma_src_mem_write_byte(dma_src_a, a_value);
-        vif.dma_src_mem_write_byte(dma_src_b, b_value);
+        for (i = 0; i < a_bytes; i++) begin
+            vif.dma_src_mem_write_byte(dma_src_a + ADDR_WIDTH'(i), a_payload[i]);
+        end
+
+        for (i = 0; i < b_bytes; i++) begin
+            vif.dma_src_mem_write_byte(dma_src_b + ADDR_WIDTH'(i), b_payload[i]);
+        end
+    end
     endtask
 
     // ------------------------------------------------------------
@@ -354,23 +603,30 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         input string                  tag,
         input logic [ADDR_WIDTH-1:0]  src_addr,
         input logic [ADDR_WIDTH-1:0]  dst_addr,
-        input logic [31:0]            beats
+        input int unsigned            byte_count
     );
         int unsigned timeout;
+        int unsigned beats;
         bit done_seen;
 
         timeout   = 0;
         done_seen = 0;
+        beats     = ceil_div(byte_count, BYTES_PER_BEAT);
+
+        if (beats == 0) begin
+            `uvm_fatal("DMA_LOAD_SMOKE",
+                $sformatf("Invalid zero-beat DMA load for %s", tag))
+        end
 
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("Starting DMA load %s: src=0x%08h dst=0x%08h beats=%0d",
-                tag, src_addr, dst_addr, beats),
+            $sformatf("Starting DMA load %s: src=0x%08h dst=0x%08h bytes=%0d beats=%0d",
+                tag, src_addr, dst_addr, byte_count, beats),
             UVM_MEDIUM)
 
         @(vif.cb_drv);
         vif.cb_drv.dma_src_base_addr <= src_addr;
         vif.cb_drv.dma_dst_base_addr <= dst_addr;
-        vif.cb_drv.dma_load_beats    <= beats;
+        vif.cb_drv.dma_load_beats    <= beats[31:0];
         vif.cb_drv.dma_load_start    <= 1'b1;
 
         @(vif.cb_drv);
@@ -384,7 +640,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             end
 
             timeout++;
-            if (timeout > 5000) begin
+            if (timeout > 10000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE",
                     $sformatf("Timeout waiting for DMA load done: %s", tag))
             end
@@ -418,15 +674,18 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         timeout   = 0;
         done_seen = 0;
 
-        `uvm_info("DMA_LOAD_SMOKE", "Starting GEMM after DMA-loaded A/B", UVM_MEDIUM)
+        `uvm_info("DMA_LOAD_SMOKE",
+            $sformatf("Starting GEMM after DMA-loaded A/B: dim=(%0d,%0d,%0d)",
+                dim_m_i, dim_n_i, dim_k_i),
+            UVM_MEDIUM)
 
         @(vif.cb_drv);
         vif.cb_drv.base_addr_a <= base_a;
         vif.cb_drv.base_addr_b <= base_b;
         vif.cb_drv.base_addr_c <= base_c;
-        vif.cb_drv.dim_m       <= 8'd1;
-        vif.cb_drv.dim_n       <= 8'd1;
-        vif.cb_drv.dim_k       <= 8'd1;
+        vif.cb_drv.dim_m       <= dim_m_i[DIM_WIDTH-1:0];
+        vif.cb_drv.dim_n       <= dim_n_i[DIM_WIDTH-1:0];
+        vif.cb_drv.dim_k       <= dim_k_i[DIM_WIDTH-1:0];
 
         repeat (2) @(vif.cb_drv);
 
@@ -442,7 +701,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
             end
 
             timeout++;
-            if (timeout > 10000) begin
+            if (timeout > 30000) begin
                 `uvm_fatal("DMA_LOAD_SMOKE", "Timeout waiting for acc_done")
             end
         end
@@ -456,27 +715,78 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // Readback and compare C
     // ------------------------------------------------------------
     task automatic readback_and_compare_c();
+        int unsigned beat_count;
+        int unsigned beat_idx;
+        int unsigned lane_idx;
+        int unsigned c_idx;
         logic [DATA_WIDTH-1:0] read_word;
-        logic [31:0]           got_c;
-
-        axi0_read64(base_c, read_word);
-        got_c = read_word[31:0];
+        logic [31:0] got_c;
+        logic [ADDR_WIDTH-1:0] addr;
+    begin
+        beat_count = ceil_div(c_words * 4, BYTES_PER_BEAT);
 
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("C readback: raw=0x%016h got=%0d expected=%0d",
-                read_word, got_c, expected_c),
+            $sformatf("Reading back C: base_c=0x%08h words=%0d beats=%0d",
+                base_c, c_words, beat_count),
             UVM_MEDIUM)
 
-        if (got_c !== expected_c) begin
-            `uvm_fatal("DMA_LOAD_SMOKE",
-                $sformatf("C mismatch: got=0x%08h expected=0x%08h",
-                    got_c, expected_c))
+        for (beat_idx = 0; beat_idx < beat_count; beat_idx++) begin
+            addr = base_c + ADDR_WIDTH'(beat_idx * BYTES_PER_BEAT);
+            axi0_read64(addr, read_word);
+
+            for (lane_idx = 0; lane_idx < (BYTES_PER_BEAT / 4); lane_idx++) begin
+                c_idx = beat_idx * (BYTES_PER_BEAT / 4) + lane_idx;
+
+                if (c_idx < c_words) begin
+                    if (lane_idx == 0) begin
+                        got_c = read_word[31:0];
+                    end
+                    else begin
+                        got_c = read_word[63:32];
+                    end
+
+                    `uvm_info("DMA_LOAD_SMOKE",
+                        $sformatf("C[%0d] readback: got=%0d expected=%0d raw_beat=0x%016h",
+                            c_idx, got_c, expected_c[c_idx], read_word),
+                        UVM_MEDIUM)
+
+                    if (got_c !== expected_c[c_idx]) begin
+                        `uvm_fatal("DMA_LOAD_SMOKE",
+                            $sformatf("C[%0d] mismatch: got=0x%08h expected=0x%08h",
+                                c_idx, got_c, expected_c[c_idx]))
+                    end
+                end
+            end
         end
 
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("PASS: DMA-loaded GEMM CASE_ID=%0d A=%0d B=%0d C=%0d",
-                case_id, a_value, b_value, got_c),
+            $sformatf("PASS: DMA-loaded GEMM CASE_ID=%0d dim=(%0d,%0d,%0d) C_words=%0d",
+                case_id, dim_m_i, dim_n_i, dim_k_i, c_words),
             UVM_LOW)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Run one configured case
+    // ------------------------------------------------------------
+    task automatic run_one_case(input int unsigned cid);
+    begin
+        case_id = cid;
+        configure_case(case_id);
+
+        clear_c_region();
+        preload_dma_source_memory();
+
+        run_dma_load("A", dma_src_a, base_a, a_bytes);
+        run_dma_load("B", dma_src_b, base_b, b_bytes);
+
+        run_gemm();
+        readback_and_compare_c();
+
+        `uvm_info("DMA_LOAD_SMOKE",
+            $sformatf("Completed CASE_ID=%0d", cid),
+            UVM_LOW)
+    end
     endtask
 
     // ------------------------------------------------------------
@@ -492,16 +802,33 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
 
         wait_for_reset_release();
 
-        clear_c_region();
-        preload_dma_source_memory();
+        if (run_all != 0) begin
+            run_one_case(100);
+            repeat (10) @(vif.cb_drv);
 
-        // DMA load A and B into scratchpad.
-        // load_beats=1 because dma_load_engine v1 transfers 64-bit beats.
-        run_dma_load("A", dma_src_a, base_a, 32'd1);
-        run_dma_load("B", dma_src_b, base_b, 32'd1);
+            run_one_case(101);
+            repeat (10) @(vif.cb_drv);
 
-        run_gemm();
-        readback_and_compare_c();
+            run_one_case(105);
+            repeat (10) @(vif.cb_drv);
+
+            run_one_case(5);
+            repeat (10) @(vif.cb_drv);
+
+            run_one_case(400);
+            repeat (10) @(vif.cb_drv);
+
+            run_one_case(401);
+            repeat (10) @(vif.cb_drv);
+
+            run_one_case(402);
+            repeat (10) @(vif.cb_drv);
+
+            run_one_case(403);
+        end
+        else begin
+            run_one_case(case_id);
+        end
 
         `uvm_info("DMA_LOAD_SMOKE", "ai_accel_subsys_dma_load_smoke_test completed", UVM_LOW)
 
