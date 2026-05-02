@@ -106,6 +106,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_reset_recovery_test.sv"
     `include "../test/ai_accel_subsys_corner_test.sv"
     `include "../test/ai_accel_subsys_midrun_reset_test.sv"
+    `include "../test/ai_accel_subsys_dma_load_smoke_test.sv"
 
 endpackage
 
