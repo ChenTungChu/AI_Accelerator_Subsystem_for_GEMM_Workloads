@@ -266,6 +266,19 @@ run_reg_item "midrun_reset abort=5 recovery=101" {
 }
 
 # ============================================================
+# DMA load stress test
+# ============================================================
+
+run_reg_item "dma_load_stress 8 jobs" {
+    set UVM_TEST ai_accel_subsys_dma_load_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set STRESS_JOB_COUNT 8
+    set STRESS_SEED 20260502
+    set STRESS_RANDOM 1
+    set STRESS_GAP_CYCLES 10
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

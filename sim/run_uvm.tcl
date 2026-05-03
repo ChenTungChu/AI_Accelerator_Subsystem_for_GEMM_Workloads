@@ -2,6 +2,44 @@
 file mkdir logs
 
 # --------------------------------------------------
+# Log retention policy
+#
+# Keep only the newest LOG_KEEP_COUNT .log files.
+# Default: 50
+# --------------------------------------------------
+if {![info exists LOG_KEEP_COUNT]} {
+    set LOG_KEEP_COUNT 50
+}
+
+proc prune_old_logs {log_dir keep_count} {
+    if {$keep_count <= 0} {
+        return
+    }
+
+    set files [glob -nocomplain -directory $log_dir *.log]
+    set decorated [list]
+
+    foreach f $files {
+        if {[file isfile $f]} {
+            lappend decorated [list [file mtime $f] $f]
+        }
+    }
+
+    # newest first
+    set sorted [lsort -integer -decreasing -index 0 $decorated]
+
+    set idx 0
+    foreach item $sorted {
+        incr idx
+
+        if {$idx > $keep_count} {
+            set old_file [lindex $item 1]
+            catch {file delete -force $old_file}
+        }
+    }
+}
+
+# --------------------------------------------------
 # Supported tests
 # --------------------------------------------------
 set SUPPORTED_UVM_TESTS [list \
@@ -12,6 +50,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_midrun_reset_test \
     ai_accel_subsys_dma_load_smoke_test \
     ai_accel_subsys_dma_load_error_test \
+    ai_accel_subsys_dma_load_stress_test \
 ]
 
 # --------------------------------------------------
@@ -196,7 +235,6 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 #
 #   RUN_ALL=1:
 #     run built-in DMA load smoke mini-regression
-#     currently: CASE_ID 100 -> 101
 # --------------------------------------------------
 set DMA_LOAD_ARG_LIST [list]
 
@@ -242,30 +280,49 @@ if {![info exists EXTRA_PLUSARGS]} {
 
 # --------------------------------------------------
 # Transcript log naming
+#
+# Format:
+#   YYYYMMDD_<test_specific_name>.log
+#
+# Example:
+#   20260502_ai_accel_subsys_smoke_test_case_402_result_1_host_primary.log
+#
+# Note:
+#   Same date + same test config will overwrite the old log.
 # --------------------------------------------------
+set LOG_DATE_PREFIX [clock format [clock seconds] -format "%Y%m%d"]
+
 if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
-    set LOG_FILE logs/${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    set LOG_BASENAME ${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_corner_test"} {
     if {[llength $JOB_ARG_LIST] == 0} {
-        set LOG_FILE logs/${UVM_TEST}_class_default_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+        set LOG_BASENAME ${UVM_TEST}_class_default_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
-        set LOG_FILE logs/${UVM_TEST}_job_override_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+        set LOG_BASENAME ${UVM_TEST}_job_override_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     }
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_reset_recovery_test"} {
-    set LOG_FILE logs/${UVM_TEST}_pre_${PRE_RESET_CASE_ID}_post_${POST_RESET_CASE_ID}_hold_${RESET_HOLD_CYCLES}_settle_${POST_RESET_SETTLE_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    set LOG_BASENAME ${UVM_TEST}_pre_${PRE_RESET_CASE_ID}_post_${POST_RESET_CASE_ID}_hold_${RESET_HOLD_CYCLES}_settle_${POST_RESET_SETTLE_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test"} {
     if {$RUN_ALL} {
-        set LOG_FILE logs/${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+        set LOG_BASENAME ${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
-        set LOG_FILE logs/${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+        set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     }
 
+} elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_error_test"} {
+    set LOG_BASENAME ${UVM_TEST}_error_recovery_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
+} elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
+    set LOG_BASENAME ${UVM_TEST}_stress_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
 } else {
-    set LOG_FILE logs/${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 }
+
+set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
 transcript file $LOG_FILE
 transcript on
@@ -295,9 +352,17 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES \
   {*}$EXTRA_PLUSARGS
 
+# --------------------------------------------------
+# Suppress GUI confirmation dialog when UVM calls $finish
+# --------------------------------------------------
 onfinish stop
 
 add wave -r sim:/*
 run -all
 
 transcript off
+
+# --------------------------------------------------
+# Keep only the newest LOG_KEEP_COUNT log files
+# --------------------------------------------------
+prune_old_logs logs $LOG_KEEP_COUNT
