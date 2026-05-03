@@ -35,7 +35,7 @@ ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
 #   This test uses local self-check.
 #   It does not require +ENABLE_RESULT_CHECK=1.
 # ------------------------------------------------------------
-ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1
+ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
 
 # ------------------------------------------------------------
 # DMA load error / recovery test

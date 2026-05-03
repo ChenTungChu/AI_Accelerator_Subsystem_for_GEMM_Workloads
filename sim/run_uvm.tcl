@@ -295,6 +295,8 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES \
   {*}$EXTRA_PLUSARGS
 
+onfinish stop
+
 add wave -r sim:/*
 run -all
 

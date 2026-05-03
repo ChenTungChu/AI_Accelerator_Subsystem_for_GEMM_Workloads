@@ -36,6 +36,11 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     ) axi0_vif_t;
 
     // ------------------------------------------------------------
+    // Components
+    // ------------------------------------------------------------
+    ai_accel_subsys_env env;
+
+    // ------------------------------------------------------------
     // Virtual interfaces
     // ------------------------------------------------------------
     ctrl_vif_t vif;
@@ -46,6 +51,8 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // ------------------------------------------------------------
     int unsigned case_id;
     int unsigned run_all;
+
+    bit enable_result_check;
 
     logic [ADDR_WIDTH-1:0] base_a;
     logic [ADDR_WIDTH-1:0] base_b;
@@ -75,6 +82,68 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     endfunction
 
     // ------------------------------------------------------------
+    // Infer test kind from case id
+    // ------------------------------------------------------------
+    function automatic ai_accel_subsys_seq_item::test_kind_e infer_test_kind(
+        input int unsigned cid
+    );
+        if (cid <= 99) begin
+            return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
+        end
+        else if ((cid >= 100) && (cid <= 199)) begin
+            return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
+        end
+        else if ((cid >= 400) && (cid <= 499)) begin
+            return ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE;
+        end
+        else begin
+            `uvm_fatal("DMA_LOAD_SMOKE/BADCASE",
+                $sformatf("Unsupported CASE_ID=%0d", cid))
+            return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
+        end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Build test name from case id / test kind
+    // ------------------------------------------------------------
+    function automatic string build_test_name(
+        input int unsigned cid,
+        input ai_accel_subsys_seq_item::test_kind_e kind
+    );
+        case (kind)
+            ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE:
+                return $sformatf("fixed_baseline_case_%0d", cid);
+
+            ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE:
+                return $sformatf("variable_dim_case_%0d", cid);
+
+            ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
+                return $sformatf("config_base_case_%0d", cid);
+
+            default:
+                return $sformatf("dma_load_case_%0d_kind_%0d", cid, kind);
+        endcase
+    endfunction
+
+    // ------------------------------------------------------------
+    // Parse result-check enable
+    // ------------------------------------------------------------
+    function void parse_result_check_enable();
+        int unsigned tmp;
+    begin
+        enable_result_check = 1'b0;
+
+        if ($value$plusargs("ENABLE_RESULT_CHECK=%d", tmp)) begin
+            enable_result_check = (tmp != 0);
+        end
+
+        `uvm_info("DMA_LOAD_SMOKE",
+            $sformatf("enable_result_check=%0d", enable_result_check),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
     // Build phase
     // ------------------------------------------------------------
     function void build_phase(uvm_phase phase);
@@ -95,6 +164,38 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         if (!$value$plusargs("RUN_ALL=%0d", run_all)) begin
             run_all = 0;
         end
+
+        parse_result_check_enable();
+
+        // --------------------------------------------------------
+        // Build env so DMA-load smoke can use the same monitor /
+        // result_bridge / scoreboard flow as host-primary smoke.
+        //
+        // Host agent remains PASSIVE because this test directly drives
+        // axi0_vif with local AXI tasks for clear/readback.
+        //
+        // Host traffic checker is disabled for this test because local
+        // AXI tasks are not routed through host sequences/context.
+        // --------------------------------------------------------
+        uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
+            this, "env", "vif", vif);
+
+        uvm_config_db#(axi0_vif_t)::set(
+            this, "env", "axi0_vif", axi0_vif);
+
+        uvm_config_db#(uvm_active_passive_enum)::set(
+            this, "env", "host_is_active", UVM_PASSIVE);
+
+        uvm_config_db#(bit)::set(
+            this, "env", "host_traffic_check_enable", 1'b0);
+
+        uvm_config_db#(bit)::set(
+            this, "env", "host_traffic_strict_check_enable", 1'b0);
+
+        uvm_config_db#(bit)::set(
+            this, "env.scoreboard", "result_check_enable", enable_result_check);
+
+        env = ai_accel_subsys_env::type_id::create("env", this);
     endfunction
 
     // ------------------------------------------------------------
@@ -118,9 +219,22 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         int unsigned i;
     begin
         for (i = 0; i < 64; i++) begin
-            a_payload[i] = 8'h00;
-            b_payload[i] = 8'h00;
+            a_payload[i]  = 8'h00;
+            b_payload[i]  = 8'h00;
             expected_c[i] = 32'h0000_0000;
+        end
+    end
+    endtask
+
+    task automatic build_expected_result_vector(
+        output int signed expected_dyn[]
+    );
+        int unsigned i;
+    begin
+        expected_dyn = new[c_words];
+
+        for (i = 0; i < c_words; i++) begin
+            expected_dyn[i] = $signed(expected_c[i]);
         end
     end
     endtask
@@ -336,6 +450,86 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     endtask
 
     // ------------------------------------------------------------
+    // Publish result vectors to scoreboard through result_bridge
+    // ------------------------------------------------------------
+    task automatic publish_result_to_scoreboard(
+        input int unsigned cid,
+        input int signed   expected_dyn[],
+        input int signed   actual_dyn[]
+    );
+        ai_accel_subsys_seq_item::test_kind_e kind;
+        string test_name;
+    begin
+        if (!enable_result_check) begin
+            return;
+        end
+
+        if (env == null) begin
+            `uvm_fatal("DMA_LOAD_SMOKE/NOENV",
+                "env is null in publish_result_to_scoreboard()")
+        end
+
+        if (env.result_bridge == null) begin
+            `uvm_fatal("DMA_LOAD_SMOKE/NOBRIDGE",
+                "env.result_bridge is null in publish_result_to_scoreboard()")
+        end
+
+        kind      = infer_test_kind(cid);
+        test_name = build_test_name(cid, kind);
+
+        `uvm_info("DMA_LOAD_SMOKE",
+            $sformatf("Publishing DMA-load result payload: case_id=%0d test_kind=%0d C_words=%0d",
+                cid, kind, expected_dyn.size()),
+            UVM_MEDIUM)
+
+        env.result_bridge.publish_case_result(
+            cid,
+            kind,
+            test_name,
+
+            base_a,
+            base_b,
+            base_c,
+
+            dim_m_i[DIM_WIDTH-1:0],
+            dim_n_i[DIM_WIDTH-1:0],
+            dim_k_i[DIM_WIDTH-1:0],
+
+            expected_dyn,
+            actual_dyn
+        );
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Monitor runtime context control
+    // ------------------------------------------------------------
+    task automatic set_monitor_case_context(input int unsigned cid);
+        ai_accel_subsys_seq_item::test_kind_e kind;
+    begin
+        kind = infer_test_kind(cid);
+
+        if (env != null &&
+            env.agent != null &&
+            env.agent.monitor != null) begin
+
+            env.agent.monitor.set_case_context(cid, kind);
+        end
+    end
+    endtask
+
+    task automatic clear_monitor_case_context();
+    begin
+        if (env != null &&
+            env.agent != null &&
+            env.agent.monitor != null) begin
+
+            env.agent.monitor.clear_case_context();
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Wait for reset release
     // ------------------------------------------------------------
     task automatic wait_for_reset_release();
@@ -375,6 +569,8 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         vif.cb_drv.tb_reset_override_en   <= 1'b0;
         vif.cb_drv.tb_dma_rst_n_override  <= 1'b1;
         vif.cb_drv.tb_core_rst_n_override <= 1'b1;
+
+        vif.dma_src_set_rresp_error(1'b0, -1);
     endtask
 
     // ------------------------------------------------------------
@@ -667,16 +863,18 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // ------------------------------------------------------------
     // Configure and start GEMM
     // ------------------------------------------------------------
-    task automatic run_gemm();
+    task automatic run_gemm(input int unsigned cid);
         int unsigned timeout;
         bit done_seen;
 
         timeout   = 0;
         done_seen = 0;
 
+        set_monitor_case_context(cid);
+
         `uvm_info("DMA_LOAD_SMOKE",
-            $sformatf("Starting GEMM after DMA-loaded A/B: dim=(%0d,%0d,%0d)",
-                dim_m_i, dim_n_i, dim_k_i),
+            $sformatf("Starting GEMM after DMA-loaded A/B: case_id=%0d dim=(%0d,%0d,%0d)",
+                cid, dim_m_i, dim_n_i, dim_k_i),
             UVM_MEDIUM)
 
         @(vif.cb_drv);
@@ -714,7 +912,9 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // ------------------------------------------------------------
     // Readback and compare C
     // ------------------------------------------------------------
-    task automatic readback_and_compare_c();
+    task automatic readback_and_compare_c(
+        output int signed actual_dyn[]
+    );
         int unsigned beat_count;
         int unsigned beat_idx;
         int unsigned lane_idx;
@@ -724,6 +924,7 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         logic [ADDR_WIDTH-1:0] addr;
     begin
         beat_count = ceil_div(c_words * 4, BYTES_PER_BEAT);
+        actual_dyn = new[c_words];
 
         `uvm_info("DMA_LOAD_SMOKE",
             $sformatf("Reading back C: base_c=0x%08h words=%0d beats=%0d",
@@ -745,9 +946,11 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
                         got_c = read_word[63:32];
                     end
 
+                    actual_dyn[c_idx] = $signed(got_c);
+
                     `uvm_info("DMA_LOAD_SMOKE",
                         $sformatf("C[%0d] readback: got=%0d expected=%0d raw_beat=0x%016h",
-                            c_idx, got_c, expected_c[c_idx], read_word),
+                            c_idx, actual_dyn[c_idx], $signed(expected_c[c_idx]), read_word),
                         UVM_MEDIUM)
 
                     if (got_c !== expected_c[c_idx]) begin
@@ -770,6 +973,8 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
     // Run one configured case
     // ------------------------------------------------------------
     task automatic run_one_case(input int unsigned cid);
+        int signed expected_dyn[];
+        int signed actual_dyn[];
     begin
         case_id = cid;
         configure_case(case_id);
@@ -780,8 +985,15 @@ class ai_accel_subsys_dma_load_smoke_test extends uvm_test;
         run_dma_load("A", dma_src_a, base_a, a_bytes);
         run_dma_load("B", dma_src_b, base_b, b_bytes);
 
-        run_gemm();
-        readback_and_compare_c();
+        run_gemm(case_id);
+        readback_and_compare_c(actual_dyn);
+
+        if (enable_result_check) begin
+            build_expected_result_vector(expected_dyn);
+            publish_result_to_scoreboard(case_id, expected_dyn, actual_dyn);
+        end
+
+        clear_monitor_case_context();
 
         `uvm_info("DMA_LOAD_SMOKE",
             $sformatf("Completed CASE_ID=%0d", cid),
