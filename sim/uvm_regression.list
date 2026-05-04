@@ -1,3 +1,26 @@
+# ============================================================
+# AI Accelerator Subsystem UVM Regression List
+#
+# Current baseline:
+#   TOTAL : 24
+#   PASS  : 24
+#   FAIL  : 0
+#
+# Major coverage:
+#   - host-primary GEMM path
+#   - DMA load path
+#   - DMA load error/recovery
+#   - DMA load stress
+#   - DMA load CDC clock-ratio sanity
+#   - DMA store / S2MM smoke
+#   - DMA store / S2MM error/recovery
+#   - back-to-back jobs
+#   - reset recovery
+#   - mid-run reset / abort recovery
+#   - helper fallback sanity
+# ============================================================
+
+
 # ------------------------------------------------------------
 # Smoke test (primary host path)
 # ------------------------------------------------------------
@@ -26,16 +49,13 @@ ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
 #     -> BRAM Port0
 #     -> GEMM
 #     -> host AXI0 readback C
-#     -> local expected compare
+#     -> local expected compare / scoreboard
 #
 # RUN_ALL recipe:
 #   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
-#
-# Note:
-#   This test uses local self-check.
-#   It does not require +ENABLE_RESULT_CHECK=1.
 # ------------------------------------------------------------
 ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
+
 
 # ------------------------------------------------------------
 # DMA load error / recovery test
@@ -44,10 +64,72 @@ ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=
 #   - zero load_beats
 #   - unaligned source address
 #   - unaligned destination address
+#   - source AXI RRESP error injection
 #   - Port0 host recovery after DMA load error
 #   - valid DMA load + GEMM recovery after errors
 # ------------------------------------------------------------
-ai_accel_subsys_dma_load_error_test
+ai_accel_subsys_dma_load_error_test +ENABLE_RESULT_CHECK=0
+
+
+# ------------------------------------------------------------
+# DMA load stress test
+#
+# Coverage:
+#   - repeated DMA load -> GEMM -> host readback flow
+#   - random case selection
+#   - scoreboard result pairing across multiple jobs
+#   - no stale result/control pairing
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10
+
+
+# ------------------------------------------------------------
+# DMA load CDC clock-ratio sanity
+#
+# Coverage:
+#   - same DMA load stress flow
+#   - non-default dma_clk/core_clk ratio
+#   - validates current control/status CDC cleanup under
+#     alternate clock period relationship
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+
+# ------------------------------------------------------------
+# DMA store / S2MM smoke test
+#
+# Coverage:
+#   DMA source memory
+#     -> DMA load A/B into scratchpad
+#     -> GEMM
+#     -> C written into scratchpad
+#     -> dma_store_engine
+#     -> destination AXI-MM memory model
+#     -> destination memory compare / scoreboard
+#
+# RUN_ALL recipe:
+#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# ------------------------------------------------------------
+ai_accel_subsys_dma_store_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# DMA store / S2MM error / recovery test
+#
+# Coverage:
+#   - zero store_byte_count
+#   - unaligned scratchpad source address
+#   - unaligned destination address
+#   - destination AXI BRESP error injection
+#   - Port0 host recovery after DMA store error
+#   - valid S2MM recovery store after errors
+#
+# Note:
+#   start_while_busy is verified manually/optionally with:
+#     +RUN_START_WHILE_BUSY=1
+#   It is not included in the default full regression.
+# ------------------------------------------------------------
+ai_accel_subsys_dma_store_error_test +ENABLE_RESULT_CHECK=0
 
 
 # ------------------------------------------------------------

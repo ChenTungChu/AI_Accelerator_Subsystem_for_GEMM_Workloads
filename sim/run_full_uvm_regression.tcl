@@ -301,6 +301,13 @@ run_reg_item "dma_store_smoke RUN_ALL" {
     set RUN_ALL 1
 }
 
+# ============================================================
+# DMA store error test
+# ============================================================
+run_reg_item "dma_store_error default" {
+    set UVM_TEST ai_accel_subsys_dma_store_error_test
+    set ENABLE_RESULT_CHECK 0
+}
 
 # ============================================================
 # Helper fallback sanity

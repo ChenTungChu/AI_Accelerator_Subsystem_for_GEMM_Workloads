@@ -4,18 +4,18 @@
 
 This repository is a subsystem-level RTL and UVM verification project for a GEMM-oriented AI accelerator path.
 
-The design validates an end-to-end scratchpad-based flow:
+The design currently validates two end-to-end scratchpad-based data-movement flows:
 
 ```text
 Host / DMA load A and B
     -> Scratchpad memory
     -> GEMM core
     -> Scratchpad result C
-    -> Host readback
+    -> Host readback or DMA store
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load behavior, CDC-aware control/status handling, reset robustness, and UVM scoreboard-based verification.
+The current focus is subsystem integration, DMA load/store behavior, CDC-aware control/status handling, reset robustness, and UVM scoreboard-based verification.
 
 ---
 
@@ -25,10 +25,11 @@ The current focus is subsystem integration, DMA load behavior, CDC-aware control
 - `gemm_top`
 - `gemm_scratchpad_adapter`
 - `dma_load_engine`
+- `dma_store_engine`
 - `scratchpad_port0_owner_mux`
 - `axi_mm_dual_port_bram`
 
-The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline. Current development is focused on integration, DMA load behavior, CDC-aware control/status crossing, and subsystem-level verification around that memory subsystem.
+The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline. Current development is focused on subsystem integration, DMA load/store behavior, CDC-aware control/status crossing, and verification around that memory subsystem.
 
 ---
 
@@ -39,7 +40,7 @@ Current GEMM assumptions:
 - A and B are signed 8-bit elements
 - C / accumulator values are signed 32-bit
 - matrices use compact row-major layout
-- C is read back as signed 32-bit words
+- C is read back or stored out as signed 32-bit words
 
 Default scratchpad map:
 
@@ -63,9 +64,10 @@ The UVM environment includes:
 - AXI-MM host agent
 - host traffic checker
 - DMA source memory model
+- DMA destination memory model
 - helper fallback path
 
-The control monitor publishes phase-aware `START` and `DONE` events. The result bridge publishes post-readback result payloads into the scoreboard.
+The control monitor publishes phase-aware `START` and `DONE` events. The result bridge publishes result payloads into the scoreboard.
 
 The scoreboard checks:
 
@@ -102,17 +104,31 @@ DMA source memory
     -> result_bridge / scoreboard
 ```
 
-The DMA path verifies DMA-loaded A/B, GEMM execution, C readback, scoreboard compare, stress behavior, and error recovery.
+The DMA load path verifies DMA-loaded A/B, GEMM execution, C readback, scoreboard compare, stress behavior, and error recovery.
+
+### DMA store / S2MM path
+
+```text
+DMA source memory
+    -> DMA load A/B into scratchpad
+    -> GEMM
+    -> C written into scratchpad
+    -> dma_store_engine
+    -> destination AXI-MM memory model
+    -> result_bridge / scoreboard
+```
+
+The DMA store path verifies that GEMM result C can be moved out of scratchpad through a destination AXI-MM write path and compared from the destination memory model.
 
 ---
 
 ## CDC-Aware Baseline
 
-The subsystem now includes a CDC-aware control/status baseline between `dma_clk` and `core_clk`.
+The subsystem includes a CDC-aware control/status baseline between `dma_clk` and `core_clk`.
 
 Current CDC behavior:
 
-- `dma_load_engine` and scratchpad Port0 DMA load path remain in `dma_clk`
+- `dma_load_engine` and scratchpad Port0 DMA load/store paths remain in `dma_clk`
 - GEMM compute path remains in `core_clk`
 - `acc_start` is rising-edge detected in `dma_clk`
 - GEMM config is captured in `dma_clk` before start
@@ -148,6 +164,8 @@ Current UVM regression covers:
 - DMA load stress regression
 - DMA load CDC clock-ratio sanity
 - DMA load error and recovery behavior
+- DMA store / S2MM smoke with scoreboard integration
+- DMA store / S2MM error and recovery behavior
 - back-to-back GEMM jobs
 - reset recovery between jobs
 - mixed corner recipe
@@ -164,7 +182,7 @@ DMA RUN_ALL recipe   : 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
 Corner recipe        : 5 -> 101 -> 105 -> 403
 ```
 
-DMA error coverage includes:
+DMA load error coverage includes:
 
 - zero `load_beats`
 - unaligned source address
@@ -173,17 +191,28 @@ DMA error coverage includes:
 - Port0 ownership recovery after DMA error
 - valid DMA/GEMM recovery after errors
 
+DMA store / S2MM error coverage includes:
+
+- zero `store_byte_count`
+- unaligned scratchpad source address
+- unaligned destination address
+- destination AXI BRESP error injection
+- Port0 ownership recovery after DMA store error
+- valid S2MM recovery store after errors
+
+The optional manual DMA store error run also covers `start_while_busy`.
+
 DMA stress coverage repeatedly selects GEMM cases through the DMA load path and verifies scoreboard pairing across multiple jobs.
 
 ---
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 22 items and is passing:
+The current full UVM regression contains 24 items and is passing:
 
 ```text
-TOTAL : 22
-PASS  : 22
+TOTAL : 24
+PASS  : 24
 FAIL  : 0
 ```
 
@@ -194,6 +223,8 @@ Covered categories:
 - DMA load stress
 - DMA load CDC clock-ratio sanity
 - DMA load error/recovery
+- DMA store smoke with scoreboard
+- DMA store error/recovery
 - back-to-back
 - reset recovery
 - corner recipe
@@ -272,6 +303,32 @@ set CORE_CLK_PERIOD_NS 13
 do run_uvm.tcl
 ```
 
+DMA store / S2MM RUN_ALL:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_store_smoke_test
+set ENABLE_RESULT_CHECK 1
+set RUN_ALL 1
+do run_uvm.tcl
+```
+
+DMA store / S2MM error recovery:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_store_error_test
+set ENABLE_RESULT_CHECK 0
+do run_uvm.tcl
+```
+
+Optional DMA store start-while-busy error run:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_store_error_test
+set ENABLE_RESULT_CHECK 0
+set EXTRA_PLUSARGS "+RUN_START_WHILE_BUSY=1"
+do run_uvm.tcl
+```
+
 ---
 
 ## Log Handling
@@ -331,9 +388,12 @@ At this checkpoint, the subsystem verifies:
 - DMA multi-beat load behavior
 - DMA source RRESP error recovery
 - DMA load stress behavior
+- DMA store / S2MM result movement out of scratchpad
+- DMA destination memory compare
+- DMA destination BRESP error recovery
 - CDC-aware GEMM control/status crossing
 - alternate `dma_clk` / `core_clk` ratio sanity
-- Port0 ownership recovery after DMA errors
+- Port0 ownership recovery after DMA load/store errors
 - unattended full UVM regression flow
 
 ---
@@ -345,6 +405,7 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - stable scratchpad-backed RTL integration
 - host-primary memory path verification
 - DMA load path verification
+- DMA store / S2MM result path verification
 - CDC-aware GEMM control/status handling
 - DMA stress and error/recovery coverage
 - scoreboard-based result checking
