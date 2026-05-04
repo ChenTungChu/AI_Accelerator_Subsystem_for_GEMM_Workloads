@@ -4,7 +4,7 @@
 
 This repository is a subsystem-level RTL and UVM verification project for a GEMM-oriented AI accelerator path.
 
-The design currently validates two end-to-end scratchpad-based data-movement flows:
+The design currently validates end-to-end scratchpad-based data-movement flows:
 
 ```text
 Host / DMA load A and B
@@ -120,6 +120,22 @@ DMA source memory
 
 The DMA store path verifies that GEMM result C can be moved out of scratchpad through a destination AXI-MM write path and compared from the destination memory model.
 
+### DMA load + store stress path
+
+```text
+repeat N jobs:
+    clear C
+    clear destination memory
+    preload DMA source A/B
+    DMA load A/B into scratchpad
+    run GEMM
+    DMA store C to destination memory
+    compare destination memory
+    publish result payload
+```
+
+This is the current full DMA data-movement stress path.
+
 ---
 
 ## CDC-Aware Baseline
@@ -166,6 +182,7 @@ Current UVM regression covers:
 - DMA load error and recovery behavior
 - DMA store / S2MM smoke with scoreboard integration
 - DMA store / S2MM error and recovery behavior
+- DMA load + GEMM + DMA store stress regression
 - back-to-back GEMM jobs
 - reset recovery between jobs
 - mixed corner recipe
@@ -202,17 +219,23 @@ DMA store / S2MM error coverage includes:
 
 The optional manual DMA store error run also covers `start_while_busy`.
 
-DMA stress coverage repeatedly selects GEMM cases through the DMA load path and verifies scoreboard pairing across multiple jobs.
+DMA stress coverage includes:
+
+- repeated DMA load -> GEMM -> host readback jobs
+- repeated DMA load -> GEMM -> DMA store -> destination memory compare jobs
+- random or round-robin case selection
+- scoreboard pairing across multiple jobs
+- stale-result/stale-destination-memory prevention
 
 ---
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 24 items and is passing:
+The current full UVM regression contains 25 items and is passing:
 
 ```text
-TOTAL : 24
-PASS  : 24
+TOTAL : 25
+PASS  : 25
 FAIL  : 0
 ```
 
@@ -225,11 +248,18 @@ Covered categories:
 - DMA load error/recovery
 - DMA store smoke with scoreboard
 - DMA store error/recovery
+- DMA load + store stress
 - back-to-back
 - reset recovery
 - corner recipe
 - mid-run reset / abort recovery
 - helper fallback sanity
+
+Manual/non-regression stress status:
+
+```text
+DMA load-store stress 20-job manual run: PASS
+```
 
 ---
 
@@ -329,6 +359,30 @@ set EXTRA_PLUSARGS "+RUN_START_WHILE_BUSY=1"
 do run_uvm.tcl
 ```
 
+DMA load + store stress, full-regression version:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 8
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+DMA load + store stress, longer manual/nightly version:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 20
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
 ---
 
 ## Log Handling
@@ -391,6 +445,7 @@ At this checkpoint, the subsystem verifies:
 - DMA store / S2MM result movement out of scratchpad
 - DMA destination memory compare
 - DMA destination BRESP error recovery
+- repeated full DMA load -> GEMM -> DMA store jobs
 - CDC-aware GEMM control/status crossing
 - alternate `dma_clk` / `core_clk` ratio sanity
 - Port0 ownership recovery after DMA load/store errors
@@ -406,6 +461,7 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - host-primary memory path verification
 - DMA load path verification
 - DMA store / S2MM result path verification
+- full DMA load + GEMM + DMA store stress verification
 - CDC-aware GEMM control/status handling
 - DMA stress and error/recovery coverage
 - scoreboard-based result checking

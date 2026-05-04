@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 24
-#   PASS  : 24
+#   TOTAL : 25
+#   PASS  : 25
 #   FAIL  : 0
 #
 # Major coverage:
@@ -14,6 +14,7 @@
 #   - DMA load CDC clock-ratio sanity
 #   - DMA store / S2MM smoke
 #   - DMA store / S2MM error/recovery
+#   - DMA load + GEMM + DMA store stress
 #   - back-to-back jobs
 #   - reset recovery
 #   - mid-run reset / abort recovery
@@ -130,6 +131,31 @@ ai_accel_subsys_dma_store_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK
 #   It is not included in the default full regression.
 # ------------------------------------------------------------
 ai_accel_subsys_dma_store_error_test +ENABLE_RESULT_CHECK=0
+
+
+# ------------------------------------------------------------
+# DMA load + store stress test
+#
+# Coverage:
+#   - repeated full DMA path:
+#       DMA load A/B
+#         -> GEMM
+#         -> DMA store C
+#         -> destination memory compare
+#         -> scoreboard result pairing
+#   - random case selection
+#   - repeated Port0 owner switching:
+#       HOST -> DMA_LOAD -> GEMM/core access -> DMA_STORE -> HOST
+#   - stale destination memory prevention
+#   - ctrl/result pairing across multiple S2MM jobs
+#
+# Full-regression version:
+#   8 jobs
+#
+# Manual/nightly version already verified:
+#   STORE_STRESS_JOB_COUNT=20
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10
 
 
 # ------------------------------------------------------------

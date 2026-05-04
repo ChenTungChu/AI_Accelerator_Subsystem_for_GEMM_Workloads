@@ -15,12 +15,23 @@ DMA load A/B
     -> destination memory compare / scoreboard
 ```
 
-This closes the first basic subsystem DMA loop:
+This closes the first subsystem DMA loop:
 
 ```text
 MM2S-style load into scratchpad
 GEMM compute
 S2MM-style store out of scratchpad
+```
+
+The current milestone also includes a repeated full-path stress regression:
+
+```text
+repeat N jobs:
+    DMA load A/B
+    -> GEMM
+    -> DMA store C
+    -> destination memory compare
+    -> scoreboard pairing
 ```
 
 This milestone does **not** change the GEMM compute microarchitecture and does **not** modify the stable `axi_mm_dual_port_bram` model.
@@ -32,7 +43,7 @@ This milestone does **not** change the GEMM compute microarchitecture and does *
 Current verified baseline:
 
 ```text
-Full UVM regression: 24 / 24 PASS
+Full UVM regression: 25 / 25 PASS
 ```
 
 Implemented and verified:
@@ -48,6 +59,7 @@ Implemented and verified:
 - DMA store / S2MM smoke path
 - DMA store / S2MM error recovery path
 - destination AXI BRESP error recovery
+- DMA load + GEMM + DMA store stress regression
 - scoreboard result checking
 - ctrl/result pairing
 
@@ -75,6 +87,7 @@ This milestone includes:
 - DMA store control/status signals
 - store smoke verification
 - store error/recovery verification
+- DMA load + store stress verification
 - integration with existing result bridge and scoreboard
 - full regression integration
 
@@ -545,13 +558,65 @@ Status:
 PASS
 ```
 
-### 13.4 Full Regression
+### 13.4 DMA Load + Store Stress Test
+
+Implemented test:
+
+```text
+ai_accel_subsys_dma_load_store_stress_test
+```
+
+Verified sequence per job:
+
+```text
+clear C
+clear destination memory
+preload DMA source A/B
+DMA load A/B into scratchpad
+run GEMM
+DMA store C to destination memory
+destination memory compare
+scoreboard result publish
+```
+
+Full-regression configuration:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 8
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+Manual longer stress configuration:
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 20
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+Verified status:
+
+```text
+8-job full-regression version : PASS
+20-job manual stress version  : PASS
+```
+
+### 13.5 Full Regression
 
 Current full regression:
 
 ```text
-TOTAL : 24
-PASS  : 24
+TOTAL : 25
+PASS  : 25
 FAIL  : 0
 ```
 
@@ -565,34 +630,35 @@ Current regression status:
 Stage 1: Bring-up                  DONE
 Stage 2: Store smoke RUN_ALL       DONE
 Stage 3: Store error / recovery    DONE
-Stage 4: Load + Store stress       NEXT
+Stage 4: Load + Store stress       DONE
 ```
 
-Current full-regression additions:
+Current full-regression additions from the S2MM milestone:
 
 ```text
 ai_accel_subsys_dma_store_smoke_test RUN_ALL
 ai_accel_subsys_dma_store_error_test default
+ai_accel_subsys_dma_load_store_stress_test 8 jobs
 ```
 
-Recommended next regression item:
+Recommended next regression direction:
 
 ```text
-ai_accel_subsys_dma_load_store_stress_test
+AXI-Stream frontend planning / spec
 ```
 
 Purpose:
 
-- repeat DMA load -> GEMM -> DMA store
-- vary case ID and base address
-- verify ctrl/result pairing across multiple jobs
-- verify no stale destination memory data is used
+- define how DMA MM2S data should feed a stream-facing GEMM frontend
+- define whether the stream frontend replaces or complements scratchpad reads
+- define FIFO/CDC boundary between dma_clk and core_clk
+- keep this separate from the completed S2MM baseline
 
 ---
 
 ## 15. Scoreboard Integration
 
-The store smoke test reads destination memory into the same expected/actual result item format and publishes through the existing result bridge.
+The store smoke and load-store stress tests read destination memory into the same expected/actual result item format and publish through the existing result bridge.
 
 Current implementation:
 
@@ -677,17 +743,18 @@ The S2MM milestone is complete when:
 5. Final-beat WSTRB is correct for partial C byte counts.
 6. Destination memory compare passes.
 7. Store error/recovery cases pass.
-8. Existing DMA load tests still pass.
-9. Existing CDC clock-ratio regression still passes.
-10. Full UVM regression passes.
-11. No new UVM error or fatal is introduced.
-12. No BRAM interface semantic change is required.
+8. DMA load + store stress passes.
+9. Existing DMA load tests still pass.
+10. Existing CDC clock-ratio regression still passes.
+11. Full UVM regression passes.
+12. No new UVM error or fatal is introduced.
+13. No BRAM interface semantic change is required.
 
 Current status:
 
 ```text
 All acceptance criteria met.
-Full UVM regression: 24 / 24 PASS
+Full UVM regression: 25 / 25 PASS
 ```
 
 ---
@@ -696,18 +763,7 @@ Full UVM regression: 24 / 24 PASS
 
 After S2MM is stable, possible next milestones are:
 
-### 19.1 DMA Load + Store Stress
-
-```text
-DMA load A/B
-    -> GEMM
-    -> DMA store C
-    -> destination memory compare
-```
-
-This is the recommended next step.
-
-### 19.2 Direct AXI-Stream GEMM Frontend
+### 19.1 AXI-Stream GEMM Frontend
 
 ```text
 DMA MM2S
@@ -716,9 +772,9 @@ DMA MM2S
     -> compute
 ```
 
-This is a larger architecture change and should remain separate from S2MM.
+This is the recommended next architecture-planning step.
 
-### 19.3 Descriptor-Based DMA
+### 19.2 Descriptor-Based DMA
 
 Add descriptor fields:
 
@@ -729,7 +785,7 @@ Add descriptor fields:
 - control flags
 - completion status
 
-### 19.4 Performance-Oriented GEMM
+### 19.3 Performance-Oriented GEMM
 
 After DMA load/store and CDC boundaries are stable:
 

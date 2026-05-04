@@ -52,7 +52,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_dma_load_error_test \
     ai_accel_subsys_dma_load_stress_test \
     ai_accel_subsys_dma_store_smoke_test \
-    ai_accel_subsys_dma_store_error_test \ 
+    ai_accel_subsys_dma_store_error_test \
+    ai_accel_subsys_dma_load_store_stress_test \
 ]
 
 # --------------------------------------------------
@@ -81,11 +82,7 @@ if {[lsearch -exact $SUPPORTED_UVM_TESTS $UVM_TEST] < 0} {
 }
 
 # --------------------------------------------------
-# Smoke-test case selection
-#
-# Used by:
-#   ai_accel_subsys_smoke_test
-#   ai_accel_subsys_dma_load_smoke_test
+# Case selection
 # --------------------------------------------------
 if {![info exists CASE_ID]} {
     set CASE_ID 0
@@ -144,10 +141,6 @@ if {$FORCE_HELPER_MEM_PATH} {
 #     USE_HOST_AGENT_CLEAR_C
 #     USE_HOST_AGENT_READBACK_C
 #     USE_HOST_AGENT_PRELOAD_AB
-# --------------------------------------------------
-
-# --------------------------------------------------
-# Build optional legacy override arg list
 # --------------------------------------------------
 set LEGACY_HOST_OVERRIDE_ARGS [list]
 
@@ -240,7 +233,7 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 #   RUN_ALL=1:
 #     run built-in mini-regression recipe
 # --------------------------------------------------
-set DMA_LOAD_ARG_LIST [list]
+set DMA_SMOKE_ARG_LIST [list]
 
 if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test")} {
@@ -249,7 +242,7 @@ if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
         set RUN_ALL 0
     }
 
-    lappend DMA_LOAD_ARG_LIST +RUN_ALL=$RUN_ALL
+    lappend DMA_SMOKE_ARG_LIST +RUN_ALL=$RUN_ALL
 }
 
 # --------------------------------------------------
@@ -270,7 +263,7 @@ if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
 #   STRESS_GAP_CYCLES:
 #     idle cycles between jobs
 # --------------------------------------------------
-set DMA_STRESS_ARG_LIST [list]
+set DMA_LOAD_STRESS_ARG_LIST [list]
 
 if {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
     if {![info exists STRESS_JOB_COUNT]} {
@@ -289,10 +282,82 @@ if {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
         set STRESS_GAP_CYCLES 10
     }
 
-    lappend DMA_STRESS_ARG_LIST +STRESS_JOB_COUNT=$STRESS_JOB_COUNT
-    lappend DMA_STRESS_ARG_LIST +STRESS_SEED=$STRESS_SEED
-    lappend DMA_STRESS_ARG_LIST +STRESS_RANDOM=$STRESS_RANDOM
-    lappend DMA_STRESS_ARG_LIST +STRESS_GAP_CYCLES=$STRESS_GAP_CYCLES
+    lappend DMA_LOAD_STRESS_ARG_LIST +STRESS_JOB_COUNT=$STRESS_JOB_COUNT
+    lappend DMA_LOAD_STRESS_ARG_LIST +STRESS_SEED=$STRESS_SEED
+    lappend DMA_LOAD_STRESS_ARG_LIST +STRESS_RANDOM=$STRESS_RANDOM
+    lappend DMA_LOAD_STRESS_ARG_LIST +STRESS_GAP_CYCLES=$STRESS_GAP_CYCLES
+}
+
+# --------------------------------------------------
+# DMA load-store stress knobs
+#
+#   used by:
+#     ai_accel_subsys_dma_load_store_stress_test
+#
+#   STORE_STRESS_JOB_COUNT:
+#     number of full DMA load -> GEMM -> DMA store jobs
+#
+#   STORE_STRESS_SEED:
+#     deterministic pseudo-random seed
+#
+#   STORE_STRESS_RANDOM:
+#     1 -> pseudo-random case selection
+#     0 -> round-robin case selection
+#
+#   STORE_STRESS_GAP_CYCLES:
+#     idle cycles between jobs
+# --------------------------------------------------
+set DMA_LOAD_STORE_STRESS_ARG_LIST [list]
+
+if {$UVM_TEST eq "ai_accel_subsys_dma_load_store_stress_test"} {
+    if {![info exists STORE_STRESS_JOB_COUNT]} {
+        set STORE_STRESS_JOB_COUNT 20
+    }
+
+    if {![info exists STORE_STRESS_SEED]} {
+        set STORE_STRESS_SEED 20260502
+    }
+
+    if {![info exists STORE_STRESS_RANDOM]} {
+        set STORE_STRESS_RANDOM 1
+    }
+
+    if {![info exists STORE_STRESS_GAP_CYCLES]} {
+        set STORE_STRESS_GAP_CYCLES 10
+    }
+
+    lappend DMA_LOAD_STORE_STRESS_ARG_LIST +STORE_STRESS_JOB_COUNT=$STORE_STRESS_JOB_COUNT
+    lappend DMA_LOAD_STORE_STRESS_ARG_LIST +STORE_STRESS_SEED=$STORE_STRESS_SEED
+    lappend DMA_LOAD_STORE_STRESS_ARG_LIST +STORE_STRESS_RANDOM=$STORE_STRESS_RANDOM
+    lappend DMA_LOAD_STORE_STRESS_ARG_LIST +STORE_STRESS_GAP_CYCLES=$STORE_STRESS_GAP_CYCLES
+}
+
+# --------------------------------------------------
+# DMA store error optional knobs
+#
+#   Default full-regression mode:
+#     RUN_START_WHILE_BUSY is not forwarded unless explicitly set.
+#
+#   Manual optional run:
+#     set RUN_START_WHILE_BUSY 1
+#     do run_uvm.tcl
+#
+#   Existing EXTRA_PLUSARGS flow is still supported:
+#     set EXTRA_PLUSARGS "+RUN_START_WHILE_BUSY=1"
+# --------------------------------------------------
+set DMA_STORE_ERROR_ARG_LIST [list]
+set DMA_STORE_ERROR_MODE default
+
+if {$UVM_TEST eq "ai_accel_subsys_dma_store_error_test"} {
+    if {[info exists RUN_START_WHILE_BUSY]} {
+        lappend DMA_STORE_ERROR_ARG_LIST +RUN_START_WHILE_BUSY=$RUN_START_WHILE_BUSY
+
+        if {$RUN_START_WHILE_BUSY} {
+            set DMA_STORE_ERROR_MODE start_while_busy
+        } else {
+            set DMA_STORE_ERROR_MODE default
+        }
+    }
 }
 
 # --------------------------------------------------
@@ -379,8 +444,14 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 } elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_error_test"} {
     set LOG_BASENAME ${UVM_TEST}_error_recovery_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
+} elseif {$UVM_TEST eq "ai_accel_subsys_dma_store_error_test"} {
+    set LOG_BASENAME ${UVM_TEST}_${DMA_STORE_ERROR_MODE}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
 } elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
     set LOG_BASENAME ${UVM_TEST}_jobs_${STRESS_JOB_COUNT}_seed_${STRESS_SEED}_random_${STRESS_RANDOM}_gap_${STRESS_GAP_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
+} elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_store_stress_test"} {
+    set LOG_BASENAME ${UVM_TEST}_jobs_${STORE_STRESS_JOB_COUNT}_seed_${STORE_STRESS_SEED}_random_${STORE_STRESS_RANDOM}_gap_${STORE_STRESS_GAP_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } else {
     set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
@@ -409,8 +480,10 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
   {*}$LEGACY_HOST_OVERRIDE_ARGS \
   {*}$JOB_ARG_LIST \
-  {*}$DMA_LOAD_ARG_LIST \
-  {*}$DMA_STRESS_ARG_LIST \
+  {*}$DMA_SMOKE_ARG_LIST \
+  {*}$DMA_LOAD_STRESS_ARG_LIST \
+  {*}$DMA_LOAD_STORE_STRESS_ARG_LIST \
+  {*}$DMA_STORE_ERROR_ARG_LIST \
   {*}$CLOCK_ARG_LIST \
   +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
   +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
