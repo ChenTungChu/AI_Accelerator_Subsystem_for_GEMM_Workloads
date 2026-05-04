@@ -27,6 +27,11 @@ module ai_accel_subsys_uvm_top;
     localparam int DMA_SRC_MEM_BYTES = 4096;
     localparam int DMA_SRC_READ_LATENCY_CYCLES = 2;
 
+    // DMA destination memory model used by subsystem-level DMA store tests.
+    // Byte-addressed so C payloads can be checked naturally.
+    localparam int DMA_DST_MEM_BYTES = 4096;
+    localparam int DMA_DST_WRITE_RESP_LATENCY_CYCLES = 1;
+
     localparam logic [1:0] AXI_RESP_OKAY   = 2'b00;
     localparam logic [1:0] AXI_RESP_SLVERR = 2'b10;
 
@@ -36,7 +41,8 @@ module ai_accel_subsys_uvm_top;
     typedef virtual ai_accel_subsys_ctrl_if #(
         .ADDR_WIDTH        (ADDR_WIDTH),
         .DIM_WIDTH         (GEMM_DIM_WIDTH),
-        .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES)
+        .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES),
+        .DMA_DST_MEM_BYTES (DMA_DST_MEM_BYTES)
     ) ctrl_vif_t;
 
     typedef virtual axi_mm_if #(
@@ -51,6 +57,9 @@ module ai_accel_subsys_uvm_top;
     // ============================================================
     logic dma_clk;
     logic core_clk;
+
+    real dma_clk_period_ns;
+    real core_clk_period_ns;
 
     // POR resets
     logic dma_rst_n_por;
@@ -78,6 +87,19 @@ module ai_accel_subsys_uvm_top;
     logic dma_load_busy;
     logic dma_load_done;
     logic dma_load_error;
+
+    // ============================================================
+    // DMA store status wires
+    //
+    // Control is driven through ctrl_if:
+    //   ctrl_if.dma_store_start
+    //   ctrl_if.dma_store_src_base_addr
+    //   ctrl_if.dma_store_dst_base_addr
+    //   ctrl_if.dma_store_byte_count
+    // ============================================================
+    logic dma_store_busy;
+    logic dma_store_done;
+    logic dma_store_error;
 
     // ============================================================
     // DMA source AXI-MM read port
@@ -125,6 +147,60 @@ module ai_accel_subsys_uvm_top;
     wire dma_src_r_fire  = dma_src_axi_rvalid  && dma_src_axi_rready;
 
     // ============================================================
+    // DMA destination AXI-MM write port
+    // ============================================================
+    logic [ID_WIDTH-1:0]       dma_dst_axi_awid;
+    logic [ADDR_WIDTH-1:0]     dma_dst_axi_awaddr;
+    logic [7:0]                dma_dst_axi_awlen;
+    logic [2:0]                dma_dst_axi_awsize;
+    logic [1:0]                dma_dst_axi_awburst;
+    logic                      dma_dst_axi_awvalid;
+    logic                      dma_dst_axi_awready;
+
+    logic [DATA_WIDTH-1:0]     dma_dst_axi_wdata;
+    logic [DATA_WIDTH/8-1:0]   dma_dst_axi_wstrb;
+    logic                      dma_dst_axi_wlast;
+    logic                      dma_dst_axi_wvalid;
+    logic                      dma_dst_axi_wready;
+
+    logic [ID_WIDTH-1:0]       dma_dst_axi_bid;
+    logic [1:0]                dma_dst_axi_bresp;
+    logic                      dma_dst_axi_bvalid;
+    logic                      dma_dst_axi_bready;
+
+    // ============================================================
+    // DMA destination memory write responder model state
+    //
+    // Actual byte storage lives inside ctrl_if.dma_dst_mem[].
+    // UVM tests read it through virtual interface functions/tasks.
+    // ============================================================
+    logic                      dma_dst_aw_pending_valid;
+    logic [ID_WIDTH-1:0]       dma_dst_aw_pending_id;
+    logic [ADDR_WIDTH-1:0]     dma_dst_aw_pending_addr;
+    int unsigned               dma_dst_aw_pending_beat_idx;
+
+    logic                      dma_dst_w_pending_valid;
+    logic [DATA_WIDTH-1:0]     dma_dst_w_pending_data;
+    logic [DATA_WIDTH/8-1:0]   dma_dst_w_pending_strb;
+    logic                      dma_dst_w_pending_last;
+
+    logic [ID_WIDTH-1:0]       dma_dst_bid_q;
+    logic [1:0]                dma_dst_bresp_q;
+    logic                      dma_dst_bvalid_q;
+    int unsigned               dma_dst_b_delay_q;
+
+    logic                      dma_dst_inject_enable_q;
+    int unsigned               dma_dst_inject_base_aw_count;
+
+    int unsigned               dma_dst_aw_count;
+    int unsigned               dma_dst_w_count;
+    int unsigned               dma_dst_b_count;
+
+    wire dma_dst_aw_fire = dma_dst_axi_awvalid && dma_dst_axi_awready;
+    wire dma_dst_w_fire  = dma_dst_axi_wvalid  && dma_dst_axi_wready;
+    wire dma_dst_b_fire  = dma_dst_axi_bvalid  && dma_dst_axi_bready;
+
+    // ============================================================
     // External AXI-MM host interface (Port0)
     // ============================================================
     axi_mm_if #(
@@ -143,7 +219,8 @@ module ai_accel_subsys_uvm_top;
     ai_accel_subsys_ctrl_if #(
         .ADDR_WIDTH        (ADDR_WIDTH),
         .DIM_WIDTH         (GEMM_DIM_WIDTH),
-        .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES)
+        .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES),
+        .DMA_DST_MEM_BYTES (DMA_DST_MEM_BYTES)
     ) ctrl_if (
         .clk (dma_clk)
     );
@@ -171,6 +248,27 @@ module ai_accel_subsys_uvm_top;
     assign dma_src_axi_rresp   = dma_src_rresp_q;
     assign dma_src_axi_rlast   = dma_src_rlast_q;
     assign dma_src_axi_rvalid  = dma_src_rvalid_q;
+
+    // ============================================================
+    // DMA destination AXI write response model connections
+    //
+    // v1 assumptions:
+    //   - single outstanding write
+    //   - single-beat AW only, AWLEN must be 0
+    //   - AW and W may handshake in either order
+    //   - WSTRB controls byte writes
+    // ============================================================
+    assign dma_dst_axi_awready = dma_rst_n &&
+                                 !dma_dst_aw_pending_valid &&
+                                 !dma_dst_bvalid_q;
+
+    assign dma_dst_axi_wready  = dma_rst_n &&
+                                 !dma_dst_w_pending_valid &&
+                                 !dma_dst_bvalid_q;
+
+    assign dma_dst_axi_bid     = dma_dst_bid_q;
+    assign dma_dst_axi_bresp   = dma_dst_bresp_q;
+    assign dma_dst_axi_bvalid  = dma_dst_bvalid_q;
 
     // ============================================================
     // DMA source memory helper functions
@@ -202,6 +300,62 @@ module ai_accel_subsys_uvm_top;
     endfunction
 
     // ============================================================
+    // DMA destination memory helper tasks/functions
+    // ============================================================
+    function automatic int unsigned dma_dst_byte_index(
+        input logic [ADDR_WIDTH-1:0] addr
+    );
+        return int'(addr);
+    endfunction
+
+    function automatic logic [1:0] dma_dst_next_bresp(
+        input int unsigned aw_beat_idx
+    );
+        int signed rel_beat;
+    begin
+        if (aw_beat_idx >= dma_dst_inject_base_aw_count) begin
+            rel_beat = int'(aw_beat_idx - dma_dst_inject_base_aw_count);
+        end
+        else begin
+            rel_beat = -1;
+        end
+
+        if (ctrl_if.dma_dst_inject_bresp_error &&
+            (ctrl_if.dma_dst_inject_bresp_error_beat >= 0) &&
+            (rel_beat == ctrl_if.dma_dst_inject_bresp_error_beat)) begin
+            return AXI_RESP_SLVERR;
+        end
+
+        return AXI_RESP_OKAY;
+    end
+    endfunction
+
+    task automatic dma_dst_apply_write(
+        input logic [ADDR_WIDTH-1:0]   addr,
+        input logic [DATA_WIDTH-1:0]   data,
+        input logic [DATA_WIDTH/8-1:0] strb
+    );
+        int unsigned base_idx;
+        int unsigned lane;
+    begin
+        base_idx = dma_dst_byte_index(addr);
+
+        if ((base_idx + BYTES_PER_BEAT) > DMA_DST_MEM_BYTES) begin
+            $fatal(1,
+                "[UVM_TOP_DMA_DST] DMA destination write out of range: addr=0x%08h idx=%0d depth=%0d",
+                addr, base_idx, DMA_DST_MEM_BYTES
+            );
+        end
+
+        for (lane = 0; lane < BYTES_PER_BEAT; lane++) begin
+            if (strb[lane]) begin
+                ctrl_if.dma_dst_mem[base_idx + lane] = data[8*lane +: 8];
+            end
+        end
+    end
+    endtask
+
+    // ============================================================
     // DMA source AXI read responder
     //
     // v1 assumptions:
@@ -211,23 +365,23 @@ module ai_accel_subsys_uvm_top;
     // ============================================================
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
-            dma_src_rd_pending_valid    <= 1'b0;
-            dma_src_rd_pending_addr     <= '0;
-            dma_src_rd_pending_id       <= '0;
-            dma_src_rd_pending_delay    <= 0;
-            dma_src_rd_pending_beat_idx <= 0;
+            dma_src_rd_pending_valid      <= 1'b0;
+            dma_src_rd_pending_addr       <= '0;
+            dma_src_rd_pending_id         <= '0;
+            dma_src_rd_pending_delay      <= 0;
+            dma_src_rd_pending_beat_idx   <= 0;
 
-            dma_src_inject_enable_q     <= 1'b0;
-            dma_src_inject_base_ar_count <= 0;
+            dma_src_inject_enable_q       <= 1'b0;
+            dma_src_inject_base_ar_count  <= 0;
 
-            dma_src_rid_q            <= '0;
-            dma_src_rdata_q          <= '0;
-            dma_src_rresp_q          <= AXI_RESP_OKAY;
-            dma_src_rlast_q          <= 1'b0;
-            dma_src_rvalid_q         <= 1'b0;
+            dma_src_rid_q                 <= '0;
+            dma_src_rdata_q               <= '0;
+            dma_src_rresp_q               <= AXI_RESP_OKAY;
+            dma_src_rlast_q               <= 1'b0;
+            dma_src_rvalid_q              <= 1'b0;
 
-            dma_src_ar_count         <= 0;
-            dma_src_r_count          <= 0;
+            dma_src_ar_count              <= 0;
+            dma_src_r_count               <= 0;
         end
         else begin
             // Capture the AR count when error injection becomes enabled.
@@ -308,6 +462,154 @@ module ai_accel_subsys_uvm_top;
     end
 
     // ============================================================
+    // DMA destination AXI write responder
+    //
+    // v1 assumptions:
+    //   - single outstanding write
+    //   - single-beat AW only, AWLEN must be 0
+    //   - WLAST must be 1
+    //   - byte-addressed destination memory
+    // ============================================================
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            dma_dst_aw_pending_valid       <= 1'b0;
+            dma_dst_aw_pending_id          <= '0;
+            dma_dst_aw_pending_addr        <= '0;
+            dma_dst_aw_pending_beat_idx    <= 0;
+
+            dma_dst_w_pending_valid        <= 1'b0;
+            dma_dst_w_pending_data         <= '0;
+            dma_dst_w_pending_strb         <= '0;
+            dma_dst_w_pending_last         <= 1'b0;
+
+            dma_dst_bid_q                  <= '0;
+            dma_dst_bresp_q                <= AXI_RESP_OKAY;
+            dma_dst_bvalid_q               <= 1'b0;
+            dma_dst_b_delay_q              <= 0;
+
+            dma_dst_inject_enable_q        <= 1'b0;
+            dma_dst_inject_base_aw_count   <= 0;
+
+            dma_dst_aw_count               <= 0;
+            dma_dst_w_count                <= 0;
+            dma_dst_b_count                <= 0;
+        end
+        else begin
+            // Capture the AW count when error injection becomes enabled.
+            // This makes ctrl_if.dma_dst_inject_bresp_error_beat relative
+            // to the moment injection is enabled.
+            dma_dst_inject_enable_q <= ctrl_if.dma_dst_inject_bresp_error;
+
+            if (ctrl_if.dma_dst_inject_bresp_error &&
+                !dma_dst_inject_enable_q) begin
+                dma_dst_inject_base_aw_count <= dma_dst_aw_count;
+            end
+
+            if (dma_dst_aw_fire) begin
+                int unsigned aw_base_idx;
+
+                aw_base_idx = dma_dst_byte_index(dma_dst_axi_awaddr);
+
+                if (dma_dst_axi_awlen !== 8'd0) begin
+                    $fatal(1,
+                        "[UVM_TOP_DMA_DST] Unsupported DMA destination AWLEN=%0d, expected 0",
+                        dma_dst_axi_awlen
+                    );
+                end
+
+                if ((aw_base_idx + BYTES_PER_BEAT) > DMA_DST_MEM_BYTES) begin
+                    $fatal(1,
+                        "[UVM_TOP_DMA_DST] DMA destination AW out of range: addr=0x%08h idx=%0d depth=%0d",
+                        dma_dst_axi_awaddr, aw_base_idx, DMA_DST_MEM_BYTES
+                    );
+                end
+
+                dma_dst_aw_pending_valid    <= 1'b1;
+                dma_dst_aw_pending_id       <= dma_dst_axi_awid;
+                dma_dst_aw_pending_addr     <= dma_dst_axi_awaddr;
+                dma_dst_aw_pending_beat_idx <= dma_dst_aw_count;
+
+                dma_dst_aw_count            <= dma_dst_aw_count + 1;
+            end
+
+            if (dma_dst_w_fire) begin
+                if (dma_dst_axi_wlast !== 1'b1) begin
+                    $fatal(1,
+                        "[UVM_TOP_DMA_DST] Unsupported DMA destination WLAST=0, expected single-beat WLAST=1"
+                    );
+                end
+
+                dma_dst_w_pending_valid <= 1'b1;
+                dma_dst_w_pending_data  <= dma_dst_axi_wdata;
+                dma_dst_w_pending_strb  <= dma_dst_axi_wstrb;
+                dma_dst_w_pending_last  <= dma_dst_axi_wlast;
+
+                dma_dst_w_count         <= dma_dst_w_count + 1;
+            end
+
+            if (dma_dst_b_fire) begin
+                dma_dst_bvalid_q <= 1'b0;
+                dma_dst_bresp_q  <= AXI_RESP_OKAY;
+                dma_dst_bid_q    <= '0;
+
+                dma_dst_b_count  <= dma_dst_b_count + 1;
+            end
+
+            if (!dma_dst_bvalid_q) begin
+                logic aw_valid_now;
+                logic [ID_WIDTH-1:0] aw_id_now;
+                logic [ADDR_WIDTH-1:0] aw_addr_now;
+                int unsigned aw_beat_idx_now;
+
+                logic w_valid_now;
+                logic [DATA_WIDTH-1:0] w_data_now;
+                logic [DATA_WIDTH/8-1:0] w_strb_now;
+
+                aw_valid_now     = dma_dst_aw_pending_valid || dma_dst_aw_fire;
+                aw_id_now        = dma_dst_aw_fire ? dma_dst_axi_awid   : dma_dst_aw_pending_id;
+                aw_addr_now      = dma_dst_aw_fire ? dma_dst_axi_awaddr : dma_dst_aw_pending_addr;
+                aw_beat_idx_now  = dma_dst_aw_fire ? dma_dst_aw_count   : dma_dst_aw_pending_beat_idx;
+
+                w_valid_now      = dma_dst_w_pending_valid || dma_dst_w_fire;
+                w_data_now       = dma_dst_w_fire ? dma_dst_axi_wdata : dma_dst_w_pending_data;
+                w_strb_now       = dma_dst_w_fire ? dma_dst_axi_wstrb : dma_dst_w_pending_strb;
+
+                if (aw_valid_now && w_valid_now) begin
+                    if (dma_dst_b_delay_q < DMA_DST_WRITE_RESP_LATENCY_CYCLES) begin
+                        dma_dst_b_delay_q <= dma_dst_b_delay_q + 1;
+                    end
+                    else begin
+                        dma_dst_apply_write(
+                            aw_addr_now,
+                            w_data_now,
+                            w_strb_now
+                        );
+
+                        dma_dst_bid_q    <= aw_id_now;
+                        dma_dst_bresp_q  <= dma_dst_next_bresp(aw_beat_idx_now);
+                        dma_dst_bvalid_q <= 1'b1;
+
+                        dma_dst_aw_pending_valid    <= 1'b0;
+                        dma_dst_aw_pending_id       <= '0;
+                        dma_dst_aw_pending_addr     <= '0;
+                        dma_dst_aw_pending_beat_idx <= 0;
+
+                        dma_dst_w_pending_valid <= 1'b0;
+                        dma_dst_w_pending_data  <= '0;
+                        dma_dst_w_pending_strb  <= '0;
+                        dma_dst_w_pending_last  <= 1'b0;
+
+                        dma_dst_b_delay_q <= 0;
+                    end
+                end
+                else begin
+                    dma_dst_b_delay_q <= 0;
+                end
+            end
+        end
+    end
+
+    // ============================================================
     // DUT
     // ============================================================
     ai_accel_subsys #(
@@ -337,6 +639,16 @@ module ai_accel_subsys_uvm_top;
         .dma_load_done        (dma_load_done),
         .dma_load_error       (dma_load_error),
 
+        // DMA store control through ctrl_if
+        .dma_store_start          (ctrl_if.dma_store_start),
+        .dma_store_src_base_addr  (ctrl_if.dma_store_src_base_addr),
+        .dma_store_dst_base_addr  (ctrl_if.dma_store_dst_base_addr),
+        .dma_store_byte_count     (ctrl_if.dma_store_byte_count),
+
+        .dma_store_busy           (dma_store_busy),
+        .dma_store_done           (dma_store_done),
+        .dma_store_error          (dma_store_error),
+
         // DMA source AXI-MM read master port
         .dma_src_axi_arid     (dma_src_axi_arid),
         .dma_src_axi_araddr   (dma_src_axi_araddr),
@@ -352,6 +664,26 @@ module ai_accel_subsys_uvm_top;
         .dma_src_axi_rlast    (dma_src_axi_rlast),
         .dma_src_axi_rvalid   (dma_src_axi_rvalid),
         .dma_src_axi_rready   (dma_src_axi_rready),
+
+        // DMA destination AXI-MM write master port
+        .dma_dst_axi_awid     (dma_dst_axi_awid),
+        .dma_dst_axi_awaddr   (dma_dst_axi_awaddr),
+        .dma_dst_axi_awlen    (dma_dst_axi_awlen),
+        .dma_dst_axi_awsize   (dma_dst_axi_awsize),
+        .dma_dst_axi_awburst  (dma_dst_axi_awburst),
+        .dma_dst_axi_awvalid  (dma_dst_axi_awvalid),
+        .dma_dst_axi_awready  (dma_dst_axi_awready),
+
+        .dma_dst_axi_wdata    (dma_dst_axi_wdata),
+        .dma_dst_axi_wstrb    (dma_dst_axi_wstrb),
+        .dma_dst_axi_wlast    (dma_dst_axi_wlast),
+        .dma_dst_axi_wvalid   (dma_dst_axi_wvalid),
+        .dma_dst_axi_wready   (dma_dst_axi_wready),
+
+        .dma_dst_axi_bid      (dma_dst_axi_bid),
+        .dma_dst_axi_bresp    (dma_dst_axi_bresp),
+        .dma_dst_axi_bvalid   (dma_dst_axi_bvalid),
+        .dma_dst_axi_bready   (dma_dst_axi_bready),
 
         // Accelerator control
         .acc_start            (ctrl_if.acc_start),
@@ -380,6 +712,10 @@ module ai_accel_subsys_uvm_top;
     assign ctrl_if.dma_load_done  = dma_load_done;
     assign ctrl_if.dma_load_error = dma_load_error;
 
+    assign ctrl_if.dma_store_busy  = dma_store_busy;
+    assign ctrl_if.dma_store_done  = dma_store_done;
+    assign ctrl_if.dma_store_error = dma_store_error;
+
     // ============================================================
     // BRAM observation interface ready
     // ============================================================
@@ -390,15 +726,48 @@ module ai_accel_subsys_uvm_top;
 
     // ============================================================
     // Clock generation
+    //
+    // Default:
+    //   dma_clk  period = 10 ns
+    //   core_clk period = 14 ns
+    //
+    // Override examples:
+    //   +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=7
+    //   +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
     // ============================================================
     initial begin
-        dma_clk = 1'b0;
-        forever #5 dma_clk = ~dma_clk;      // 100 MHz
-    end
+        dma_clk_period_ns  = 10.0;
+        core_clk_period_ns = 14.0;
 
-    initial begin
+        void'($value$plusargs("DMA_CLK_PERIOD_NS=%f",  dma_clk_period_ns));
+        void'($value$plusargs("CORE_CLK_PERIOD_NS=%f", core_clk_period_ns));
+
+        if (dma_clk_period_ns <= 0.0) begin
+            $fatal(1,
+                "[UVM_TOP_CLK] Invalid DMA_CLK_PERIOD_NS=%0.3f",
+                dma_clk_period_ns
+            );
+        end
+
+        if (core_clk_period_ns <= 0.0) begin
+            $fatal(1,
+                "[UVM_TOP_CLK] Invalid CORE_CLK_PERIOD_NS=%0.3f",
+                core_clk_period_ns
+            );
+        end
+
+        $display("[UVM_TOP_CLK] dma_clk_period_ns=%0.3f core_clk_period_ns=%0.3f",
+            dma_clk_period_ns,
+            core_clk_period_ns
+        );
+
+        dma_clk  = 1'b0;
         core_clk = 1'b0;
-        forever #7 core_clk = ~core_clk;    // ~71.4 MHz
+
+        fork
+            forever #(dma_clk_period_ns  / 2.0) dma_clk  = ~dma_clk;
+            forever #(core_clk_period_ns / 2.0) core_clk = ~core_clk;
+        join
     end
 
     // ============================================================
@@ -434,6 +803,12 @@ module ai_accel_subsys_uvm_top;
         ctrl_if.dma_dst_base_addr = '0;
         ctrl_if.dma_load_beats    = '0;
 
+        // DMA store defaults
+        ctrl_if.dma_store_start         = 1'b0;
+        ctrl_if.dma_store_src_base_addr = '0;
+        ctrl_if.dma_store_dst_base_addr = '0;
+        ctrl_if.dma_store_byte_count    = '0;
+
         // reset override defaults
         ctrl_if.tb_reset_override_en   = 1'b0;
         ctrl_if.tb_dma_rst_n_override  = 1'b1;
@@ -442,6 +817,10 @@ module ai_accel_subsys_uvm_top;
         // DMA source memory model defaults
         ctrl_if.dma_src_mem_clear();
         ctrl_if.dma_src_set_rresp_error(1'b0, -1);
+
+        // DMA destination memory model defaults
+        ctrl_if.dma_dst_mem_clear();
+        ctrl_if.dma_dst_set_bresp_error(1'b0, -1);
 
         // axi0_if idle defaults
         axi0_if.awid    = '0;

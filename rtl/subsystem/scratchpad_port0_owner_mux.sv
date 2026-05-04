@@ -10,17 +10,22 @@ module scratchpad_port0_owner_mux #(
     // ------------------------------------------------------------
     // Owner select
     //
-    // select_dma = 0:
-    //   external host axi0_if owns BRAM Port0
+    // Legacy naming:
+    //   select_dma = DMA_LOAD owner select
     //
-    // select_dma = 1:
-    //   DMA load engine write path owns BRAM Port0
+    // Owner policy:
+    //   select_dma       = 0, select_dma_store = 0 -> HOST owns Port0
+    //   select_dma       = 1, select_dma_store = 0 -> DMA_LOAD owns Port0
+    //   select_dma       = 0, select_dma_store = 1 -> DMA_STORE owns Port0
+    //   select_dma       = 1, select_dma_store = 1 -> illegal, Port0 held inactive
     //
-    // v1 rule:
-    //   select_dma must only change when Port0 is idle.
-    //   No arbitration / outstanding tracking is done here.
+    // Rules:
+    //   - No arbitration / outstanding tracking is done here.
+    //   - Owner select must only change when Port0 is idle.
+    //   - Host traffic must not be issued while DMA load/store owns Port0.
     // ------------------------------------------------------------
     input  logic select_dma,
+    input  logic select_dma_store = 1'b0,
 
     // ------------------------------------------------------------
     // Host-side AXI-MM interface
@@ -37,9 +42,9 @@ module scratchpad_port0_owner_mux #(
     // ------------------------------------------------------------
     // DMA load engine scratchpad write-side master
     //
-    // v1:
-    //   - write channel only
-    //   - read channel disabled while DMA owns Port0
+    // DMA_LOAD:
+    //   - uses AW/W/B channels
+    //   - read channel is disabled
     // ------------------------------------------------------------
     input  logic [ID_WIDTH-1:0]      dma_awid,
     input  logic [ADDR_WIDTH-1:0]    dma_awaddr,
@@ -58,8 +63,46 @@ module scratchpad_port0_owner_mux #(
     output logic [ID_WIDTH-1:0]      dma_bid,
     output logic [1:0]               dma_bresp,
     output logic                     dma_bvalid,
-    input  logic                     dma_bready
+    input  logic                     dma_bready,
+
+    // ------------------------------------------------------------
+    // DMA store engine scratchpad read-side master
+    //
+    // DMA_STORE:
+    //   - uses AR/R channels
+    //   - write channel is disabled
+    //
+    // Default values keep legacy top-level instantiations safe until
+    // ai_accel_subsys.sv is updated to connect the store path.
+    // ------------------------------------------------------------
+    input  logic [ID_WIDTH-1:0]      dma_store_arid    = '0,
+    input  logic [ADDR_WIDTH-1:0]    dma_store_araddr  = '0,
+    input  logic [7:0]               dma_store_arlen   = '0,
+    input  logic [2:0]               dma_store_arsize  = '0,
+    input  logic [1:0]               dma_store_arburst = '0,
+    input  logic                     dma_store_arvalid = 1'b0,
+    output logic                     dma_store_arready,
+
+    output logic [ID_WIDTH-1:0]      dma_store_rid,
+    output logic [DATA_WIDTH-1:0]    dma_store_rdata,
+    output logic [1:0]               dma_store_rresp,
+    output logic                     dma_store_rlast,
+    output logic                     dma_store_rvalid,
+    input  logic                     dma_store_rready  = 1'b0
 );
+
+    // ============================================================
+    // Owner decode
+    // ============================================================
+    logic owner_host;
+    logic owner_dma_load;
+    logic owner_dma_store;
+    logic owner_illegal;
+
+    assign owner_illegal   =  select_dma &&  select_dma_store;
+    assign owner_host      = !select_dma && !select_dma_store;
+    assign owner_dma_load  =  select_dma && !select_dma_store;
+    assign owner_dma_store = !select_dma &&  select_dma_store;
 
     // ============================================================
     // BRAM-facing request mux
@@ -67,44 +110,118 @@ module scratchpad_port0_owner_mux #(
 
     // ------------------------------------------------------------
     // Write address channel
+    //
+    // HOST      : host AW -> BRAM
+    // DMA_LOAD  : dma load AW -> BRAM
+    // DMA_STORE : write channel disabled
+    // ILLEGAL   : write channel disabled
     // ------------------------------------------------------------
-    assign bram_axi_if.awid    = select_dma ? dma_awid    : host_axi_if.awid;
-    assign bram_axi_if.awaddr  = select_dma ? dma_awaddr  : host_axi_if.awaddr;
-    assign bram_axi_if.awlen   = select_dma ? dma_awlen   : host_axi_if.awlen;
-    assign bram_axi_if.awsize  = select_dma ? dma_awsize  : host_axi_if.awsize;
-    assign bram_axi_if.awburst = select_dma ? dma_awburst : host_axi_if.awburst;
-    assign bram_axi_if.awvalid = select_dma ? dma_awvalid : host_axi_if.awvalid;
+    assign bram_axi_if.awid =
+        owner_dma_load ? dma_awid :
+        owner_host     ? host_axi_if.awid :
+                         '0;
+
+    assign bram_axi_if.awaddr =
+        owner_dma_load ? dma_awaddr :
+        owner_host     ? host_axi_if.awaddr :
+                         '0;
+
+    assign bram_axi_if.awlen =
+        owner_dma_load ? dma_awlen :
+        owner_host     ? host_axi_if.awlen :
+                         '0;
+
+    assign bram_axi_if.awsize =
+        owner_dma_load ? dma_awsize :
+        owner_host     ? host_axi_if.awsize :
+                         '0;
+
+    assign bram_axi_if.awburst =
+        owner_dma_load ? dma_awburst :
+        owner_host     ? host_axi_if.awburst :
+                         '0;
+
+    assign bram_axi_if.awvalid =
+        owner_dma_load ? dma_awvalid :
+        owner_host     ? host_axi_if.awvalid :
+                         1'b0;
 
     // ------------------------------------------------------------
     // Write data channel
     // ------------------------------------------------------------
-    assign bram_axi_if.wdata   = select_dma ? dma_wdata   : host_axi_if.wdata;
-    assign bram_axi_if.wstrb   = select_dma ? dma_wstrb   : host_axi_if.wstrb;
-    assign bram_axi_if.wlast   = select_dma ? dma_wlast   : host_axi_if.wlast;
-    assign bram_axi_if.wvalid  = select_dma ? dma_wvalid  : host_axi_if.wvalid;
+    assign bram_axi_if.wdata =
+        owner_dma_load ? dma_wdata :
+        owner_host     ? host_axi_if.wdata :
+                         '0;
+
+    assign bram_axi_if.wstrb =
+        owner_dma_load ? dma_wstrb :
+        owner_host     ? host_axi_if.wstrb :
+                         '0;
+
+    assign bram_axi_if.wlast =
+        owner_dma_load ? dma_wlast :
+        owner_host     ? host_axi_if.wlast :
+                         1'b0;
+
+    assign bram_axi_if.wvalid =
+        owner_dma_load ? dma_wvalid :
+        owner_host     ? host_axi_if.wvalid :
+                         1'b0;
 
     // ------------------------------------------------------------
     // Write response ready
     // ------------------------------------------------------------
-    assign bram_axi_if.bready  = select_dma ? dma_bready  : host_axi_if.bready;
+    assign bram_axi_if.bready =
+        owner_dma_load ? dma_bready :
+        owner_host     ? host_axi_if.bready :
+                         1'b0;
 
     // ------------------------------------------------------------
     // Read address channel
     //
-    // DMA load v1 does not use Port0 read path.
-    // During DMA ownership, read channel is held inactive.
+    // HOST      : host AR -> BRAM
+    // DMA_LOAD  : read channel disabled
+    // DMA_STORE : store AR -> BRAM
+    // ILLEGAL   : read channel disabled
     // ------------------------------------------------------------
-    assign bram_axi_if.arid    = select_dma ? '0 : host_axi_if.arid;
-    assign bram_axi_if.araddr  = select_dma ? '0 : host_axi_if.araddr;
-    assign bram_axi_if.arlen   = select_dma ? '0 : host_axi_if.arlen;
-    assign bram_axi_if.arsize  = select_dma ? '0 : host_axi_if.arsize;
-    assign bram_axi_if.arburst = select_dma ? '0 : host_axi_if.arburst;
-    assign bram_axi_if.arvalid = select_dma ? 1'b0 : host_axi_if.arvalid;
+    assign bram_axi_if.arid =
+        owner_dma_store ? dma_store_arid :
+        owner_host      ? host_axi_if.arid :
+                          '0;
+
+    assign bram_axi_if.araddr =
+        owner_dma_store ? dma_store_araddr :
+        owner_host      ? host_axi_if.araddr :
+                          '0;
+
+    assign bram_axi_if.arlen =
+        owner_dma_store ? dma_store_arlen :
+        owner_host      ? host_axi_if.arlen :
+                          '0;
+
+    assign bram_axi_if.arsize =
+        owner_dma_store ? dma_store_arsize :
+        owner_host      ? host_axi_if.arsize :
+                          '0;
+
+    assign bram_axi_if.arburst =
+        owner_dma_store ? dma_store_arburst :
+        owner_host      ? host_axi_if.arburst :
+                          '0;
+
+    assign bram_axi_if.arvalid =
+        owner_dma_store ? dma_store_arvalid :
+        owner_host      ? host_axi_if.arvalid :
+                          1'b0;
 
     // ------------------------------------------------------------
     // Read response ready
     // ------------------------------------------------------------
-    assign bram_axi_if.rready  = select_dma ? 1'b0 : host_axi_if.rready;
+    assign bram_axi_if.rready =
+        owner_dma_store ? dma_store_rready :
+        owner_host      ? host_axi_if.rready :
+                          1'b0;
 
     // ============================================================
     // Host-facing response path
@@ -113,46 +230,77 @@ module scratchpad_port0_owner_mux #(
     // ------------------------------------------------------------
     // Write address/data ready back to host
     // ------------------------------------------------------------
-    assign host_axi_if.awready = select_dma ? 1'b0 : bram_axi_if.awready;
-    assign host_axi_if.wready  = select_dma ? 1'b0 : bram_axi_if.wready;
+    assign host_axi_if.awready = owner_host ? bram_axi_if.awready : 1'b0;
+    assign host_axi_if.wready  = owner_host ? bram_axi_if.wready  : 1'b0;
 
     // ------------------------------------------------------------
     // Write response back to host
     // ------------------------------------------------------------
-    assign host_axi_if.bid     = select_dma ? '0   : bram_axi_if.bid;
-    assign host_axi_if.bresp   = select_dma ? '0   : bram_axi_if.bresp;
-    assign host_axi_if.bvalid  = select_dma ? 1'b0 : bram_axi_if.bvalid;
+    assign host_axi_if.bid     = owner_host ? bram_axi_if.bid    : '0;
+    assign host_axi_if.bresp   = owner_host ? bram_axi_if.bresp  : '0;
+    assign host_axi_if.bvalid  = owner_host ? bram_axi_if.bvalid : 1'b0;
 
     // ------------------------------------------------------------
     // Read address ready back to host
     // ------------------------------------------------------------
-    assign host_axi_if.arready = select_dma ? 1'b0 : bram_axi_if.arready;
+    assign host_axi_if.arready = owner_host ? bram_axi_if.arready : 1'b0;
 
     // ------------------------------------------------------------
     // Read response back to host
     // ------------------------------------------------------------
-    assign host_axi_if.rid     = select_dma ? '0   : bram_axi_if.rid;
-    assign host_axi_if.rdata   = select_dma ? '0   : bram_axi_if.rdata;
-    assign host_axi_if.rresp   = select_dma ? '0   : bram_axi_if.rresp;
-    assign host_axi_if.rlast   = select_dma ? 1'b0 : bram_axi_if.rlast;
-    assign host_axi_if.rvalid  = select_dma ? 1'b0 : bram_axi_if.rvalid;
+    assign host_axi_if.rid     = owner_host ? bram_axi_if.rid    : '0;
+    assign host_axi_if.rdata   = owner_host ? bram_axi_if.rdata  : '0;
+    assign host_axi_if.rresp   = owner_host ? bram_axi_if.rresp  : '0;
+    assign host_axi_if.rlast   = owner_host ? bram_axi_if.rlast  : 1'b0;
+    assign host_axi_if.rvalid  = owner_host ? bram_axi_if.rvalid : 1'b0;
 
     // ============================================================
-    // DMA-facing response path
+    // DMA_LOAD-facing response path
     // ============================================================
 
     // ------------------------------------------------------------
-    // Write address/data ready back to DMA
+    // Write address/data ready back to DMA load engine
     // ------------------------------------------------------------
-    assign dma_awready = select_dma ? bram_axi_if.awready : 1'b0;
-    assign dma_wready  = select_dma ? bram_axi_if.wready  : 1'b0;
+    assign dma_awready = owner_dma_load ? bram_axi_if.awready : 1'b0;
+    assign dma_wready  = owner_dma_load ? bram_axi_if.wready  : 1'b0;
 
     // ------------------------------------------------------------
-    // Write response back to DMA
+    // Write response back to DMA load engine
     // ------------------------------------------------------------
-    assign dma_bid     = select_dma ? bram_axi_if.bid    : '0;
-    assign dma_bresp   = select_dma ? bram_axi_if.bresp  : '0;
-    assign dma_bvalid  = select_dma ? bram_axi_if.bvalid : 1'b0;
+    assign dma_bid     = owner_dma_load ? bram_axi_if.bid    : '0;
+    assign dma_bresp   = owner_dma_load ? bram_axi_if.bresp  : '0;
+    assign dma_bvalid  = owner_dma_load ? bram_axi_if.bvalid : 1'b0;
+
+    // ============================================================
+    // DMA_STORE-facing response path
+    // ============================================================
+
+    // ------------------------------------------------------------
+    // Read address ready back to DMA store engine
+    // ------------------------------------------------------------
+    assign dma_store_arready = owner_dma_store ? bram_axi_if.arready : 1'b0;
+
+    // ------------------------------------------------------------
+    // Read response back to DMA store engine
+    // ------------------------------------------------------------
+    assign dma_store_rid     = owner_dma_store ? bram_axi_if.rid    : '0;
+    assign dma_store_rdata   = owner_dma_store ? bram_axi_if.rdata  : '0;
+    assign dma_store_rresp   = owner_dma_store ? bram_axi_if.rresp  : '0;
+    assign dma_store_rlast   = owner_dma_store ? bram_axi_if.rlast  : 1'b0;
+    assign dma_store_rvalid  = owner_dma_store ? bram_axi_if.rvalid : 1'b0;
+
+    // ============================================================
+    // Simulation-only illegal owner check
+    // ============================================================
+`ifndef SYNTHESIS
+    always_comb begin
+        if (owner_illegal) begin
+            $error(
+                "scratchpad_port0_owner_mux: illegal owner select: select_dma=1 and select_dma_store=1"
+            );
+        end
+    end
+`endif
 
 endmodule
 

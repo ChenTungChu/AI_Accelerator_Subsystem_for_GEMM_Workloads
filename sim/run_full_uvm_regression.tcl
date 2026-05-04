@@ -279,6 +279,30 @@ run_reg_item "dma_load_stress 8 jobs" {
 }
 
 # ============================================================
+# CDC sanity
+# ============================================================
+run_reg_item "dma_load_stress cdc 8 jobs clk10_13" {
+    set UVM_TEST ai_accel_subsys_dma_load_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set STRESS_JOB_COUNT 8
+    set STRESS_SEED 20260502
+    set STRESS_RANDOM 1
+    set STRESS_GAP_CYCLES 10
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+}
+
+# ============================================================
+# DMA store stress test
+# ============================================================
+run_reg_item "dma_store_smoke RUN_ALL" {
+    set UVM_TEST ai_accel_subsys_dma_store_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set RUN_ALL 1
+}
+
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

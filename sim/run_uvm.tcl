@@ -51,6 +51,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_dma_load_smoke_test \
     ai_accel_subsys_dma_load_error_test \
     ai_accel_subsys_dma_load_stress_test \
+    ai_accel_subsys_dma_store_smoke_test \
 ]
 
 # --------------------------------------------------
@@ -226,25 +227,92 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 }
 
 # --------------------------------------------------
-# DMA-load smoke knobs
+# DMA smoke RUN_ALL knobs
 #
-#   used by ai_accel_subsys_dma_load_smoke_test
+#   used by:
+#     ai_accel_subsys_dma_load_smoke_test
+#     ai_accel_subsys_dma_store_smoke_test
 #
 #   RUN_ALL=0:
 #     run selected CASE_ID only
 #
 #   RUN_ALL=1:
-#     run built-in DMA load smoke mini-regression
+#     run built-in mini-regression recipe
 # --------------------------------------------------
 set DMA_LOAD_ARG_LIST [list]
 
-if {$UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test"} {
+if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test")} {
+
     if {![info exists RUN_ALL]} {
         set RUN_ALL 0
     }
 
     lappend DMA_LOAD_ARG_LIST +RUN_ALL=$RUN_ALL
 }
+
+# --------------------------------------------------
+# DMA-load stress knobs
+#
+#   used by ai_accel_subsys_dma_load_stress_test
+#
+#   STRESS_JOB_COUNT:
+#     number of DMA-loaded GEMM jobs
+#
+#   STRESS_SEED:
+#     deterministic pseudo-random seed
+#
+#   STRESS_RANDOM:
+#     1 -> pseudo-random case selection
+#     0 -> round-robin case selection
+#
+#   STRESS_GAP_CYCLES:
+#     idle cycles between jobs
+# --------------------------------------------------
+set DMA_STRESS_ARG_LIST [list]
+
+if {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
+    if {![info exists STRESS_JOB_COUNT]} {
+        set STRESS_JOB_COUNT 20
+    }
+
+    if {![info exists STRESS_SEED]} {
+        set STRESS_SEED 20260502
+    }
+
+    if {![info exists STRESS_RANDOM]} {
+        set STRESS_RANDOM 1
+    }
+
+    if {![info exists STRESS_GAP_CYCLES]} {
+        set STRESS_GAP_CYCLES 10
+    }
+
+    lappend DMA_STRESS_ARG_LIST +STRESS_JOB_COUNT=$STRESS_JOB_COUNT
+    lappend DMA_STRESS_ARG_LIST +STRESS_SEED=$STRESS_SEED
+    lappend DMA_STRESS_ARG_LIST +STRESS_RANDOM=$STRESS_RANDOM
+    lappend DMA_STRESS_ARG_LIST +STRESS_GAP_CYCLES=$STRESS_GAP_CYCLES
+}
+
+# --------------------------------------------------
+# Clock period knobs
+#
+# Defaults match ai_accel_subsys_uvm_top.sv:
+#   dma_clk  period = 10 ns
+#   core_clk period = 14 ns
+# --------------------------------------------------
+set CLOCK_ARG_LIST [list]
+
+if {![info exists DMA_CLK_PERIOD_NS]} {
+    set DMA_CLK_PERIOD_NS 10
+}
+
+if {![info exists CORE_CLK_PERIOD_NS]} {
+    set CORE_CLK_PERIOD_NS 14
+}
+
+lappend CLOCK_ARG_LIST +DMA_CLK_PERIOD_NS=$DMA_CLK_PERIOD_NS
+lappend CLOCK_ARG_LIST +CORE_CLK_PERIOD_NS=$CORE_CLK_PERIOD_NS
 
 # --------------------------------------------------
 # Reset-recovery test knobs
@@ -282,15 +350,9 @@ if {![info exists EXTRA_PLUSARGS]} {
 # Transcript log naming
 #
 # Format:
-#   YYYYMMDD_<test_specific_name>.log
-#
-# Example:
-#   20260502_ai_accel_subsys_smoke_test_case_402_result_1_host_primary.log
-#
-# Note:
-#   Same date + same test config will overwrite the old log.
+#   YYYYMMDD_HHMMSS_<test_specific_name>.log
 # --------------------------------------------------
-set LOG_DATE_PREFIX [clock format [clock seconds] -format "%Y%m%d"]
+set LOG_DATE_PREFIX [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
 
 if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
@@ -305,7 +367,8 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 } elseif {$UVM_TEST eq "ai_accel_subsys_reset_recovery_test"} {
     set LOG_BASENAME ${UVM_TEST}_pre_${PRE_RESET_CASE_ID}_post_${POST_RESET_CASE_ID}_hold_${RESET_HOLD_CYCLES}_settle_${POST_RESET_SETTLE_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
-} elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test"} {
+} elseif {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
+          ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test")} {
     if {$RUN_ALL} {
         set LOG_BASENAME ${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
@@ -316,7 +379,7 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_error_recovery_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_stress_test"} {
-    set LOG_BASENAME ${UVM_TEST}_stress_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+    set LOG_BASENAME ${UVM_TEST}_jobs_${STRESS_JOB_COUNT}_seed_${STRESS_SEED}_random_${STRESS_RANDOM}_gap_${STRESS_GAP_CYCLES}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } else {
     set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
@@ -346,6 +409,8 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   {*}$LEGACY_HOST_OVERRIDE_ARGS \
   {*}$JOB_ARG_LIST \
   {*}$DMA_LOAD_ARG_LIST \
+  {*}$DMA_STRESS_ARG_LIST \
+  {*}$CLOCK_ARG_LIST \
   +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
   +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
   +RESET_HOLD_CYCLES=$RESET_HOLD_CYCLES \
