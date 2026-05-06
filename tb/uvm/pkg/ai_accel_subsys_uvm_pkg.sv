@@ -112,6 +112,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_dma_store_smoke_test.sv"
     `include "../test/ai_accel_subsys_dma_store_error_test.sv"
     `include "../test/ai_accel_subsys_dma_load_store_stress_test.sv"
+    `include "../test/ai_accel_subsys_axis_stream_preload_smoke_test.sv"
 
 endpackage
 

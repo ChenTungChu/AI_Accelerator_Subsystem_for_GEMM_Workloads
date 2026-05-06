@@ -50,6 +50,35 @@ interface ai_accel_subsys_ctrl_if #(
     logic                  dma_store_error;
 
     // ------------------------------------------------------------
+    // AXI-Stream preload control / status
+    //
+    // Usage:
+    //   axis_load_start:
+    //     one dma_clk-domain pulse
+    //
+    //   axis_src_base_addr:
+    //     source memory byte address used by axis_preload_engine /
+    //     axi_mm2s_dma
+    //
+    //   axis_dst_base_addr:
+    //     scratchpad destination byte address used by stream loader
+    //
+    //   axis_load_beats:
+    //     number of DATA_WIDTH beats to stream
+    //
+    // Data source:
+    //   V1 reuses dma_src_mem[] as the AXIS source memory model.
+    // ------------------------------------------------------------
+    logic                  axis_load_start;
+    logic [ADDR_WIDTH-1:0] axis_src_base_addr;
+    logic [ADDR_WIDTH-1:0] axis_dst_base_addr;
+    logic [31:0]           axis_load_beats;
+
+    logic                  axis_load_busy;
+    logic                  axis_load_done;
+    logic                  axis_load_error;
+
+    // ------------------------------------------------------------
     // Accelerator control / status
     // ------------------------------------------------------------
     logic acc_start;
@@ -68,7 +97,11 @@ interface ai_accel_subsys_ctrl_if #(
     logic [DIM_WIDTH-1:0]  dim_k;
 
     // ------------------------------------------------------------
-    // DMA source memory model storage
+    // DMA / AXIS source memory model storage
+    //
+    // Shared by:
+    //   - DMA load source responder
+    //   - AXI-Stream preload source responder
     // ------------------------------------------------------------
     logic [7:0] dma_src_mem [0:DMA_SRC_MEM_BYTES-1];
 
@@ -141,6 +174,25 @@ interface ai_accel_subsys_ctrl_if #(
     begin
         dma_src_inject_rresp_error      = enable;
         dma_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // AXI-Stream preload source RRESP error injection control
+    //
+    // This is separate from dma_src_inject_rresp_error so DMA-load
+    // and AXIS-preload error tests can be controlled independently.
+    // ------------------------------------------------------------
+    logic      axis_src_inject_rresp_error;
+    int signed axis_src_inject_rresp_error_beat;
+
+    task automatic axis_src_set_rresp_error(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        axis_src_inject_rresp_error      = enable;
+        axis_src_inject_rresp_error_beat = beat_index;
     end
     endtask
 
@@ -291,6 +343,16 @@ interface ai_accel_subsys_ctrl_if #(
         input  dma_store_done;
         input  dma_store_error;
 
+        // AXI-Stream preload control
+        output axis_load_start;
+        output axis_src_base_addr;
+        output axis_dst_base_addr;
+        output axis_load_beats;
+
+        input  axis_load_busy;
+        input  axis_load_done;
+        input  axis_load_error;
+
         // Accelerator control
         output acc_start;
 
@@ -341,6 +403,16 @@ interface ai_accel_subsys_ctrl_if #(
         input dma_store_busy;
         input dma_store_done;
         input dma_store_error;
+
+        // AXI-Stream preload observation
+        input axis_load_start;
+        input axis_src_base_addr;
+        input axis_dst_base_addr;
+        input axis_load_beats;
+
+        input axis_load_busy;
+        input axis_load_done;
+        input axis_load_error;
 
         // Accelerator observation
         input acc_start;

@@ -77,6 +77,26 @@ module ai_accel_subsys #(
     output logic                      dma_store_error,
 
     // ------------------------------------------------------------
+    // AXI-Stream preload control
+    //
+    // Usage:
+    //   1. Pulse axis_load_start in dma_clk domain.
+    //   2. axis_preload_engine reads source memory through
+    //      axis_src_axi_ar/r.
+    //   3. Data crosses AXI-Stream async FIFO into core_clk.
+    //   4. Stream loader writes A/B payload into scratchpad Port1.
+    //   5. Wait axis_load_done before launching GEMM.
+    // ------------------------------------------------------------
+    input  logic                      axis_load_start,
+    input  logic [ADDR_WIDTH-1:0]     axis_src_base_addr,
+    input  logic [ADDR_WIDTH-1:0]     axis_dst_base_addr,
+    input  logic [31:0]               axis_load_beats,
+
+    output logic                      axis_load_busy,
+    output logic                      axis_load_done,
+    output logic                      axis_load_error,
+
+    // ------------------------------------------------------------
     // DMA source AXI-MM read master port
     //
     // This is the source side used by dma_load_engine.
@@ -96,6 +116,28 @@ module ai_accel_subsys #(
     input  logic                      dma_src_axi_rlast,
     input  logic                      dma_src_axi_rvalid,
     output logic                      dma_src_axi_rready,
+
+    // ------------------------------------------------------------
+    // AXI-Stream preload source AXI-MM read master port
+    //
+    // This source side is used by axis_preload_engine / axi_mm2s_dma.
+    // In TB, this can reuse the same source memory contents as the
+    // existing DMA load source memory model.
+    // ------------------------------------------------------------
+    output logic [ID_WIDTH-1:0]       axis_src_axi_arid,
+    output logic [ADDR_WIDTH-1:0]     axis_src_axi_araddr,
+    output logic [7:0]                axis_src_axi_arlen,
+    output logic [2:0]                axis_src_axi_arsize,
+    output logic [1:0]                axis_src_axi_arburst,
+    output logic                      axis_src_axi_arvalid,
+    input  logic                      axis_src_axi_arready,
+
+    input  logic [ID_WIDTH-1:0]       axis_src_axi_rid,
+    input  logic [DATA_WIDTH-1:0]     axis_src_axi_rdata,
+    input  logic [1:0]                axis_src_axi_rresp,
+    input  logic                      axis_src_axi_rlast,
+    input  logic                      axis_src_axi_rvalid,
+    output logic                      axis_src_axi_rready,
 
     // ------------------------------------------------------------
     // DMA destination AXI-MM write master port
@@ -158,8 +200,8 @@ module ai_accel_subsys #(
     );
 
     // ============================================================
-    // Internal AXI-MM interface for accelerator-side access
-    //   adapter (master) <-> BRAM port1 (slave)
+    // Internal AXI-MM interface for BRAM Port1
+    //   Port1 owner mux output -> BRAM port1 slave
     // ============================================================
     axi_mm_if #(
         .ADDR_WIDTH (ADDR_WIDTH),
@@ -167,6 +209,20 @@ module ai_accel_subsys #(
         .ID_WIDTH   (ID_WIDTH),
         .HAS_BURST  (1)
     ) axi1_if (
+        .clk   (core_clk),
+        .rst_n (core_rst_n)
+    );
+
+    // ============================================================
+    // Internal AXI-MM interface for GEMM adapter
+    //   GEMM scratchpad adapter master -> Port1 owner mux GEMM input
+    // ============================================================
+    axi_mm_if #(
+        .ADDR_WIDTH (ADDR_WIDTH),
+        .DATA_WIDTH (DATA_WIDTH),
+        .ID_WIDTH   (ID_WIDTH),
+        .HAS_BURST  (1)
+    ) gemm_axi1_if (
         .clk   (core_clk),
         .rst_n (core_rst_n)
     );
@@ -278,6 +334,60 @@ module ai_accel_subsys #(
     logic                      dma_store_spad_rvalid;
     logic                      dma_store_spad_rready;
 
+    // ============================================================
+    // AXI-Stream preload internal wires
+    // ============================================================
+    logic axis_load_busy_i;
+    logic axis_load_done_i;
+    logic axis_load_error_i;
+
+    assign axis_load_busy  = axis_load_busy_i;
+    assign axis_load_done  = axis_load_done_i;
+    assign axis_load_error = axis_load_error_i;
+
+    logic axis_stream_load_active;
+
+    logic axis_fifo_full;
+    logic axis_fifo_empty;
+    logic [4:0] axis_fifo_wr_level;
+    logic [4:0] axis_fifo_rd_level;
+
+    logic [31:0] axis_loader_accepted_beats;
+    logic [31:0] axis_loader_written_beats;
+    logic        axis_loader_tlast_seen;
+
+    logic [31:0] axis_adapter_accepted_writes;
+    logic [31:0] axis_adapter_completed_writes;
+
+    // ------------------------------------------------------------
+    // AXI-Stream preload engine -> scratchpad Port1 write path
+    // ------------------------------------------------------------
+    logic [ID_WIDTH-1:0]       axis_spad_awid;
+    logic [ADDR_WIDTH-1:0]     axis_spad_awaddr;
+    logic [7:0]                axis_spad_awlen;
+    logic [2:0]                axis_spad_awsize;
+    logic [1:0]                axis_spad_awburst;
+    logic                      axis_spad_awvalid;
+    logic                      axis_spad_awready;
+
+    logic [DATA_WIDTH-1:0]     axis_spad_wdata;
+    logic [DATA_WIDTH/8-1:0]   axis_spad_wstrb;
+    logic                      axis_spad_wlast;
+    logic                      axis_spad_wvalid;
+    logic                      axis_spad_wready;
+
+    logic [ID_WIDTH-1:0]       axis_spad_bid;
+    logic [1:0]                axis_spad_bresp;
+    logic                      axis_spad_bvalid;
+    logic                      axis_spad_bready;
+
+    // ------------------------------------------------------------
+    // Scratchpad Port1 owner mux status
+    // ------------------------------------------------------------
+    logic port1_owner_stream;
+    logic port1_owner_gemm;
+    logic port1_illegal_overlap;
+
     // ------------------------------------------------------------
     // Port0 owner select
     //
@@ -327,6 +437,11 @@ module ai_accel_subsys #(
     //   must remain stable until the start event is sampled in
     //   core_clk. Current software/testbench sequencing satisfies
     //   this because config is only changed between GEMM jobs.
+    //
+    // AXI-Stream preload rule:
+    //   GEMM start is accepted only when axis_load_busy_i is low.
+    //   This prevents GEMM from taking Port1 while stream preload
+    //   still owns Port1.
     // ============================================================
 
     // ------------------------------------------------------------
@@ -334,8 +449,12 @@ module ai_accel_subsys #(
     // ------------------------------------------------------------
     logic acc_start_dma_q;
     logic acc_start_pulse_dma;
+    logic acc_start_pulse_dma_accepted;
 
     assign acc_start_pulse_dma = acc_start & ~acc_start_dma_q;
+
+    assign acc_start_pulse_dma_accepted =
+        acc_start_pulse_dma && !axis_load_busy_i;
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -371,7 +490,7 @@ module ai_accel_subsys #(
 
             start_toggle_dma_q <= 1'b0;
         end
-        else if (acc_start_pulse_dma) begin
+        else if (acc_start_pulse_dma_accepted) begin
             base_addr_a_dma_q <= base_addr_a;
             base_addr_b_dma_q <= base_addr_b;
             base_addr_c_dma_q <= base_addr_c;
@@ -730,6 +849,86 @@ module ai_accel_subsys #(
     );
 
     // ============================================================
+    // AXI-Stream preload engine
+    //
+    // Source AXI-MM read -> AXI-Stream FIFO -> stream loader
+    // -> scratchpad Port1 write path.
+    // ============================================================
+    axis_preload_engine #(
+        .ADDR_WIDTH      (ADDR_WIDTH),
+        .DATA_WIDTH      (DATA_WIDTH),
+        .ID_WIDTH        (ID_WIDTH),
+        .AXIS_FIFO_DEPTH (16),
+        .CAPTURE_DEPTH   (1024),
+        .AXI_SRC_ARID    ('0),
+        .AXI_SP_AWID     ('0)
+    ) u_axis_preload_engine (
+        .dma_clk                   (dma_clk),
+        .dma_rst_n                 (dma_rst_n),
+        .core_clk                  (core_clk),
+        .core_rst_n                (core_rst_n),
+
+        .axis_load_start           (axis_load_start),
+        .axis_src_base_addr        (axis_src_base_addr),
+        .axis_dst_base_addr        (axis_dst_base_addr),
+        .axis_load_beats           (axis_load_beats),
+
+        .axis_load_busy            (axis_load_busy_i),
+        .axis_load_done            (axis_load_done_i),
+        .axis_load_error           (axis_load_error_i),
+
+        // AXI-MM source read master
+        .axis_src_axi_arid         (axis_src_axi_arid),
+        .axis_src_axi_araddr       (axis_src_axi_araddr),
+        .axis_src_axi_arlen        (axis_src_axi_arlen),
+        .axis_src_axi_arsize       (axis_src_axi_arsize),
+        .axis_src_axi_arburst      (axis_src_axi_arburst),
+        .axis_src_axi_arvalid      (axis_src_axi_arvalid),
+        .axis_src_axi_arready      (axis_src_axi_arready),
+
+        .axis_src_axi_rid          (axis_src_axi_rid),
+        .axis_src_axi_rdata        (axis_src_axi_rdata),
+        .axis_src_axi_rresp        (axis_src_axi_rresp),
+        .axis_src_axi_rlast        (axis_src_axi_rlast),
+        .axis_src_axi_rvalid       (axis_src_axi_rvalid),
+        .axis_src_axi_rready       (axis_src_axi_rready),
+
+        // Scratchpad Port1 write master side
+        .sp_axi_awid               (axis_spad_awid),
+        .sp_axi_awaddr             (axis_spad_awaddr),
+        .sp_axi_awlen              (axis_spad_awlen),
+        .sp_axi_awsize             (axis_spad_awsize),
+        .sp_axi_awburst            (axis_spad_awburst),
+        .sp_axi_awvalid            (axis_spad_awvalid),
+        .sp_axi_awready            (axis_spad_awready),
+
+        .sp_axi_wdata              (axis_spad_wdata),
+        .sp_axi_wstrb              (axis_spad_wstrb),
+        .sp_axi_wlast              (axis_spad_wlast),
+        .sp_axi_wvalid             (axis_spad_wvalid),
+        .sp_axi_wready             (axis_spad_wready),
+
+        .sp_axi_bid                (axis_spad_bid),
+        .sp_axi_bresp              (axis_spad_bresp),
+        .sp_axi_bvalid             (axis_spad_bvalid),
+        .sp_axi_bready             (axis_spad_bready),
+
+        .stream_load_active        (axis_stream_load_active),
+
+        .axis_fifo_full            (axis_fifo_full),
+        .axis_fifo_empty           (axis_fifo_empty),
+        .axis_fifo_wr_level        (axis_fifo_wr_level),
+        .axis_fifo_rd_level        (axis_fifo_rd_level),
+
+        .loader_accepted_beats     (axis_loader_accepted_beats),
+        .loader_written_beats      (axis_loader_written_beats),
+        .loader_tlast_seen         (axis_loader_tlast_seen),
+
+        .adapter_accepted_writes   (axis_adapter_accepted_writes),
+        .adapter_completed_writes  (axis_adapter_completed_writes)
+    );
+
+    // ============================================================
     // Scratchpad Port0 owner mux
     //   Host axi0_if, DMA load engine, or DMA store engine
     //   -> BRAM Port0
@@ -783,6 +982,117 @@ module ai_accel_subsys #(
     );
 
     // ============================================================
+    // Scratchpad Port1 owner mux
+    //   AXI-Stream preload engine or GEMM scratchpad adapter
+    //   -> BRAM Port1
+    // ============================================================
+    scratchpad_port1_owner_mux #(
+        .ADDR_WIDTH (ADDR_WIDTH),
+        .DATA_WIDTH (DATA_WIDTH),
+        .ID_WIDTH   (ID_WIDTH)
+    ) u_scratchpad_port1_owner_mux (
+        .clk                (core_clk),
+        .rst_n              (core_rst_n),
+
+        .stream_load_active (axis_stream_load_active),
+        .gemm_active        (acc_busy_core),
+
+        .owner_stream       (port1_owner_stream),
+        .owner_gemm         (port1_owner_gemm),
+        .illegal_overlap    (port1_illegal_overlap),
+
+        // STREAM_LOAD owner input
+        .stream_awid        (axis_spad_awid),
+        .stream_awaddr      (axis_spad_awaddr),
+        .stream_awlen       (axis_spad_awlen),
+        .stream_awsize      (axis_spad_awsize),
+        .stream_awburst     (axis_spad_awburst),
+        .stream_awvalid     (axis_spad_awvalid),
+        .stream_awready     (axis_spad_awready),
+
+        .stream_wdata       (axis_spad_wdata),
+        .stream_wstrb       (axis_spad_wstrb),
+        .stream_wlast       (axis_spad_wlast),
+        .stream_wvalid      (axis_spad_wvalid),
+        .stream_wready      (axis_spad_wready),
+
+        .stream_bid         (axis_spad_bid),
+        .stream_bresp       (axis_spad_bresp),
+        .stream_bvalid      (axis_spad_bvalid),
+        .stream_bready      (axis_spad_bready),
+
+        // GEMM owner input
+        .gemm_awid          (gemm_axi1_if.awid),
+        .gemm_awaddr        (gemm_axi1_if.awaddr),
+        .gemm_awlen         (gemm_axi1_if.awlen),
+        .gemm_awsize        (gemm_axi1_if.awsize),
+        .gemm_awburst       (gemm_axi1_if.awburst),
+        .gemm_awvalid       (gemm_axi1_if.awvalid),
+        .gemm_awready       (gemm_axi1_if.awready),
+
+        .gemm_wdata         (gemm_axi1_if.wdata),
+        .gemm_wstrb         (gemm_axi1_if.wstrb),
+        .gemm_wlast         (gemm_axi1_if.wlast),
+        .gemm_wvalid        (gemm_axi1_if.wvalid),
+        .gemm_wready        (gemm_axi1_if.wready),
+
+        .gemm_bid           (gemm_axi1_if.bid),
+        .gemm_bresp         (gemm_axi1_if.bresp),
+        .gemm_bvalid        (gemm_axi1_if.bvalid),
+        .gemm_bready        (gemm_axi1_if.bready),
+
+        .gemm_arid          (gemm_axi1_if.arid),
+        .gemm_araddr        (gemm_axi1_if.araddr),
+        .gemm_arlen         (gemm_axi1_if.arlen),
+        .gemm_arsize        (gemm_axi1_if.arsize),
+        .gemm_arburst       (gemm_axi1_if.arburst),
+        .gemm_arvalid       (gemm_axi1_if.arvalid),
+        .gemm_arready       (gemm_axi1_if.arready),
+
+        .gemm_rid           (gemm_axi1_if.rid),
+        .gemm_rdata         (gemm_axi1_if.rdata),
+        .gemm_rresp         (gemm_axi1_if.rresp),
+        .gemm_rlast         (gemm_axi1_if.rlast),
+        .gemm_rvalid        (gemm_axi1_if.rvalid),
+        .gemm_rready        (gemm_axi1_if.rready),
+
+        // Scratchpad Port1 output
+        .p1_awid            (axi1_if.awid),
+        .p1_awaddr          (axi1_if.awaddr),
+        .p1_awlen           (axi1_if.awlen),
+        .p1_awsize          (axi1_if.awsize),
+        .p1_awburst         (axi1_if.awburst),
+        .p1_awvalid         (axi1_if.awvalid),
+        .p1_awready         (axi1_if.awready),
+
+        .p1_wdata           (axi1_if.wdata),
+        .p1_wstrb           (axi1_if.wstrb),
+        .p1_wlast           (axi1_if.wlast),
+        .p1_wvalid          (axi1_if.wvalid),
+        .p1_wready          (axi1_if.wready),
+
+        .p1_bid             (axi1_if.bid),
+        .p1_bresp           (axi1_if.bresp),
+        .p1_bvalid          (axi1_if.bvalid),
+        .p1_bready          (axi1_if.bready),
+
+        .p1_arid            (axi1_if.arid),
+        .p1_araddr          (axi1_if.araddr),
+        .p1_arlen           (axi1_if.arlen),
+        .p1_arsize          (axi1_if.arsize),
+        .p1_arburst         (axi1_if.arburst),
+        .p1_arvalid         (axi1_if.arvalid),
+        .p1_arready         (axi1_if.arready),
+
+        .p1_rid             (axi1_if.rid),
+        .p1_rdata           (axi1_if.rdata),
+        .p1_rresp           (axi1_if.rresp),
+        .p1_rlast           (axi1_if.rlast),
+        .p1_rvalid          (axi1_if.rvalid),
+        .p1_rready          (axi1_if.rready)
+    );
+
+    // ============================================================
     // Dual-port AXI-MM BRAM scratchpad
     // ============================================================
     axi_mm_dual_port_bram #(
@@ -799,7 +1109,7 @@ module ai_accel_subsys #(
         // Port0 now goes through owner mux.
         .axi0_if          (bram_axi0_if),
 
-        // Port1 remains GEMM/core side.
+        // Port1 now goes through owner mux.
         .axi1_if          (axi1_if),
 
         .apply_if         (apply_if.mp_producer),
@@ -853,6 +1163,9 @@ module ai_accel_subsys #(
 
     // ============================================================
     // GEMM local-memory -> scratchpad AXI adapter
+    //
+    // The adapter now drives gemm_axi1_if, which is routed through
+    // scratchpad_port1_owner_mux before reaching BRAM Port1.
     // ============================================================
     gemm_scratchpad_adapter #(
         .ADDR_WIDTH (ADDR_WIDTH),
@@ -877,7 +1190,7 @@ module ai_accel_subsys #(
         .busy          (gemm_mem_busy),
         .done          (gemm_mem_done),
 
-        .axi_if        (axi1_if)
+        .axi_if        (gemm_axi1_if)
     );
 
 endmodule

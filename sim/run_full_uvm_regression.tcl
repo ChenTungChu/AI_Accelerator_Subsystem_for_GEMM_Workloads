@@ -322,6 +322,16 @@ run_reg_item "dma_load_store_stress 8 jobs" {
 }
 
 # ============================================================
+# AXIS stream preload smoke test
+# ============================================================
+run_reg_item "axis_stream_preload_smoke_run_all" {
+    set UVM_TEST ai_accel_subsys_axis_stream_preload_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 1
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 
