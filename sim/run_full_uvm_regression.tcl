@@ -341,6 +341,19 @@ run_reg_item "axis_stream_preload_error_recovery" {
 }
 
 # ============================================================
+# AXIS stream load store stress test
+# ============================================================
+run_reg_item "axis_stream_load_store_stress 8 jobs" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+}
+
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

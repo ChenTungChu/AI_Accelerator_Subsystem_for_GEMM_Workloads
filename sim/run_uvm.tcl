@@ -56,6 +56,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_dma_load_store_stress_test \
     ai_accel_subsys_axis_stream_preload_smoke_test \
     ai_accel_subsys_axis_stream_preload_error_test \
+    ai_accel_subsys_axis_stream_load_store_stress_test \
 ]
 
 # --------------------------------------------------
@@ -402,6 +403,31 @@ if {![info exists RESET_HOLD_CYCLES]} {
 if {![info exists POST_RESET_SETTLE_CYCLES]} {
     set POST_RESET_SETTLE_CYCLES 5
 }
+
+# --------------------------------------------------
+# Stream load store stress test plusargs
+#   used by ai_accel_subsys_axis_stream_load_store_stress_test
+# --------------------------------------------------
+if {$UVM_TEST eq "ai_accel_subsys_axis_stream_load_store_stress_test"} {
+    if {![info exists AXIS_STRESS_JOB_COUNT]} {
+        set AXIS_STRESS_JOB_COUNT 8
+    }
+    if {![info exists AXIS_STRESS_SEED]} {
+        set AXIS_STRESS_SEED 20260502
+    }
+    if {![info exists AXIS_STRESS_RANDOM]} {
+        set AXIS_STRESS_RANDOM 1
+    }
+    if {![info exists AXIS_STRESS_GAP_CYCLES]} {
+        set AXIS_STRESS_GAP_CYCLES 10
+    }
+
+    lappend EXTRA_ARGS +AXIS_STRESS_JOB_COUNT=$AXIS_STRESS_JOB_COUNT
+    lappend EXTRA_ARGS +AXIS_STRESS_SEED=$AXIS_STRESS_SEED
+    lappend EXTRA_ARGS +AXIS_STRESS_RANDOM=$AXIS_STRESS_RANDOM
+    lappend EXTRA_ARGS +AXIS_STRESS_GAP_CYCLES=$AXIS_STRESS_GAP_CYCLES
+}
+
 
 # --------------------------------------------------
 # Extra plusargs
