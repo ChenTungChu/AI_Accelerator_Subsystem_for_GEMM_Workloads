@@ -332,6 +332,15 @@ run_reg_item "axis_stream_preload_smoke_run_all" {
 }
 
 # ============================================================
+# AXIS stream preload error test
+# ============================================================
+run_reg_item "axis_stream_preload_error_recovery" {
+    set UVM_TEST ai_accel_subsys_axis_stream_preload_error_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 
