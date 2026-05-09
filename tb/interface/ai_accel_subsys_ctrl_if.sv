@@ -52,22 +52,9 @@ interface ai_accel_subsys_ctrl_if #(
     // ------------------------------------------------------------
     // AXI-Stream preload control / status
     //
-    // Usage:
-    //   axis_load_start:
-    //     one dma_clk-domain pulse
-    //
-    //   axis_src_base_addr:
-    //     source memory byte address used by axis_preload_engine /
-    //     axi_mm2s_dma
-    //
-    //   axis_dst_base_addr:
-    //     scratchpad destination byte address used by stream loader
-    //
-    //   axis_load_beats:
-    //     number of DATA_WIDTH beats to stream
-    //
-    // Data source:
-    //   V1 reuses dma_src_mem[] as the AXIS source memory model.
+    // V1 Option A:
+    //   AXI source -> MM2S -> AXIS FIFO -> stream loader
+    //   -> scratchpad Port1 preload A/B
     // ------------------------------------------------------------
     logic                  axis_load_start;
     logic [ADDR_WIDTH-1:0] axis_src_base_addr;
@@ -77,6 +64,34 @@ interface ai_accel_subsys_ctrl_if #(
     logic                  axis_load_busy;
     logic                  axis_load_done;
     logic                  axis_load_error;
+
+    // ------------------------------------------------------------
+    // Direct-stream GEMM operand preload control / status
+    //
+    // Direct Stream B1:
+    //   AXI source -> MM2S -> AXIS FIFO -> stream loader
+    //   -> operand buffer A/B
+    //
+    // ds_operand_sel:
+    //   0 = operand A
+    //   1 = operand B
+    //
+    // ds_dst_base_addr:
+    //   logical operand base address. The direct-stream write
+    //   adapter converts stream-loader wr_addr into local operand
+    //   buffer offset by subtracting this base address.
+    // ------------------------------------------------------------
+    logic                  gemm_input_stream_mode;
+
+    logic                  ds_load_start;
+    logic [ADDR_WIDTH-1:0] ds_src_base_addr;
+    logic [ADDR_WIDTH-1:0] ds_dst_base_addr;
+    logic [31:0]           ds_load_beats;
+    logic                  ds_operand_sel;
+
+    logic                  ds_load_busy;
+    logic                  ds_load_done;
+    logic                  ds_load_error;
 
     // ------------------------------------------------------------
     // Accelerator control / status
@@ -97,11 +112,12 @@ interface ai_accel_subsys_ctrl_if #(
     logic [DIM_WIDTH-1:0]  dim_k;
 
     // ------------------------------------------------------------
-    // DMA / AXIS source memory model storage
+    // DMA / AXIS / Direct-stream source memory model storage
     //
     // Shared by:
     //   - DMA load source responder
     //   - AXI-Stream preload source responder
+    //   - Direct-stream preload source responder
     // ------------------------------------------------------------
     logic [7:0] dma_src_mem [0:DMA_SRC_MEM_BYTES-1];
 
@@ -179,9 +195,6 @@ interface ai_accel_subsys_ctrl_if #(
 
     // ------------------------------------------------------------
     // AXI-Stream preload source RRESP error injection control
-    //
-    // This is separate from dma_src_inject_rresp_error so DMA-load
-    // and AXIS-preload error tests can be controlled independently.
     // ------------------------------------------------------------
     logic      axis_src_inject_rresp_error;
     int signed axis_src_inject_rresp_error_beat;
@@ -193,6 +206,25 @@ interface ai_accel_subsys_ctrl_if #(
     begin
         axis_src_inject_rresp_error      = enable;
         axis_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Direct-stream preload source RRESP error injection control
+    //
+    // Separate from DMA load and AXIS preload injection controls so
+    // direct-stream error tests can be isolated.
+    // ------------------------------------------------------------
+    logic      ds_src_inject_rresp_error;
+    int signed ds_src_inject_rresp_error_beat;
+
+    task automatic ds_src_set_rresp_error(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        ds_src_inject_rresp_error      = enable;
+        ds_src_inject_rresp_error_beat = beat_index;
     end
     endtask
 
@@ -353,6 +385,19 @@ interface ai_accel_subsys_ctrl_if #(
         input  axis_load_done;
         input  axis_load_error;
 
+        // Direct-stream control
+        output gemm_input_stream_mode;
+
+        output ds_load_start;
+        output ds_src_base_addr;
+        output ds_dst_base_addr;
+        output ds_load_beats;
+        output ds_operand_sel;
+
+        input  ds_load_busy;
+        input  ds_load_done;
+        input  ds_load_error;
+
         // Accelerator control
         output acc_start;
 
@@ -413,6 +458,19 @@ interface ai_accel_subsys_ctrl_if #(
         input axis_load_busy;
         input axis_load_done;
         input axis_load_error;
+
+        // Direct-stream observation
+        input gemm_input_stream_mode;
+
+        input ds_load_start;
+        input ds_src_base_addr;
+        input ds_dst_base_addr;
+        input ds_load_beats;
+        input ds_operand_sel;
+
+        input ds_load_busy;
+        input ds_load_done;
+        input ds_load_error;
 
         // Accelerator observation
         input acc_start;

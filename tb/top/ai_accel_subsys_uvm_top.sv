@@ -27,6 +27,7 @@ module ai_accel_subsys_uvm_top;
     localparam int DMA_SRC_MEM_BYTES = 4096;
     localparam int DMA_SRC_READ_LATENCY_CYCLES  = 2;
     localparam int AXIS_SRC_READ_LATENCY_CYCLES = 2;
+    localparam int DS_SRC_READ_LATENCY_CYCLES   = 2;
 
     // DMA destination memory model used by subsystem-level DMA store tests.
     // Byte-addressed so C payloads can be checked naturally.
@@ -96,6 +97,13 @@ module ai_accel_subsys_uvm_top;
     logic axis_load_busy;
     logic axis_load_done;
     logic axis_load_error;
+
+    // ============================================================
+    // Direct-stream preload status wires
+    // ============================================================
+    logic ds_load_busy;
+    logic ds_load_done;
+    logic ds_load_error;
 
     // ============================================================
     // DMA source AXI-MM read port
@@ -186,6 +194,54 @@ module ai_accel_subsys_uvm_top;
 
     wire axis_src_ar_fire = axis_src_axi_arvalid && axis_src_axi_arready;
     wire axis_src_r_fire  = axis_src_axi_rvalid  && axis_src_axi_rready;
+
+    // ============================================================
+    // Direct-stream preload source AXI-MM read port
+    // ============================================================
+    logic [ID_WIDTH-1:0]   ds_src_axi_arid;
+    logic [ADDR_WIDTH-1:0] ds_src_axi_araddr;
+    logic [7:0]            ds_src_axi_arlen;
+    logic [2:0]            ds_src_axi_arsize;
+    logic [1:0]            ds_src_axi_arburst;
+    logic                  ds_src_axi_arvalid;
+    logic                  ds_src_axi_arready;
+
+    logic [ID_WIDTH-1:0]   ds_src_axi_rid;
+    logic [DATA_WIDTH-1:0] ds_src_axi_rdata;
+    logic [1:0]            ds_src_axi_rresp;
+    logic                  ds_src_axi_rlast;
+    logic                  ds_src_axi_rvalid;
+    logic                  ds_src_axi_rready;
+
+    // ============================================================
+    // Direct-stream source memory responder model state
+    //
+    // Storage is shared with DMA/AXIS source:
+    //   ctrl_if.dma_src_mem[]
+    //
+    // Error injection is independent:
+    //   ctrl_if.ds_src_inject_rresp_error
+    // ============================================================
+    logic                  ds_src_rd_pending_valid;
+    logic [ADDR_WIDTH-1:0] ds_src_rd_pending_addr;
+    logic [ID_WIDTH-1:0]   ds_src_rd_pending_id;
+    int unsigned           ds_src_rd_pending_delay;
+    int unsigned           ds_src_rd_pending_beat_idx;
+
+    logic                  ds_src_inject_enable_q;
+    int unsigned           ds_src_inject_base_ar_count;
+
+    logic [ID_WIDTH-1:0]   ds_src_rid_q;
+    logic [DATA_WIDTH-1:0] ds_src_rdata_q;
+    logic [1:0]            ds_src_rresp_q;
+    logic                  ds_src_rlast_q;
+    logic                  ds_src_rvalid_q;
+
+    int unsigned           ds_src_ar_count;
+    int unsigned           ds_src_r_count;
+
+    wire ds_src_ar_fire = ds_src_axi_arvalid && ds_src_axi_arready;
+    wire ds_src_r_fire  = ds_src_axi_rvalid  && ds_src_axi_rready;
 
     // ============================================================
     // DMA destination AXI-MM write port
@@ -299,6 +355,19 @@ module ai_accel_subsys_uvm_top;
     assign axis_src_axi_rresp   = axis_src_rresp_q;
     assign axis_src_axi_rlast   = axis_src_rlast_q;
     assign axis_src_axi_rvalid  = axis_src_rvalid_q;
+
+    // ============================================================
+    // Direct-stream source AXI read response model connections
+    // ============================================================
+    assign ds_src_axi_arready = dma_rst_n &&
+                                !ds_src_rd_pending_valid &&
+                                !ds_src_rvalid_q;
+
+    assign ds_src_axi_rid     = ds_src_rid_q;
+    assign ds_src_axi_rdata   = ds_src_rdata_q;
+    assign ds_src_axi_rresp   = ds_src_rresp_q;
+    assign ds_src_axi_rlast   = ds_src_rlast_q;
+    assign ds_src_axi_rvalid  = ds_src_rvalid_q;    
 
     // ============================================================
     // DMA destination AXI write response model connections
@@ -609,6 +678,111 @@ module ai_accel_subsys_uvm_top;
     end
 
     // ============================================================
+    // Direct-stream source AXI read responder
+    //
+    // v1 assumptions:
+    //   - single outstanding read
+    //   - single-beat AR only, ARLEN must be 0
+    //   - byte-addressed source memory
+    //   - uses ctrl_if.dma_src_mem[] as source storage
+    //   - independent RRESP injection through ds_src_set_rresp_error()
+    // ============================================================
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            ds_src_rd_pending_valid      <= 1'b0;
+            ds_src_rd_pending_addr       <= '0;
+            ds_src_rd_pending_id         <= '0;
+            ds_src_rd_pending_delay      <= 0;
+            ds_src_rd_pending_beat_idx   <= 0;
+
+            ds_src_inject_enable_q       <= 1'b0;
+            ds_src_inject_base_ar_count  <= 0;
+
+            ds_src_rid_q                 <= '0;
+            ds_src_rdata_q               <= '0;
+            ds_src_rresp_q               <= AXI_RESP_OKAY;
+            ds_src_rlast_q               <= 1'b0;
+            ds_src_rvalid_q              <= 1'b0;
+
+            ds_src_ar_count              <= 0;
+            ds_src_r_count               <= 0;
+        end
+        else begin
+            ds_src_inject_enable_q <= ctrl_if.ds_src_inject_rresp_error;
+
+            if (ctrl_if.ds_src_inject_rresp_error &&
+                !ds_src_inject_enable_q) begin
+                ds_src_inject_base_ar_count <= ds_src_ar_count;
+            end
+
+            if (ds_src_ar_fire) begin
+                int unsigned ar_base_idx;
+
+                ar_base_idx = src_byte_index(ds_src_axi_araddr);
+
+                if (ds_src_axi_arlen !== 8'd0) begin
+                    $fatal(1,
+                        "[UVM_TOP_DS_SRC] Unsupported direct-stream source ARLEN=%0d, expected 0",
+                        ds_src_axi_arlen
+                    );
+                end
+
+                if ((ar_base_idx + BYTES_PER_BEAT) > DMA_SRC_MEM_BYTES) begin
+                    $fatal(1,
+                        "[UVM_TOP_DS_SRC] Direct-stream source read out of range: addr=0x%08h idx=%0d depth=%0d",
+                        ds_src_axi_araddr, ar_base_idx, DMA_SRC_MEM_BYTES
+                    );
+                end
+
+                ds_src_rd_pending_valid    <= 1'b1;
+                ds_src_rd_pending_addr     <= ds_src_axi_araddr;
+                ds_src_rd_pending_id       <= ds_src_axi_arid;
+                ds_src_rd_pending_delay    <= DS_SRC_READ_LATENCY_CYCLES;
+                ds_src_rd_pending_beat_idx <= ds_src_ar_count;
+
+                ds_src_ar_count            <= ds_src_ar_count + 1;
+            end
+            else if (ds_src_rd_pending_valid && (ds_src_rd_pending_delay != 0)) begin
+                ds_src_rd_pending_delay <= ds_src_rd_pending_delay - 1;
+            end
+
+            if (ds_src_r_fire) begin
+                ds_src_rvalid_q <= 1'b0;
+                ds_src_rlast_q  <= 1'b0;
+                ds_src_rresp_q  <= AXI_RESP_OKAY;
+                ds_src_rdata_q  <= '0;
+                ds_src_rid_q    <= '0;
+
+                ds_src_r_count  <= ds_src_r_count + 1;
+            end
+
+            if (!ds_src_rvalid_q &&
+                ds_src_rd_pending_valid &&
+                (ds_src_rd_pending_delay == 0)) begin
+
+                ds_src_rvalid_q <= 1'b1;
+                ds_src_rlast_q  <= 1'b1;
+                ds_src_rid_q    <= ds_src_rd_pending_id;
+                ds_src_rdata_q  <= src_pack_word(ds_src_rd_pending_addr);
+
+                if (ctrl_if.ds_src_inject_rresp_error &&
+                    (ctrl_if.ds_src_inject_rresp_error_beat >= 0) &&
+                    (ds_src_rd_pending_beat_idx >= ds_src_inject_base_ar_count) &&
+                    (int'(ds_src_rd_pending_beat_idx - ds_src_inject_base_ar_count) ==
+                        ctrl_if.ds_src_inject_rresp_error_beat)) begin
+
+                    ds_src_rresp_q <= AXI_RESP_SLVERR;
+                end
+                else begin
+                    ds_src_rresp_q <= AXI_RESP_OKAY;
+                end
+
+                ds_src_rd_pending_valid <= 1'b0;
+            end
+        end
+    end
+
+    // ============================================================
     // DMA destination AXI write responder
     // ============================================================
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
@@ -797,6 +971,17 @@ module ai_accel_subsys_uvm_top;
         .axis_load_done           (axis_load_done),
         .axis_load_error          (axis_load_error),
 
+        // Direct-stream preload control through ctrl_if
+        .ds_load_start           (ctrl_if.ds_load_start),
+        .ds_src_base_addr        (ctrl_if.ds_src_base_addr),
+        .ds_dst_base_addr        (ctrl_if.ds_dst_base_addr),
+        .ds_load_beats           (ctrl_if.ds_load_beats),
+        .ds_operand_sel          (ctrl_if.ds_operand_sel),
+
+        .ds_load_busy            (ds_load_busy),
+        .ds_load_done            (ds_load_done),
+        .ds_load_error           (ds_load_error),
+
         // DMA source AXI-MM read master port
         .dma_src_axi_arid     (dma_src_axi_arid),
         .dma_src_axi_araddr   (dma_src_axi_araddr),
@@ -829,6 +1014,22 @@ module ai_accel_subsys_uvm_top;
         .axis_src_axi_rvalid  (axis_src_axi_rvalid),
         .axis_src_axi_rready  (axis_src_axi_rready),
 
+        // Direct-stream preload source AXI-MM read master port
+        .ds_src_axi_arid     (ds_src_axi_arid),
+        .ds_src_axi_araddr   (ds_src_axi_araddr),
+        .ds_src_axi_arlen    (ds_src_axi_arlen),
+        .ds_src_axi_arsize   (ds_src_axi_arsize),
+        .ds_src_axi_arburst  (ds_src_axi_arburst),
+        .ds_src_axi_arvalid  (ds_src_axi_arvalid),
+        .ds_src_axi_arready  (ds_src_axi_arready),
+
+        .ds_src_axi_rid      (ds_src_axi_rid),
+        .ds_src_axi_rdata    (ds_src_axi_rdata),
+        .ds_src_axi_rresp    (ds_src_axi_rresp),
+        .ds_src_axi_rlast    (ds_src_axi_rlast),
+        .ds_src_axi_rvalid   (ds_src_axi_rvalid),
+        .ds_src_axi_rready   (ds_src_axi_rready),
+
         // DMA destination AXI-MM write master port
         .dma_dst_axi_awid     (dma_dst_axi_awid),
         .dma_dst_axi_awaddr   (dma_dst_axi_awaddr),
@@ -850,17 +1051,19 @@ module ai_accel_subsys_uvm_top;
         .dma_dst_axi_bready   (dma_dst_axi_bready),
 
         // Accelerator control
-        .acc_start            (ctrl_if.acc_start),
-        .acc_busy             (acc_busy),
-        .acc_done             (acc_done),
+        .gemm_input_stream_mode (ctrl_if.gemm_input_stream_mode),
 
-        .base_addr_a          (ctrl_if.base_addr_a),
-        .base_addr_b          (ctrl_if.base_addr_b),
-        .base_addr_c          (ctrl_if.base_addr_c),
+        .acc_start              (ctrl_if.acc_start),
+        .acc_busy               (acc_busy),
+        .acc_done               (acc_done),
 
-        .dim_m                (ctrl_if.dim_m),
-        .dim_n                (ctrl_if.dim_n),
-        .dim_k                (ctrl_if.dim_k)
+        .base_addr_a            (ctrl_if.base_addr_a),
+        .base_addr_b            (ctrl_if.base_addr_b),
+        .base_addr_c            (ctrl_if.base_addr_c),
+
+        .dim_m                  (ctrl_if.dim_m),
+        .dim_n                  (ctrl_if.dim_n),
+        .dim_k                  (ctrl_if.dim_k)
     );
 
     // ============================================================
@@ -883,6 +1086,10 @@ module ai_accel_subsys_uvm_top;
     assign ctrl_if.axis_load_busy  = axis_load_busy;
     assign ctrl_if.axis_load_done  = axis_load_done;
     assign ctrl_if.axis_load_error = axis_load_error;
+
+    assign ctrl_if.ds_load_busy  = ds_load_busy;
+    assign ctrl_if.ds_load_done  = ds_load_done;
+    assign ctrl_if.ds_load_error = ds_load_error;
 
     // ============================================================
     // BRAM observation interface ready
@@ -949,6 +1156,8 @@ module ai_accel_subsys_uvm_top;
     // ============================================================
     initial begin
         // ctrl_if defaults
+        ctrl_if.gemm_input_stream_mode = 1'b0;
+
         ctrl_if.acc_start   = 1'b0;
         ctrl_if.base_addr_a = '0;
         ctrl_if.base_addr_b = '0;
@@ -975,6 +1184,13 @@ module ai_accel_subsys_uvm_top;
         ctrl_if.axis_dst_base_addr = '0;
         ctrl_if.axis_load_beats    = '0;
 
+        // Direct-stream preload defaults
+        ctrl_if.ds_load_start    = 1'b0;
+        ctrl_if.ds_src_base_addr = '0;
+        ctrl_if.ds_dst_base_addr = '0;
+        ctrl_if.ds_load_beats    = '0;
+        ctrl_if.ds_operand_sel   = 1'b0;
+
         // reset override defaults
         ctrl_if.tb_reset_override_en   = 1'b0;
         ctrl_if.tb_dma_rst_n_override  = 1'b1;
@@ -984,6 +1200,8 @@ module ai_accel_subsys_uvm_top;
         ctrl_if.dma_src_mem_clear();
         ctrl_if.dma_src_set_rresp_error(1'b0, -1);
         ctrl_if.axis_src_set_rresp_error(1'b0, -1);
+        
+        ctrl_if.ds_src_set_rresp_error(1'b0, -1);
 
         // DMA destination memory model defaults
         ctrl_if.dma_dst_mem_clear();

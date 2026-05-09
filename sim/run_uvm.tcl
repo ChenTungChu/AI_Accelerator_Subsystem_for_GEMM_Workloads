@@ -57,6 +57,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_axis_stream_preload_smoke_test \
     ai_accel_subsys_axis_stream_preload_error_test \
     ai_accel_subsys_axis_stream_load_store_stress_test \
+    ai_accel_subsys_direct_stream_smoke_test \
 ]
 
 # --------------------------------------------------
@@ -224,11 +225,7 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 }
 
 # --------------------------------------------------
-# DMA smoke RUN_ALL knobs
-#
-#   used by:
-#     ai_accel_subsys_dma_load_smoke_test
-#     ai_accel_subsys_dma_store_smoke_test
+# RUN_ALL knobs
 #
 #   RUN_ALL=0:
 #     run selected CASE_ID only
@@ -240,7 +237,8 @@ set DMA_SMOKE_ARG_LIST [list]
 
 if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test") ||
-    ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test")} {
+    ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test")} {
 
     if {![info exists RUN_ALL]} {
         set RUN_ALL 0

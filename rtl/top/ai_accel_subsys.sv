@@ -97,6 +97,23 @@ module ai_accel_subsys #(
     output logic                      axis_load_error,
 
     // ------------------------------------------------------------
+    // Direct-stream GEMM operand preload control
+    //
+    // ds_operand_sel:
+    //   0 = operand A
+    //   1 = operand B
+    // ------------------------------------------------------------
+    input  logic                      ds_load_start,
+    input  logic [ADDR_WIDTH-1:0]     ds_src_base_addr,
+    input  logic [ADDR_WIDTH-1:0]     ds_dst_base_addr,
+    input  logic [31:0]               ds_load_beats,
+    input  logic                      ds_operand_sel,
+
+    output logic                      ds_load_busy,
+    output logic                      ds_load_done,
+    output logic                      ds_load_error,
+
+    // ------------------------------------------------------------
     // DMA source AXI-MM read master port
     //
     // This is the source side used by dma_load_engine.
@@ -140,6 +157,24 @@ module ai_accel_subsys #(
     output logic                      axis_src_axi_rready,
 
     // ------------------------------------------------------------
+    // Direct-stream preload source AXI-MM read master port
+    // ------------------------------------------------------------
+    output logic [ID_WIDTH-1:0]       ds_src_axi_arid,
+    output logic [ADDR_WIDTH-1:0]     ds_src_axi_araddr,
+    output logic [7:0]                ds_src_axi_arlen,
+    output logic [2:0]                ds_src_axi_arsize,
+    output logic [1:0]                ds_src_axi_arburst,
+    output logic                      ds_src_axi_arvalid,
+    input  logic                      ds_src_axi_arready,
+
+    input  logic [ID_WIDTH-1:0]       ds_src_axi_rid,
+    input  logic [DATA_WIDTH-1:0]     ds_src_axi_rdata,
+    input  logic [1:0]                ds_src_axi_rresp,
+    input  logic                      ds_src_axi_rlast,
+    input  logic                      ds_src_axi_rvalid,
+    output logic                      ds_src_axi_rready,    
+
+    // ------------------------------------------------------------
     // DMA destination AXI-MM write master port
     //
     // This is the destination side used by dma_store_engine.
@@ -172,6 +207,8 @@ module ai_accel_subsys #(
     //
     // acc_busy / acc_done are reported back in dma_clk domain.
     // ------------------------------------------------------------
+    input  logic                      gemm_input_stream_mode,
+
     input  logic                      acc_start,
     output logic                      acc_busy,
     output logic                      acc_done,
@@ -381,6 +418,91 @@ module ai_accel_subsys #(
     logic                      axis_spad_bvalid;
     logic                      axis_spad_bready;
 
+    // ============================================================
+    // Direct-stream preload internal wires
+    // ============================================================
+    logic ds_load_busy_i;
+    logic ds_load_done_i;
+    logic ds_load_error_i;
+
+    assign ds_load_busy  = ds_load_busy_i;
+    assign ds_load_done  = ds_load_done_i;
+    assign ds_load_error = ds_load_error_i;
+
+    logic direct_stream_load_active;
+
+    logic ds_fifo_full;
+    logic ds_fifo_empty;
+    logic [4:0] ds_fifo_wr_level;
+    logic [4:0] ds_fifo_rd_level;
+
+    logic [31:0] ds_loader_accepted_beats;
+    logic [31:0] ds_loader_written_beats;
+    logic        ds_loader_tlast_seen;
+
+    logic [31:0] ds_adapter_accepted_writes;
+    logic [31:0] ds_adapter_forwarded_writes;
+    logic [31:0] ds_adapter_dropped_writes;
+
+    logic        ds_operand_buf_clear_a;
+    logic        ds_operand_buf_clear_b;
+    logic        ds_operand_buf_clear_status;
+
+    // Direct-stream preload engine -> operand buffer write path
+    logic                         ds_buf_wr_valid;
+    logic                         ds_buf_wr_ready;
+    logic                         ds_buf_wr_operand_sel;
+    logic [ADDR_WIDTH-1:0]        ds_buf_wr_addr;
+    logic [DATA_WIDTH-1:0]        ds_buf_wr_data;
+    logic [DATA_WIDTH/8-1:0]      ds_buf_wr_strb;
+    logic                         ds_buf_wr_last;
+
+    // Operand buffer -> GEMM input router read path
+    logic                         op_rd_valid;
+    logic                         op_rd_ready;
+    logic                         op_rd_operand_sel;
+    logic [ADDR_WIDTH-1:0]        op_rd_addr;
+    logic [31:0]                  op_rd_data;
+    logic                         op_rd_data_valid;
+
+    // Operand buffer status
+    logic                         ds_a_loaded;
+    logic                         ds_b_loaded;
+
+    logic [31:0]                  ds_a_written_beats;
+    logic [31:0]                  ds_b_written_beats;
+    logic [31:0]                  ds_operand_buffer_read_count;
+
+    logic                         ds_buf_wr_accept_pulse;
+    logic                         ds_buf_rd_accept_pulse;
+    logic                         ds_buf_write_error_pulse;
+    logic                         ds_buf_read_error_pulse;
+    logic                         ds_operand_buffer_error;
+
+    // GEMM input memory router status
+    logic                         gemm_router_busy;
+    logic                         gemm_router_error_pulse;
+    logic                         gemm_router_error;
+
+    logic [31:0]                  gemm_router_op_read_count;
+    logic [31:0]                  gemm_router_sp_read_count;
+    logic [31:0]                  gemm_router_sp_write_count;
+    logic [31:0]                  gemm_router_invalid_read_count;
+    logic [31:0]                  gemm_router_simultaneous_req_count;
+
+    // GEMM input router -> scratchpad adapter local-memory side
+    logic                         sp_mem_req_ready;
+
+    logic                         sp_mem_rd_en;
+    logic [ADDR_WIDTH-1:0]        sp_mem_rd_addr;
+    logic [31:0]                  sp_mem_rd_data;
+    logic                         sp_mem_rd_valid;
+
+    logic                         sp_mem_wr_en;
+    logic [ADDR_WIDTH-1:0]        sp_mem_wr_addr;
+    logic [31:0]                  sp_mem_wr_data;
+    logic [3:0]                   sp_mem_wr_strb;
+
     // ------------------------------------------------------------
     // Scratchpad Port1 owner mux status
     // ------------------------------------------------------------
@@ -454,7 +576,9 @@ module ai_accel_subsys #(
     assign acc_start_pulse_dma = acc_start & ~acc_start_dma_q;
 
     assign acc_start_pulse_dma_accepted =
-        acc_start_pulse_dma && !axis_load_busy_i;
+        acc_start_pulse_dma &&
+        !axis_load_busy_i   &&
+        !ds_load_busy_i;
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -476,6 +600,8 @@ module ai_accel_subsys #(
     logic [GEMM_DIM_WIDTH-1:0] dim_n_dma_q;
     logic [GEMM_DIM_WIDTH-1:0] dim_k_dma_q;
 
+    logic                      gemm_input_stream_mode_dma_q;
+
     logic                      start_toggle_dma_q;
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
@@ -488,6 +614,8 @@ module ai_accel_subsys #(
             dim_n_dma_q       <= '0;
             dim_k_dma_q       <= '0;
 
+            gemm_input_stream_mode_dma_q <= 1'b0;
+
             start_toggle_dma_q <= 1'b0;
         end
         else if (acc_start_pulse_dma_accepted) begin
@@ -498,6 +626,8 @@ module ai_accel_subsys #(
             dim_m_dma_q       <= dim_m;
             dim_n_dma_q       <= dim_n;
             dim_k_dma_q       <= dim_k;
+
+            gemm_input_stream_mode_dma_q <= gemm_input_stream_mode;
 
             start_toggle_dma_q <= ~start_toggle_dma_q;
         end
@@ -551,6 +681,8 @@ module ai_accel_subsys #(
     logic [GEMM_DIM_WIDTH-1:0] dim_n_core_q;
     logic [GEMM_DIM_WIDTH-1:0] dim_k_core_q;
 
+    logic                      gemm_input_stream_mode_core_q;
+
     always_ff @(posedge core_clk or negedge core_rst_n) begin
         if (!core_rst_n) begin
             base_addr_a_core_q <= '0;
@@ -560,6 +692,8 @@ module ai_accel_subsys #(
             dim_m_core_q       <= '0;
             dim_n_core_q       <= '0;
             dim_k_core_q       <= '0;
+
+            gemm_input_stream_mode_core_q <= 1'b0;
         end
         else if (gemm_start_core) begin
             base_addr_a_core_q <= base_addr_a_dma_q;
@@ -569,7 +703,56 @@ module ai_accel_subsys #(
             dim_m_core_q       <= dim_m_dma_q;
             dim_n_core_q       <= dim_n_dma_q;
             dim_k_core_q       <= dim_k_dma_q;
+
+            gemm_input_stream_mode_core_q <= gemm_input_stream_mode_dma_q;
         end
+    end
+
+    // ============================================================
+    // Direct-stream operand region size calculation
+    //
+    // GEMM A/B are compact int8 matrices in current baseline:
+    //   A_bytes = M * K * (GEMM_A_WIDTH / 8)
+    //   B_bytes = K * N * (GEMM_B_WIDTH / 8)
+    //
+    // Router uses padded byte regions so final stream beat padding
+    // is considered valid address space.
+    // ============================================================
+    logic [31:0] direct_a_bytes_core;
+    logic [31:0] direct_b_bytes_core;
+    logic [31:0] direct_a_region_bytes_core;
+    logic [31:0] direct_b_region_bytes_core;
+
+    function automatic logic [31:0] round_up_to_data_beat(
+        input logic [31:0] byte_count
+    );
+        logic [31:0] beat_bytes;
+        logic [31:0] rem;
+    begin
+        beat_bytes = 32'(DATA_WIDTH / 8);
+        rem        = byte_count % beat_bytes;
+
+        if (byte_count == 0) begin
+            round_up_to_data_beat = 32'd0;
+        end
+        else if (rem == 0) begin
+            round_up_to_data_beat = byte_count;
+        end
+        else begin
+            round_up_to_data_beat = byte_count + beat_bytes - rem;
+        end
+    end
+    endfunction
+
+    always_comb begin
+        direct_a_bytes_core =
+            32'(int'(dim_m_core_q) * int'(dim_k_core_q) * (GEMM_A_WIDTH / 8));
+
+        direct_b_bytes_core =
+            32'(int'(dim_k_core_q) * int'(dim_n_core_q) * (GEMM_B_WIDTH / 8));
+
+        direct_a_region_bytes_core = round_up_to_data_beat(direct_a_bytes_core);
+        direct_b_region_bytes_core = round_up_to_data_beat(direct_b_bytes_core);
     end
 
     // ============================================================
@@ -640,7 +823,7 @@ module ai_accel_subsys #(
             end
 
             // once adapter is no longer busy, emit subsystem done pulse
-            if (acc_done_pending_core_q && !gemm_mem_busy) begin
+            if (acc_done_pending_core_q && !gemm_mem_busy && !gemm_router_busy) begin
                 acc_done_core_pulse_q   <= 1'b1;
                 acc_done_pending_core_q <= 1'b0;
                 acc_done_toggle_core_q  <= ~acc_done_toggle_core_q;
@@ -648,7 +831,7 @@ module ai_accel_subsys #(
         end
     end
 
-    assign acc_busy_core = gemm_busy_core | gemm_mem_busy;
+    assign acc_busy_core = gemm_busy_core | gemm_mem_busy | gemm_router_busy;
 
     // ============================================================
     // Accelerator status CDC back to dma_clk
@@ -929,6 +1112,142 @@ module ai_accel_subsys #(
     );
 
     // ============================================================
+    // Direct-stream preload engine
+    //
+    // Source AXI-MM read -> AXI-Stream FIFO -> stream loader
+    // -> operand buffer write adapter -> gemm_operand_buffer.
+    //
+    // This path does not write A/B into scratchpad.
+    // It fills local operand buffers for direct-stream GEMM input.
+    // ============================================================
+    direct_stream_preload_engine #(
+        .ADDR_WIDTH      (ADDR_WIDTH),
+        .DATA_WIDTH      (DATA_WIDTH),
+        .ID_WIDTH        (ID_WIDTH),
+        .AXIS_FIFO_DEPTH (16),
+        .CAPTURE_DEPTH   (1024),
+        .AXI_SRC_ARID    ('0)
+    ) u_direct_stream_preload_engine (
+        .dma_clk                    (dma_clk),
+        .dma_rst_n                  (dma_rst_n),
+        .core_clk                   (core_clk),
+        .core_rst_n                 (core_rst_n),
+
+        .ds_load_start              (ds_load_start),
+        .ds_src_base_addr           (ds_src_base_addr),
+        .ds_dst_base_addr           (ds_dst_base_addr),
+        .ds_load_beats              (ds_load_beats),
+        .ds_operand_sel             (ds_operand_sel),
+
+        .ds_load_busy               (ds_load_busy_i),
+        .ds_load_done               (ds_load_done_i),
+        .ds_load_error              (ds_load_error_i),
+
+        // AXI-MM source read master
+        .ds_src_axi_arid            (ds_src_axi_arid),
+        .ds_src_axi_araddr          (ds_src_axi_araddr),
+        .ds_src_axi_arlen           (ds_src_axi_arlen),
+        .ds_src_axi_arsize          (ds_src_axi_arsize),
+        .ds_src_axi_arburst         (ds_src_axi_arburst),
+        .ds_src_axi_arvalid         (ds_src_axi_arvalid),
+        .ds_src_axi_arready         (ds_src_axi_arready),
+
+        .ds_src_axi_rid             (ds_src_axi_rid),
+        .ds_src_axi_rdata           (ds_src_axi_rdata),
+        .ds_src_axi_rresp           (ds_src_axi_rresp),
+        .ds_src_axi_rlast           (ds_src_axi_rlast),
+        .ds_src_axi_rvalid          (ds_src_axi_rvalid),
+        .ds_src_axi_rready          (ds_src_axi_rready),
+
+        // Operand buffer clear controls
+        .operand_buf_clear_a        (ds_operand_buf_clear_a),
+        .operand_buf_clear_b        (ds_operand_buf_clear_b),
+        .operand_buf_clear_status   (ds_operand_buf_clear_status),
+
+        // Operand buffer write port
+        .buf_wr_valid               (ds_buf_wr_valid),
+        .buf_wr_ready               (ds_buf_wr_ready),
+        .buf_wr_operand_sel         (ds_buf_wr_operand_sel),
+        .buf_wr_addr                (ds_buf_wr_addr),
+        .buf_wr_data                (ds_buf_wr_data),
+        .buf_wr_strb                (ds_buf_wr_strb),
+        .buf_wr_last                (ds_buf_wr_last),
+
+        .operand_buf_error          (ds_operand_buffer_error),
+        .operand_buf_write_error_pulse(ds_buf_write_error_pulse),
+
+        .direct_stream_load_active  (direct_stream_load_active),
+
+        .axis_fifo_full             (ds_fifo_full),
+        .axis_fifo_empty            (ds_fifo_empty),
+        .axis_fifo_wr_level         (ds_fifo_wr_level),
+        .axis_fifo_rd_level         (ds_fifo_rd_level),
+
+        .loader_accepted_beats      (ds_loader_accepted_beats),
+        .loader_written_beats       (ds_loader_written_beats),
+        .loader_tlast_seen          (ds_loader_tlast_seen),
+
+        .adapter_accepted_writes    (ds_adapter_accepted_writes),
+        .adapter_forwarded_writes   (ds_adapter_forwarded_writes),
+        .adapter_dropped_writes     (ds_adapter_dropped_writes)
+    );
+
+    // ============================================================
+    // Direct-stream GEMM operand buffer
+    //
+    // Holds streamed A/B operand payloads.
+    // GEMM reads A/B from this buffer in direct-stream mode.
+    // ============================================================
+    gemm_operand_buffer #(
+        .ADDR_WIDTH     (ADDR_WIDTH),
+        .WR_DATA_WIDTH  (DATA_WIDTH),
+        .RD_DATA_WIDTH  (32),
+        .A_BUFFER_BYTES (1024),
+        .B_BUFFER_BYTES (1024)
+    ) u_gemm_operand_buffer (
+        .clk                (core_clk),
+        .rst_n              (core_rst_n),
+
+        .clear_all          (1'b0),
+        .clear_a            (ds_operand_buf_clear_a),
+        .clear_b            (ds_operand_buf_clear_b),
+        .clear_status       (ds_operand_buf_clear_status),
+
+        // Write side from direct-stream preload engine
+        .wr_valid           (ds_buf_wr_valid),
+        .wr_ready           (ds_buf_wr_ready),
+        .wr_operand_sel     (ds_buf_wr_operand_sel),
+        .wr_addr            (ds_buf_wr_addr),
+        .wr_data            (ds_buf_wr_data),
+        .wr_strb            (ds_buf_wr_strb),
+        .wr_last            (ds_buf_wr_last),
+
+        // Read side from GEMM input router
+        .rd_valid           (op_rd_valid),
+        .rd_ready           (op_rd_ready),
+        .rd_operand_sel     (op_rd_operand_sel),
+        .rd_addr            (op_rd_addr),
+        .rd_data            (op_rd_data),
+        .rd_data_valid      (op_rd_data_valid),
+
+        .a_loaded           (ds_a_loaded),
+        .b_loaded           (ds_b_loaded),
+
+        .a_written_beats    (ds_a_written_beats),
+        .b_written_beats    (ds_b_written_beats),
+
+        .read_count         (ds_operand_buffer_read_count),
+
+        .wr_accept_pulse    (ds_buf_wr_accept_pulse),
+        .rd_accept_pulse    (ds_buf_rd_accept_pulse),
+
+        .write_error_pulse  (ds_buf_write_error_pulse),
+        .read_error_pulse   (ds_buf_read_error_pulse),
+
+        .error              (ds_operand_buffer_error)
+    );
+
+    // ============================================================
     // Scratchpad Port0 owner mux
     //   Host axi0_if, DMA load engine, or DMA store engine
     //   -> BRAM Port0
@@ -1162,6 +1481,85 @@ module ai_accel_subsys #(
     );
 
     // ============================================================
+    // GEMM input memory router
+    //
+    // scratchpad mode:
+    //   GEMM reads/writes route to gemm_scratchpad_adapter.
+    //
+    // direct-stream mode:
+    //   GEMM A/B reads route to gemm_operand_buffer.
+    //   GEMM C writes route to gemm_scratchpad_adapter.
+    // ============================================================
+    gemm_input_mem_router #(
+        .ADDR_WIDTH       (ADDR_WIDTH),
+        .LOCAL_DATA_WIDTH (32)
+    ) u_gemm_input_mem_router (
+        .clk                         (core_clk),
+        .rst_n                       (core_rst_n),
+
+        .clear_status                (gemm_start_core),
+
+        .direct_stream_mode          (gemm_input_stream_mode_core_q),
+
+        .base_addr_a                 (base_addr_a_core_q),
+        .base_addr_b                 (base_addr_b_core_q),
+
+        .a_region_bytes              (direct_a_region_bytes_core),
+        .b_region_bytes              (direct_b_region_bytes_core),
+
+        .operand_a_loaded            (ds_a_loaded),
+        .operand_b_loaded            (ds_b_loaded),
+
+        .operand_buf_error           (ds_operand_buffer_error),
+        .operand_buf_read_error_pulse(ds_buf_read_error_pulse),
+
+        // GEMM local memory side
+        .gemm_mem_req_ready          (gemm_mem_req_ready),
+
+        .gemm_mem_rd_en              (gemm_mem_rd_en),
+        .gemm_mem_rd_addr            (gemm_mem_rd_addr),
+        .gemm_mem_rd_data            (gemm_mem_rd_data),
+        .gemm_mem_rd_valid           (gemm_mem_rd_valid),
+
+        .gemm_mem_wr_en              (gemm_mem_wr_en),
+        .gemm_mem_wr_addr            (gemm_mem_wr_addr),
+        .gemm_mem_wr_data            (gemm_mem_wr_data),
+        .gemm_mem_wr_strb            (gemm_mem_wr_strb),
+
+        // Scratchpad adapter side
+        .sp_mem_req_ready            (sp_mem_req_ready),
+
+        .sp_mem_rd_en                (sp_mem_rd_en),
+        .sp_mem_rd_addr              (sp_mem_rd_addr),
+        .sp_mem_rd_data              (sp_mem_rd_data),
+        .sp_mem_rd_valid             (sp_mem_rd_valid),
+
+        .sp_mem_wr_en                (sp_mem_wr_en),
+        .sp_mem_wr_addr              (sp_mem_wr_addr),
+        .sp_mem_wr_data              (sp_mem_wr_data),
+        .sp_mem_wr_strb              (sp_mem_wr_strb),
+
+        // Operand buffer read side
+        .op_rd_valid                 (op_rd_valid),
+        .op_rd_ready                 (op_rd_ready),
+        .op_rd_operand_sel           (op_rd_operand_sel),
+        .op_rd_addr                  (op_rd_addr),
+        .op_rd_data                  (op_rd_data),
+        .op_rd_data_valid            (op_rd_data_valid),
+
+        .busy                        (gemm_router_busy),
+
+        .router_error_pulse          (gemm_router_error_pulse),
+        .error                       (gemm_router_error),
+
+        .op_read_count               (gemm_router_op_read_count),
+        .sp_read_count               (gemm_router_sp_read_count),
+        .sp_write_count              (gemm_router_sp_write_count),
+        .invalid_read_count          (gemm_router_invalid_read_count),
+        .simultaneous_req_count      (gemm_router_simultaneous_req_count)
+    );
+
+    // ============================================================
     // GEMM local-memory -> scratchpad AXI adapter
     //
     // The adapter now drives gemm_axi1_if, which is routed through
@@ -1175,17 +1573,17 @@ module ai_accel_subsys #(
         .clk           (core_clk),
         .rst_n         (core_rst_n),
 
-        .mem_rd_en     (gemm_mem_rd_en),
-        .mem_rd_addr   (gemm_mem_rd_addr),
-        .mem_rd_data   (gemm_mem_rd_data),
-        .mem_rd_valid  (gemm_mem_rd_valid),
+        .mem_rd_en     (sp_mem_rd_en),
+        .mem_rd_addr   (sp_mem_rd_addr),
+        .mem_rd_data   (sp_mem_rd_data),
+        .mem_rd_valid  (sp_mem_rd_valid),
 
-        .mem_wr_en     (gemm_mem_wr_en),
-        .mem_wr_addr   (gemm_mem_wr_addr),
-        .mem_wr_data   (gemm_mem_wr_data),
-        .mem_wr_strb   (gemm_mem_wr_strb),
+        .mem_wr_en     (sp_mem_wr_en),
+        .mem_wr_addr   (sp_mem_wr_addr),
+        .mem_wr_data   (sp_mem_wr_data),
+        .mem_wr_strb   (sp_mem_wr_strb),
 
-        .mem_req_ready (gemm_mem_req_ready),
+        .mem_req_ready (sp_mem_req_ready),
 
         .busy          (gemm_mem_busy),
         .done          (gemm_mem_done),

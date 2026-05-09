@@ -352,6 +352,28 @@ run_reg_item "axis_stream_load_store_stress 8 jobs" {
     set AXIS_STRESS_GAP_CYCLES 10
 }
 
+# ============================================================
+# AXIS stream CDC clock-ratio sanity
+# ============================================================
+run_reg_item "axis_stream_load_store_stress_cdc_10_13" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+}
+
+# ============================================================
+# Direct stream smoke test
+# ============================================================
+run_reg_item "direct_stream_smoke_run_all" {
+    set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set RUN_ALL 1
+}
 
 # ============================================================
 # Helper fallback sanity

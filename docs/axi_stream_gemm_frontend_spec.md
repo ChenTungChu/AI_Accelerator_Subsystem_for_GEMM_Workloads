@@ -2,7 +2,9 @@
 
 ## 1. Purpose
 
-This document defines the next architecture milestone for the AI Accelerator Subsystem:
+This document defines the AXI-Stream frontend architecture milestone for the AI Accelerator Subsystem.
+
+The completed V1 data path is:
 
 ```text
 AXI-MM source memory
@@ -16,9 +18,9 @@ AXI-MM source memory
     -> destination memory compare / scoreboard
 ```
 
-The goal is to add an **AXI-Stream frontend path** without rewriting the current GEMM compute datapath.
+The goal of this milestone was to add an **AXI-Stream frontend path** without rewriting the current GEMM compute datapath.
 
-The current subsystem baseline is already stable:
+The stable pre-AXIS subsystem baseline was:
 
 ```text
 DMA load A/B
@@ -28,15 +30,15 @@ DMA load A/B
     -> destination memory
 ```
 
+The AXI-Stream frontend milestone has now been implemented and verified.
+
 Current full regression baseline:
 
 ```text
-TOTAL : 25
-PASS  : 25
+TOTAL : 29
+PASS  : 29
 FAIL  : 0
 ```
-
-This AXI-Stream frontend milestone should preserve that baseline and add a new preload path for A/B data.
 
 ---
 
@@ -44,13 +46,13 @@ This AXI-Stream frontend milestone should preserve that baseline and add a new p
 
 ### 2.1 Selected Direction: Option A
 
-The selected first implementation is:
+The implemented first version uses:
 
 ```text
 Option A: Stream preload into scratchpad
 ```
 
-Architecture:
+Implemented architecture:
 
 ```text
 dma_clk domain
@@ -84,20 +86,20 @@ existing GEMM
     -> scoreboard compare
 ```
 
-### 2.2 Why Option A First
+### 2.2 Why Option A Was Selected
 
-Option A is selected because:
+Option A was selected because:
 
 - it keeps the existing GEMM datapath unchanged
-- it preserves the current scratchpad-backed execution model
+- it preserves the scratchpad-backed execution model
 - it reuses the existing DMA store / S2MM result path
 - it allows AXI-Stream protocol and CDC behavior to be verified independently
 - it avoids introducing direct streaming compute hazards too early
-- it minimizes risk to the current 25/25 full regression baseline
+- it minimizes risk to the existing DMA/load/store baseline
 
-### 2.3 Not Selected Yet: Option B
+### 2.3 Deferred Direction: Option B
 
-Option B is deferred:
+Option B remains deferred:
 
 ```text
 DMA MM2S
@@ -106,13 +108,13 @@ DMA MM2S
     -> GEMM compute
 ```
 
-This would require changing GEMM operand scheduling, buffering, and compute timing. It should be treated as a future architecture milestone after Option A is stable.
+This would require changing GEMM operand scheduling, buffering, and compute timing. It should be treated as a future architecture milestone after the current Option A baseline is preserved.
 
 ---
 
-## 3. Existing Reusable RTL Blocks
+## 3. Reusable RTL Blocks
 
-### 3.1 Existing AXI MM2S DMA
+### 3.1 AXI MM2S DMA
 
 Existing file:
 
@@ -139,9 +141,9 @@ Relevant behavior:
 - checks expected `RID`
 - checks `RLAST`
 
-This module is suitable as the first MM2S data source for the AXI-Stream frontend.
+This module is used as the MM2S source engine for AXI-Stream preload.
 
-### 3.2 Existing AXI Stream Loader
+### 3.2 AXI Stream Loader
 
 Existing file:
 
@@ -174,11 +176,11 @@ Relevant behavior:
 - checks `TLAST` against `expected_beats`
 - contains optional capture memory for debug/readback
 
-This module is suitable as the first AXI-Stream-to-linear-write frontend.
+This module is used as the stream-to-linear-write frontend.
 
 ---
 
-## 4. Proposed V1 Architecture
+## 4. Implemented V1 Architecture
 
 ### 4.1 High-Level Block Diagram
 
@@ -194,7 +196,7 @@ This module is suitable as the first AXI-Stream-to-linear-write frontend.
 │     - AXI-Stream producer                                      │
 │           │                                                    │
 │           ▼                                                    │
-│  AXI-Stream async FIFO write side                              │
+│  axis_async_fifo write side                                    │
 │                                                                │
 └───────────────────────────────┬────────────────────────────────┘
                                 │
@@ -203,7 +205,7 @@ This module is suitable as the first AXI-Stream-to-linear-write frontend.
 ┌────────────────────────────────────────────────────────────────┐
 │                                  core_clk                      │
 │                                                                │
-│  AXI-Stream async FIFO read side                               │
+│  axis_async_fifo read side                                     │
 │           │                                                    │
 │           ▼                                                    │
 │  axi_stream_loader                                             │
@@ -225,7 +227,7 @@ This module is suitable as the first AXI-Stream-to-linear-write frontend.
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 Why Use Scratchpad Port1
+### 4.2 Scratchpad Port1 Usage
 
 The stream loader is placed in `core_clk`, after the AXI-Stream async FIFO.
 
@@ -240,33 +242,31 @@ Reason:
 - Port1 already belongs to the `core_clk` domain
 - the async FIFO cleanly separates `dma_clk` source traffic from `core_clk` scratchpad writes
 - Port0 remains available for existing HOST / DMA_LOAD / DMA_STORE ownership logic
-- the current Port0 owner mux does not need to be modified for the first AXI-Stream frontend version
+- the Port0 owner mux did not need to be modified for this AXI-Stream frontend version
 
-### 4.3 New Port1 Ownership Model
+### 4.3 Port1 Ownership Model
 
-Port1 currently serves the GEMM scratchpad adapter.
-
-V1 adds a core-side Port1 owner mux:
+Port1 now has two core-domain owners:
 
 ```text
 STREAM_LOAD
 GEMM
 ```
 
-Recommended owner policy:
+Implemented owner policy:
 
 ```text
-STREAM_LOAD : active while AXI-stream preload is writing A or B
-GEMM        : active while GEMM compute is running or idle after preload
+STREAM_LOAD : active while AXI-Stream preload is writing A or B
+GEMM        : active while GEMM compute is running or when stream preload is idle
 ```
 
 Illegal condition:
 
 ```text
-stream_load_busy && acc_busy
+stream_load_active && gemm_active
 ```
 
-The system should not allow GEMM to start until stream preload is complete.
+System-level sequencing prevents GEMM from starting while AXI-Stream preload is still active.
 
 ---
 
@@ -283,6 +283,7 @@ The first version uses two independent stream preload jobs:
 4. Wait acc_done
 5. DMA store C to destination memory
 6. Compare destination memory
+7. Publish result to scoreboard
 ```
 
 ### 5.2 A Preload
@@ -336,19 +337,19 @@ There is no in-stream header in V1.
 Metadata is provided by the control interface:
 
 ```text
-src_base_addr
-dst_base_addr
-expected_beats
+axis_src_base_addr
+axis_dst_base_addr
+axis_load_beats
 matrix selector / case context from test
 ```
 
 ### 6.2 Why Headerless First
 
-Headerless packets are selected for V1 because:
+Headerless packets are used in V1 because:
 
 - `axi_mm2s_dma` already produces `TLAST`
 - `axi_stream_loader` already checks `TLAST` against `expected_beats`
-- control-driven A/B sequencing is easier to debug
+- control-driven A/B sequencing is easy to debug
 - packet parser complexity is avoided in the first integration
 
 ### 6.3 Future Header Option
@@ -392,7 +393,7 @@ BYTES_PER_BEAT = 8
 
 A and B matrix payloads remain compact row-major int8 arrays.
 
-If a matrix payload does not fill the final beat, unused bytes must be padded.
+If a matrix payload does not fill the final beat, unused bytes are padded.
 
 Example:
 
@@ -430,9 +431,9 @@ Add byte_count and final-beat WSTRB support to stream loader.
 
 ## 8. Control and Status Interface
 
-### 8.1 New Stream Preload Control
+### 8.1 Stream Preload Control
 
-Recommended top-level control signals:
+Top-level control signals:
 
 ```systemverilog
 logic                  axis_load_start;
@@ -445,16 +446,20 @@ logic                  axis_load_done;
 logic                  axis_load_error;
 ```
 
-### 8.2 Optional Debug Status
+### 8.2 Debug Status
 
-Recommended debug/status signals:
+Implemented/debug-friendly status signals include:
 
 ```systemverilog
 logic [31:0] axis_loader_accepted_beats;
 logic [31:0] axis_loader_written_beats;
 logic        axis_loader_tlast_seen;
+
 logic        axis_fifo_empty;
 logic        axis_fifo_full;
+
+logic [31:0] axis_adapter_accepted_writes;
+logic [31:0] axis_adapter_completed_writes;
 ```
 
 ### 8.3 Software/Testbench Sequencing
@@ -478,7 +483,7 @@ Then repeat for the second matrix.
 
 ### 9.1 Data CDC
 
-AXI-Stream data crosses domains through an async FIFO:
+AXI-Stream data crosses domains through `axis_async_fifo`:
 
 ```text
 dma_clk producer
@@ -486,14 +491,13 @@ dma_clk producer
     -> core_clk consumer
 ```
 
-The FIFO payload should include:
+FIFO payload:
 
 ```text
-tdata
-tlast
+{tlast, tdata}
 ```
 
-Recommended FIFO data width:
+FIFO data width:
 
 ```text
 FIFO_WIDTH = DATA_WIDTH + 1
@@ -512,24 +516,52 @@ fifo_rdata = {s_axis_tlast, s_axis_tdata};
 
 The destination side loader runs in `core_clk`.
 
-Recommended two-domain start sequence:
+Implemented two-domain start sequence:
 
 ```text
-1. dma_clk captures axis load config.
+1. dma_clk captures AXIS load config.
 2. dma_clk sends load request toggle to core_clk.
 3. core_clk latches dst_base_addr and expected_beats.
-4. core_clk starts axi_stream_loader.
-5. core_clk sends loader_ready/active acknowledgement back to dma_clk.
-6. dma_clk starts axi_mm2s_dma only after loader is ready.
-7. mm2s streams data into FIFO.
-8. loader consumes FIFO data and writes scratchpad.
-9. core_clk reports loader_done/error back to dma_clk.
-10. dma_clk reports axis_load_done/error.
+4. core_clk waits one cycle so latched config is stable.
+5. core_clk starts axi_stream_loader.
+6. core_clk sends request acknowledgement back to dma_clk.
+7. dma_clk starts axi_mm2s_dma only after core-side request acceptance.
+8. mm2s streams data into FIFO.
+9. loader consumes FIFO data and writes scratchpad.
+10. core_clk reports loader/write-adapter done/error back to dma_clk.
+11. dma_clk reports axis_load_done/error.
 ```
 
-### 9.3 Why MM2S Starts After Loader Ready
+### 9.3 Config Latch Timing Note
 
-MM2S should not start before the core-side loader is ready.
+A one-cycle `C_START`-style state is required between core-side config latch and `axi_stream_loader.start`.
+
+Reason:
+
+```text
+If loader_start_pulse is asserted in the same core_clk edge that
+dst_addr_core_q / beats_core_q are updated, the loader can sample
+the previous job's config.
+```
+
+The implemented fix is:
+
+```text
+C_IDLE:
+    latch config on request event
+
+C_START:
+    pulse loader_start after config is already registered
+
+C_ACTIVE:
+    run stream loader / write adapter
+```
+
+`stream_load_active` covers both the loader-start and active write window so Port1 ownership is already assigned to STREAM_LOAD when the first write transaction appears.
+
+### 9.4 Why MM2S Starts After Loader Ready
+
+MM2S should not start before the core-side loader is armed.
 
 Reason:
 
@@ -538,7 +570,7 @@ Reason:
 - avoids stream data arriving before the destination write path is armed
 - simplifies debug waveforms
 
-### 9.4 Config CDC Rule
+### 9.5 Config CDC Rule
 
 Multi-bit config values must be captured and held stable while the request toggle crosses domains.
 
@@ -553,11 +585,11 @@ The `axis_src_base_addr` is used only by the dma-side MM2S engine.
 
 ---
 
-## 10. New RTL Blocks Required
+## 10. Implemented RTL Blocks
 
 ### 10.1 axis_preload_engine
 
-Recommended new module:
+Implemented module:
 
 ```text
 rtl/subsystem/axis_preload_engine.sv
@@ -568,7 +600,7 @@ Role:
 ```text
 integrates:
     axi_mm2s_dma
-    AXI-Stream async FIFO
+    axis_async_fifo
     axi_stream_loader
     axis_scratchpad_write_adapter
     control/status CDC
@@ -593,9 +625,16 @@ scratchpad Port1 write request / AXI-MM write master side
 debug status
 ```
 
+Additional implementation notes:
+
+- uses request/done toggle synchronization across `dma_clk` and `core_clk`
+- starts MM2S only after the core side has accepted the request
+- injects a synthetic TLAST poison beat after MM2S-side error so the core-side loader cannot hang indefinitely waiting for TLAST
+- reports errors back to the dma-side `axis_load_error`
+
 ### 10.2 axis_scratchpad_write_adapter
 
-Recommended new module:
+Implemented module:
 
 ```text
 rtl/subsystem/axis_scratchpad_write_adapter.sv
@@ -632,12 +671,15 @@ Behavior:
 - accepts one linear write request at a time
 - issues one single-beat AXI-MM write
 - waits for BRESP
+- checks BRESP
+- checks BID
 - reports write response error
 - provides backpressure through `wr_ready`
+- tracks accepted and completed writes
 
 ### 10.3 scratchpad_port1_owner_mux
 
-Recommended new module:
+Implemented module:
 
 ```text
 rtl/subsystem/scratchpad_port1_owner_mux.sv
@@ -653,14 +695,14 @@ selects scratchpad Port1 owner:
 
 Behavior:
 
-- route stream preload writes to Port1 during stream load
-- route GEMM scratchpad adapter to Port1 otherwise
-- reject/flag illegal overlap between stream load and GEMM busy
-- keep GEMM path unchanged when stream preload is disabled
+- routes stream preload writes to Port1 during stream load
+- routes GEMM scratchpad adapter to Port1 otherwise
+- flags illegal overlap between stream load and GEMM busy
+- keeps GEMM path unchanged when stream preload is disabled
 
-### 10.4 AXI-Stream Async FIFO Wrapper
+### 10.4 axis_async_fifo
 
-Recommended new module:
+Implemented module:
 
 ```text
 rtl/subsystem/axis_async_fifo.sv
@@ -669,7 +711,7 @@ rtl/subsystem/axis_async_fifo.sv
 Role:
 
 ```text
-AXI-Stream valid/ready wrapper around existing async_fifo
+AXI-Stream valid/ready async FIFO wrapper
 ```
 
 Payload:
@@ -686,17 +728,18 @@ Behavior:
 - destination side:
   - drives `m_axis_tvalid/tready`
   - reads FIFO
-- exposes optional `empty/full` debug status
+- exposes `empty/full` and level debug status
+- uses Gray-code pointer CDC
 
 ---
 
 ## 11. Top-Level Integration
 
-### 11.1 New External Source AXI Port
+### 11.1 External Source AXI Port
 
-The subsystem needs an AXI-MM source read interface for the stream preload path.
+The subsystem now has an AXI-MM source read interface for the stream preload path.
 
-Recommended naming:
+Naming:
 
 ```text
 axis_src_axi_ar*
@@ -705,9 +748,9 @@ axis_src_axi_r*
 
 This is separate from the existing DMA load source model and separate from the S2MM destination write model.
 
-### 11.2 New Control Interface Fields
+### 11.2 Control Interface Fields
 
-Add to `ai_accel_subsys_ctrl_if`:
+Added to `ai_accel_subsys_ctrl_if`:
 
 ```systemverilog
 logic                  axis_load_start;
@@ -720,29 +763,30 @@ logic                  axis_load_done;
 logic                  axis_load_error;
 ```
 
-Optional debug:
+AXI-Stream source RRESP injection control was also added for error testing:
 
 ```systemverilog
-logic [31:0] axis_loader_accepted_beats;
-logic [31:0] axis_loader_written_beats;
-logic        axis_loader_tlast_seen;
+task automatic axis_src_set_rresp_error(
+    input bit        enable,
+    input int signed beat_index
+);
 ```
 
 ### 11.3 UVM Top Model
 
-Add to `ai_accel_subsys_uvm_top.sv`:
+Added to `ai_accel_subsys_uvm_top.sv`:
 
 ```text
 AXI source memory responder for axis_src_axi_ar/r
 ```
 
-This can reuse the same byte-addressed source memory concept already used by DMA load tests, or use a separate source array for stream-specific tests.
-
-Recommended V1:
+V1 reuses:
 
 ```text
-reuse dma_src_mem[] for stream source payloads
+ctrl_if.dma_src_mem[]
 ```
+
+as the source storage for AXI-Stream preload payloads.
 
 Reason:
 
@@ -756,7 +800,7 @@ Reason:
 
 ### 12.1 MM2S Errors
 
-The stream preload operation should fail if `axi_mm2s_dma` reports:
+The stream preload operation fails if `axi_mm2s_dma` reports:
 
 - zero `xfer_len_beats`
 - unaligned source address
@@ -766,7 +810,7 @@ The stream preload operation should fail if `axi_mm2s_dma` reports:
 
 ### 12.2 Loader Errors
 
-The stream preload operation should fail if `axi_stream_loader` reports:
+The stream preload operation fails if `axi_stream_loader` reports:
 
 - unaligned destination address
 - `TLAST` earlier than `expected_beats`
@@ -775,9 +819,10 @@ The stream preload operation should fail if `axi_stream_loader` reports:
 
 ### 12.3 Scratchpad Write Errors
 
-The stream preload operation should fail if `axis_scratchpad_write_adapter` receives:
+The stream preload operation fails if `axis_scratchpad_write_adapter` receives:
 
 - AXI `BRESP` error from scratchpad Port1 write
+- unexpected `BID`
 
 ### 12.4 Busy/Overlap Errors
 
@@ -786,15 +831,17 @@ The stream preload operation should fail or be rejected if:
 - start while `axis_load_busy`
 - start while `acc_busy`
 - GEMM start while `axis_load_busy`
-- FIFO not empty at job start
+- illegal Port1 overlap is detected
+
+Current full-regression AXIS error coverage includes zero-beat, unaligned source, unaligned destination, RRESP injection, and recovery. Additional busy/overlap and BRESP-specific directed tests remain possible future extensions.
 
 ---
 
-## 13. Verification Plan
+## 13. Verification Plan and Completed Results
 
 ### 13.1 Unit-Level Tests
 
-Recommended unit tests:
+Recommended unit tests remain:
 
 ```text
 axi_mm2s_dma_unit_test
@@ -819,11 +866,11 @@ axis_scratchpad_write_adapter_unit_test
     - BRESP error
 ```
 
-Unit tests are optional for the project if subsystem-level tests are prioritized, but they are recommended because the stream path introduces more handshake states.
+Current verification priority is subsystem-level coverage.
 
 ### 13.2 Subsystem Smoke Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_axis_stream_preload_smoke_test
@@ -845,37 +892,36 @@ Flow:
 11. publish result to scoreboard
 ```
 
-Recommended first cases:
+Completed cases:
 
 ```text
-CASE_ID 100
-CASE_ID 101
-RUN_ALL: 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+CASE_ID 100 PASS
+CASE_ID 101 PASS
+RUN_ALL PASS: 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
 ```
 
 ### 13.3 Subsystem Error Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_axis_stream_preload_error_test
 ```
 
-Coverage:
+Completed coverage:
 
 - zero `axis_load_beats`
 - unaligned source address
 - unaligned destination address
 - source AXI RRESP error
-- loader TLAST mismatch
-- scratchpad BRESP error
-- start while busy
-- recovery preload after errors
-- recovery GEMM + DMA store after errors
+- valid AXI preload recovery after errors
+- valid GEMM + DMA store recovery after errors
+- scoreboard result compare after recovery
+- ctrl/result pairing after recovery
 
 ### 13.4 Subsystem Stress Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_axis_stream_load_store_stress_test
@@ -892,7 +938,7 @@ destination memory compare
 scoreboard publish
 ```
 
-Recommended knobs:
+Implemented knobs:
 
 ```text
 AXIS_STRESS_JOB_COUNT
@@ -901,39 +947,35 @@ AXIS_STRESS_RANDOM
 AXIS_STRESS_GAP_CYCLES
 ```
 
-Recommended full-regression version:
+Completed runs:
 
 ```text
-8 jobs
-```
-
-Recommended manual/nightly version:
-
-```text
-20 jobs
+8-job full-regression stress  PASS
+20-job manual/nightly stress  PASS
 ```
 
 ### 13.5 CDC Regression
 
-Recommended clock-ratio sanity:
+Implemented clock-ratio sanity:
 
 ```text
 DMA_CLK_PERIOD_NS  = 10
 CORE_CLK_PERIOD_NS = 13
 ```
 
-Coverage:
+Completed coverage:
 
 - stream data crosses async FIFO
 - stream loader runs in core domain
 - preload done/error returns to dma domain
-- GEMM start occurs after stream preload done
+- GEMM starts only after stream preload completes
+- 8 repeated AXIS preload -> GEMM -> DMA store jobs pass under non-default clock ratio
 
 ---
 
-## 14. Regression Plan
+## 14. Regression Plan and Current Status
 
-Current baseline before AXI-Stream frontend:
+Baseline before AXI-Stream frontend:
 
 ```text
 TOTAL : 25
@@ -941,96 +983,156 @@ PASS  : 25
 FAIL  : 0
 ```
 
-Recommended staged regression additions:
+Completed staged regression additions:
 
 ### Stage A: AXIS preload smoke
 
 ```text
 +1 item
-Expected full regression: 26 / 26 PASS
+Full regression: 26 / 26 PASS
 ```
 
 ### Stage B: AXIS preload error/recovery
 
 ```text
 +1 item
-Expected full regression: 27 / 27 PASS
+Full regression: 27 / 27 PASS
 ```
 
 ### Stage C: AXIS load-store stress
 
 ```text
 +1 item
-Expected full regression: 28 / 28 PASS
+Full regression: 28 / 28 PASS
 ```
 
 ### Stage D: AXIS CDC clock-ratio sanity
 
 ```text
 +1 item
-Expected full regression: 29 / 29 PASS
+Full regression: 29 / 29 PASS
 ```
 
-Each stage must preserve all existing 25 baseline tests.
+Current full regression baseline:
+
+```text
+TOTAL : 29
+PASS  : 29
+FAIL  : 0
+```
 
 ---
 
 ## 15. Acceptance Criteria
 
-The AXI-Stream frontend milestone is complete when:
+The AXI-Stream frontend milestone is complete.
 
-1. Existing 25/25 regression remains passing.
+Completed criteria:
+
+1. Existing 25/25 regression remained passing after AXIS integration.
 2. AXI MM2S can stream source memory payloads.
 3. AXI-Stream async FIFO transfers `{tlast, tdata}` across clock domains.
 4. AXI stream loader writes A/B payloads into scratchpad.
-5. GEMM can consume stream-preloaded A/B from scratchpad.
-6. DMA store can export C to destination memory.
+5. GEMM consumes stream-preloaded A/B from scratchpad.
+6. DMA store exports C to destination memory.
 7. Destination memory compare passes.
 8. Scoreboard result compare passes.
 9. Ctrl/result pairing passes.
-10. Error/recovery tests pass.
+10. Error/recovery test passes.
 11. AXI-Stream CDC clock-ratio sanity passes.
-12. No GEMM compute datapath rewrite is required.
-13. No BRAM interface semantic change is required.
+12. No GEMM compute datapath rewrite was required.
+13. No BRAM interface semantic change was required.
 
 ---
 
 ## 16. Implementation Sequence
 
-Recommended RTL implementation order:
+Completed RTL/UVM implementation order:
 
 ```text
 1. Confirm existing axi_mm2s_dma.sv compiles in current project.
 2. Confirm existing axi_stream_loader.sv compiles in current project.
 3. Add axis_scratchpad_write_adapter.sv.
 4. Add scratchpad_port1_owner_mux.sv.
-5. Add axis_async_fifo.sv wrapper around existing async_fifo.
+5. Add axis_async_fifo.sv.
 6. Add axis_preload_engine.sv.
 7. Integrate axis_preload_engine into ai_accel_subsys.sv.
 8. Extend ai_accel_subsys_ctrl_if.sv.
 9. Extend ai_accel_subsys_uvm_top.sv with stream source responder.
-10. Add axis_stream_preload_smoke_test.
-11. Add axis_stream_preload_error_test.
-12. Add axis_stream_load_store_stress_test.
+10. Add ai_accel_subsys_axis_stream_preload_smoke_test.sv.
+11. Add ai_accel_subsys_axis_stream_preload_error_test.sv.
+12. Add ai_accel_subsys_axis_stream_load_store_stress_test.sv.
+13. Add AXIS preload smoke to full regression.
+14. Add AXIS preload error/recovery to full regression.
+15. Add AXIS load-store stress to full regression.
+16. Add AXIS CDC clock-ratio sanity to full regression.
 ```
-
-Recommended first RTL target after this spec:
-
-```text
-axis_scratchpad_write_adapter.sv
-```
-
-Reason:
-
-- it is small and local
-- it directly connects the existing `axi_stream_loader` output to scratchpad AXI-MM writes
-- it can be tested before the full async FIFO/MM2S wrapper exists
 
 ---
 
-## 17. Future Option B: Direct Stream GEMM Frontend
+## 17. Useful Single-Test Runs
 
-After Option A is stable, a direct stream GEMM frontend can be considered.
+### AXI-Stream preload RUN_ALL
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_preload_smoke_test
+set ENABLE_RESULT_CHECK 1
+set RUN_ALL 1
+do run_uvm.tcl
+```
+
+### AXI-Stream preload error/recovery
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_preload_error_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+do run_uvm.tcl
+```
+
+### AXI-Stream load-store stress, full-regression version
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set AXIS_STRESS_JOB_COUNT 8
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+### AXI-Stream load-store stress, manual/nightly version
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set AXIS_STRESS_JOB_COUNT 20
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+### AXI-Stream load-store CDC sanity
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set AXIS_STRESS_JOB_COUNT 8
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 13
+do run_uvm.tcl
+```
+
+---
+
+## 18. Future Option B: Direct Stream GEMM Frontend
+
+After Option A is preserved as a stable baseline, a direct stream GEMM frontend can be considered.
 
 Possible architecture:
 
@@ -1052,4 +1154,4 @@ Open questions for Option B:
 - should C still be written to scratchpad?
 - should S2MM write C directly from compute output?
 
-Option B should not begin until Option A has a passing regression baseline.
+Option B should not begin unless the current 29/29 Option A regression baseline remains preserved.
