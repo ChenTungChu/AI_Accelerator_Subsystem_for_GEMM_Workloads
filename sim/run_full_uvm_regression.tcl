@@ -367,6 +367,15 @@ run_reg_item "axis_stream_load_store_stress_cdc_10_13" {
 }
 
 # ============================================================
+# Direct stream error test
+# ============================================================
+run_reg_item "direct_stream_error_recovery" {
+    set UVM_TEST ai_accel_subsys_direct_stream_error_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+}
+
+# ============================================================
 # Direct stream smoke test
 # ============================================================
 run_reg_item "direct_stream_smoke_run_all" {
