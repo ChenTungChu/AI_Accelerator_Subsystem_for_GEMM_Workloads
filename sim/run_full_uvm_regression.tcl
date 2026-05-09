@@ -385,6 +385,32 @@ run_reg_item "direct_stream_smoke_run_all" {
 }
 
 # ============================================================
+# Direct stream load store test
+# ============================================================
+run_reg_item "direct_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+}
+
+# ============================================================
+# Direct stream load store CDC sanity
+# ============================================================
+run_reg_item "direct_stream_load_store_stress_cdc_10_13" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

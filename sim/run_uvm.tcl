@@ -59,6 +59,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_axis_stream_load_store_stress_test \
     ai_accel_subsys_direct_stream_smoke_test \
     ai_accel_subsys_direct_stream_error_test \
+    ai_accel_subsys_direct_stream_load_store_stress_test \
 ]
 
 # --------------------------------------------------
@@ -425,6 +426,30 @@ if {$UVM_TEST eq "ai_accel_subsys_axis_stream_load_store_stress_test"} {
     lappend EXTRA_ARGS +AXIS_STRESS_SEED=$AXIS_STRESS_SEED
     lappend EXTRA_ARGS +AXIS_STRESS_RANDOM=$AXIS_STRESS_RANDOM
     lappend EXTRA_ARGS +AXIS_STRESS_GAP_CYCLES=$AXIS_STRESS_GAP_CYCLES
+}
+
+# --------------------------------------------------
+# Forward stress test plusargs
+#   used by ai_accel_subsys_direct_stream_load_store_stress_test
+# --------------------------------------------------
+if {$UVM_TEST eq "ai_accel_subsys_direct_stream_load_store_stress_test"} {
+    if {![info exists DS_STRESS_JOB_COUNT]} {
+        set DS_STRESS_JOB_COUNT 8
+    }
+    if {![info exists DS_STRESS_SEED]} {
+        set DS_STRESS_SEED 20260502
+    }
+    if {![info exists DS_STRESS_RANDOM]} {
+        set DS_STRESS_RANDOM 1
+    }
+    if {![info exists DS_STRESS_GAP_CYCLES]} {
+        set DS_STRESS_GAP_CYCLES 10
+    }
+
+    lappend EXTRA_ARGS +DS_STRESS_JOB_COUNT=$DS_STRESS_JOB_COUNT
+    lappend EXTRA_ARGS +DS_STRESS_SEED=$DS_STRESS_SEED
+    lappend EXTRA_ARGS +DS_STRESS_RANDOM=$DS_STRESS_RANDOM
+    lappend EXTRA_ARGS +DS_STRESS_GAP_CYCLES=$DS_STRESS_GAP_CYCLES
 }
 
 
