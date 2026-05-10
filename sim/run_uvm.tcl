@@ -396,6 +396,24 @@ lappend CLOCK_ARG_LIST +DMA_CLK_PERIOD_NS=$DMA_CLK_PERIOD_NS
 lappend CLOCK_ARG_LIST +CORE_CLK_PERIOD_NS=$CORE_CLK_PERIOD_NS
 
 # --------------------------------------------------
+# GEMM MAC lane parameter
+#
+# Default:
+#   GEMM_MAC_LANES=1 keeps the existing single-lane baseline.
+#
+# Manual 2-lane run:
+#   set GEMM_MAC_LANES 2
+#   do run_uvm.tcl
+# --------------------------------------------------
+if {![info exists GEMM_MAC_LANES]} {
+    set GEMM_MAC_LANES 1
+}
+
+if {($GEMM_MAC_LANES != 1) && ($GEMM_MAC_LANES != 2)} {
+    error "Unsupported GEMM_MAC_LANES='$GEMM_MAC_LANES'. Supported values: 1, 2"
+}
+
+# --------------------------------------------------
 # Reset-recovery test knobs
 #   used by ai_accel_subsys_reset_recovery_test
 # --------------------------------------------------
@@ -508,6 +526,9 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
         set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     }
 
+} elseif {$UVM_TEST eq "ai_accel_subsys_perf_profile_test"} {
+    set LOG_BASENAME ${UVM_TEST}_profile_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
+
 } elseif {$UVM_TEST eq "ai_accel_subsys_dma_load_error_test"} {
     set LOG_BASENAME ${UVM_TEST}_error_recovery_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
@@ -524,6 +545,9 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 }
 
+# Add lane count to every log name so 1-lane and 2-lane runs are easy to distinguish.
+set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}.log"] $LOG_BASENAME]
+
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
 transcript file $LOG_FILE
@@ -539,7 +563,10 @@ transcript on
 #   Optional legacy overrides are forwarded only when
 #   explicitly set in the Tcl session.
 # --------------------------------------------------
-vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
+vsim -L uvm12 \
+  -voptargs=+acc \
+  -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
+  work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \
   +CASE_ID=$CASE_ID \
@@ -549,15 +576,10 @@ vsim -L uvm12 -voptargs=+acc work.ai_accel_subsys_uvm_top \
   {*}$JOB_ARG_LIST \
   {*}$DMA_SMOKE_ARG_LIST \
   {*}$DMA_LOAD_STRESS_ARG_LIST \
-  {*}$LEGACY_HOST_OVERRIDE_ARGS \
-  {*}$JOB_ARG_LIST \
-  {*}$DMA_SMOKE_ARG_LIST \
-  {*}$DMA_LOAD_STRESS_ARG_LIST \
   {*}$DMA_LOAD_STORE_STRESS_ARG_LIST \
   {*}$DMA_STORE_ERROR_ARG_LIST \
   {*}$EXTRA_ARGS \
   {*}$CLOCK_ARG_LIST \
-  +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
   +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
   +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
   +RESET_HOLD_CYCLES=$RESET_HOLD_CYCLES \

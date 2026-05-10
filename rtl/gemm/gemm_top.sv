@@ -12,12 +12,12 @@ module gemm_top #(
     // ------------------------------------------------------------
     // GEMM MAC lane count
     //
-    // P2A:
-    //   Only GEMM_MAC_LANES=1 is functionally active.
-    //   GEMM_MAC_LANES=2 will be enabled in the next patch.
+    // Supported:
+    //   1 = original single-MAC baseline
+    //   2 = 2-lane K-parallel MAC prototype
     //
-    // Default must remain 1 to preserve the existing 35/35
-    // regression baseline.
+    // Default remains 1 to preserve the existing regression
+    // baseline unless explicitly overridden.
     // ------------------------------------------------------------
     parameter int GEMM_MAC_LANES = 1
 )(
@@ -51,7 +51,7 @@ module gemm_top #(
     // Read channel
     output logic                     mem_rd_en,
     output logic [ADDR_WIDTH-1:0]    mem_rd_addr,
-    input  logic [31:0]              mem_rd_data,   // v1: use 32-bit read data bus
+    input  logic [31:0]              mem_rd_data,
     input  logic                     mem_rd_valid,
 
     // Write channel
@@ -87,35 +87,38 @@ module gemm_top #(
         S_WAIT_A,
         S_READ_B,
         S_WAIT_B,
+
+        // 2-lane mode only:
+        // lane0 uses the original A/B read states.
+        // lane1 uses these additional A1/B1 states.
+        S_READ_A1,
+        S_WAIT_A1,
+        S_READ_B1,
+        S_WAIT_B1,
+
         S_MAC,
         S_WRITE_C,
         S_NEXT,
         S_DONE
     } gemm_state_e;
 
-    localparam int A_BYTES   = (A_DATA_WIDTH + 7) / 8;   // currently 1
-    localparam int B_BYTES   = (B_DATA_WIDTH + 7) / 8;   // currently 1
-    localparam int C_BYTES   = (ACC_WIDTH    + 7) / 8;   // currently 4
+    localparam int A_BYTES = (A_DATA_WIDTH + 7) / 8;   // currently 1
+    localparam int B_BYTES = (B_DATA_WIDTH + 7) / 8;   // currently 1
+    localparam int C_BYTES = (ACC_WIDTH    + 7) / 8;   // currently 4
 
     // -------------------------------------------------------------------------
     // Parameter guard
-    //
-    // P2A only enables the parameterized baseline. The RTL behavior is still
-    // the original single-lane GEMM when GEMM_MAC_LANES=1.
-    //
-    // GEMM_MAC_LANES=2 is reserved for the next patch.
     // -------------------------------------------------------------------------
-    `ifndef SYNTHESIS
-        initial begin
-            if ((GEMM_MAC_LANES != 1) && (GEMM_MAC_LANES != 2)) begin
-                $fatal(1,
-                    "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1 and 2.",
-                    GEMM_MAC_LANES
-                );
-            end
+`ifndef SYNTHESIS
+    initial begin
+        if ((GEMM_MAC_LANES != 1) && (GEMM_MAC_LANES != 2)) begin
+            $fatal(1,
+                "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1 and 2.",
+                GEMM_MAC_LANES
+            );
         end
-    `endif
-
+    end
+`endif
 
     // -------------------------------------------------------------------------
     // Registers
@@ -126,8 +129,14 @@ module gemm_top #(
     logic [DIM_WIDTH-1:0]           n_idx_q, n_idx_d;
     logic [DIM_WIDTH-1:0]           k_idx_q, k_idx_d;
 
+    // lane0 operands
     logic signed [A_DATA_WIDTH-1:0] a_val_q, a_val_d;
     logic signed [B_DATA_WIDTH-1:0] b_val_q, b_val_d;
+
+    // lane1 operands, only used when GEMM_MAC_LANES=2
+    logic signed [A_DATA_WIDTH-1:0] a1_val_q, a1_val_d;
+    logic signed [B_DATA_WIDTH-1:0] b1_val_q, b1_val_d;
+    logic                           lane1_valid_q, lane1_valid_d;
 
     logic signed [ACC_WIDTH-1:0]    acc_q, acc_d;
 
@@ -143,14 +152,63 @@ module gemm_top #(
     logic [3:0]                     mem_wr_strb_d;
 
     // -------------------------------------------------------------------------
+    // K helper signals
+    // -------------------------------------------------------------------------
+    logic [DIM_WIDTH:0]             k_idx_ext;
+    logic [DIM_WIDTH:0]             dim_k_ext;
+    logic [DIM_WIDTH:0]             k_idx_plus1_ext;
+    logic [DIM_WIDTH:0]             k_idx_plus2_ext;
+
+    logic [DIM_WIDTH-1:0]           k_idx_plus1;
+    logic                           lane1_valid_calc;
+    logic                           lane2_last_k_group;
+
+    assign k_idx_ext       = {1'b0, k_idx_q};
+    assign dim_k_ext       = {1'b0, dim_k};
+    assign k_idx_plus1_ext = k_idx_ext + 1;
+    assign k_idx_plus2_ext = k_idx_ext + 2;
+    assign k_idx_plus1     = k_idx_plus1_ext[DIM_WIDTH-1:0];
+
+    assign lane1_valid_calc =
+        (GEMM_MAC_LANES == 2) &&
+        (k_idx_plus1_ext < dim_k_ext);
+
+    assign lane2_last_k_group =
+        (k_idx_plus2_ext >= dim_k_ext);
+
+    // -------------------------------------------------------------------------
+    // MAC helper signals
+    // -------------------------------------------------------------------------
+    logic signed [ACC_WIDTH-1:0]    lane0_product;
+    logic signed [ACC_WIDTH-1:0]    lane1_product;
+    logic signed [ACC_WIDTH-1:0]    mac_sum;
+
+    assign lane0_product = $signed(a_val_q)  * $signed(b_val_q);
+    assign lane1_product = $signed(a1_val_q) * $signed(b1_val_q);
+
+    always_comb begin
+        mac_sum = lane0_product;
+
+        if ((GEMM_MAC_LANES == 2) && lane1_valid_q) begin
+            mac_sum = lane0_product + lane1_product;
+        end
+    end
+
+    // -------------------------------------------------------------------------
     // Performance counter helper events
     // -------------------------------------------------------------------------
     logic                           start_accept;
     logic                           mac_commit;
     logic                           output_commit;
+    logic [31:0]                    mac_commit_count;
 
     assign start_accept = (state_q == S_IDLE) && start;
     assign mac_commit   = (state_q == S_MAC);
+
+    assign mac_commit_count =
+        mac_commit
+            ? (((GEMM_MAC_LANES == 2) && lane1_valid_q) ? 32'd2 : 32'd1)
+            : 32'd0;
 
     // One C output is committed when WRITE_C request is accepted.
     assign output_commit =
@@ -161,19 +219,32 @@ module gemm_top #(
     // -------------------------------------------------------------------------
     logic [ADDR_WIDTH-1:0] a_addr_calc;
     logic [ADDR_WIDTH-1:0] b_addr_calc;
+    logic [ADDR_WIDTH-1:0] a1_addr_calc;
+    logic [ADDR_WIDTH-1:0] b1_addr_calc;
     logic [ADDR_WIDTH-1:0] c_addr_calc;
 
     // A[m][k] row-major, 1 byte/element
     // addr = base_a + (m * K + k)
-    assign a_addr_calc = base_addr_a + ((m_idx_q * dim_k) + k_idx_q) * A_BYTES;
+    assign a_addr_calc =
+        base_addr_a + ((m_idx_q * dim_k) + k_idx_q) * A_BYTES;
 
     // B[k][n] row-major, 1 byte/element
     // addr = base_b + (k * N + n)
-    assign b_addr_calc = base_addr_b + ((k_idx_q * dim_n) + n_idx_q) * B_BYTES;
+    assign b_addr_calc =
+        base_addr_b + ((k_idx_q * dim_n) + n_idx_q) * B_BYTES;
+
+    // A[m][k+1], only used when lane1_valid_calc/lane1_valid_q is true
+    assign a1_addr_calc =
+        base_addr_a + ((m_idx_q * dim_k) + k_idx_plus1) * A_BYTES;
+
+    // B[k+1][n], only used when lane1_valid_calc/lane1_valid_q is true
+    assign b1_addr_calc =
+        base_addr_b + ((k_idx_plus1 * dim_n) + n_idx_q) * B_BYTES;
 
     // C[m][n] row-major, 4 bytes/element
     // addr = base_c + (m * N + n) * 4
-    assign c_addr_calc = base_addr_c + ((m_idx_q * dim_n) + n_idx_q) * C_BYTES;
+    assign c_addr_calc =
+        base_addr_c + ((m_idx_q * dim_n) + n_idx_q) * C_BYTES;
 
     // -------------------------------------------------------------------------
     // Combinational FSM
@@ -188,6 +259,10 @@ module gemm_top #(
 
         a_val_d       = a_val_q;
         b_val_d       = b_val_q;
+        a1_val_d      = a1_val_q;
+        b1_val_d      = b1_val_q;
+        lane1_valid_d = lane1_valid_q;
+
         acc_d         = acc_q;
 
         busy_d        = busy;
@@ -206,27 +281,36 @@ module gemm_top #(
             // IDLE
             S_IDLE: begin
                 busy_d = 1'b0;
+
                 if (start) begin
-                    m_idx_d = '0;
-                    n_idx_d = '0;
-                    k_idx_d = '0;
-                    acc_d   = '0;
-                    busy_d  = 1'b1;
-                    state_d = S_READ_A;
+                    m_idx_d       = '0;
+                    n_idx_d       = '0;
+                    k_idx_d       = '0;
+
+                    a_val_d       = '0;
+                    b_val_d       = '0;
+                    a1_val_d      = '0;
+                    b1_val_d      = '0;
+                    lane1_valid_d = 1'b0;
+
+                    acc_d         = '0;
+                    busy_d        = 1'b1;
+                    state_d       = S_READ_A;
                 end
             end
 
-            // READ A
+            // READ A lane0
             // Hold here until adapter can accept the request
             S_READ_A: begin
                 mem_rd_addr_d = a_addr_calc;
+
                 if (mem_req_ready) begin
                     mem_rd_en_d = 1'b1;
                     state_d     = S_WAIT_A;
                 end
             end
 
-            // WAIT A
+            // WAIT A lane0
             S_WAIT_A: begin
                 if (mem_rd_valid) begin
                     a_val_d = mem_rd_data[A_DATA_WIDTH-1:0];
@@ -234,35 +318,100 @@ module gemm_top #(
                 end
             end
 
-            // READ B
+            // READ B lane0
             // Hold here until adapter can accept the request
             S_READ_B: begin
                 mem_rd_addr_d = b_addr_calc;
+
                 if (mem_req_ready) begin
                     mem_rd_en_d = 1'b1;
                     state_d     = S_WAIT_B;
                 end
             end
 
-            // WAIT B
+            // WAIT B lane0
             S_WAIT_B: begin
                 if (mem_rd_valid) begin
                     b_val_d = mem_rd_data[B_DATA_WIDTH-1:0];
-                    state_d = S_MAC;
+
+                    // In 2-lane mode, fetch lane1 only if k+1 is legal.
+                    // In single-lane mode, this always goes directly to S_MAC.
+                    if ((GEMM_MAC_LANES == 2) && lane1_valid_calc) begin
+                        lane1_valid_d = 1'b1;
+                        state_d       = S_READ_A1;
+                    end
+                    else begin
+                        lane1_valid_d = 1'b0;
+                        state_d       = S_MAC;
+                    end
+                end
+            end
+
+            // READ A lane1
+            // Only reached in GEMM_MAC_LANES=2 when lane1 is valid.
+            S_READ_A1: begin
+                mem_rd_addr_d = a1_addr_calc;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_WAIT_A1;
+                end
+            end
+
+            // WAIT A lane1
+            S_WAIT_A1: begin
+                if (mem_rd_valid) begin
+                    a1_val_d = mem_rd_data[A_DATA_WIDTH-1:0];
+                    state_d  = S_READ_B1;
+                end
+            end
+
+            // READ B lane1
+            S_READ_B1: begin
+                mem_rd_addr_d = b1_addr_calc;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_WAIT_B1;
+                end
+            end
+
+            // WAIT B lane1
+            S_WAIT_B1: begin
+                if (mem_rd_valid) begin
+                    b1_val_d = mem_rd_data[B_DATA_WIDTH-1:0];
+                    state_d  = S_MAC;
                 end
             end
 
             // MAC
-            // acc += A[m][k] * B[k][n]
+            //
+            // GEMM_MAC_LANES=1:
+            //   acc += A[m][k] * B[k][n]
+            //
+            // GEMM_MAC_LANES=2:
+            //   acc += A[m][k+0] * B[k+0][n]
+            //   acc += A[m][k+1] * B[k+1][n], if lane1_valid_q
             S_MAC: begin
-                acc_d = acc_q + (a_val_q * b_val_q);
+                acc_d = acc_q + mac_sum;
 
-                if (k_idx_q == (dim_k - 1)) begin
-                    state_d = S_WRITE_C;
+                if (GEMM_MAC_LANES == 2) begin
+                    if (lane2_last_k_group) begin
+                        state_d = S_WRITE_C;
+                    end
+                    else begin
+                        k_idx_d = k_idx_q + 2;
+                        state_d = S_READ_A;
+                    end
                 end
                 else begin
-                    k_idx_d = k_idx_q + 1'b1;
-                    state_d = S_READ_A;
+                    if (k_idx_q == (dim_k - 1)) begin
+                        state_d = S_WRITE_C;
+                    end
+                    else begin
+                        k_idx_d = k_idx_q + 1'b1;
+                        state_d = S_READ_A;
+                    end
                 end
             end
 
@@ -282,8 +431,11 @@ module gemm_top #(
             // NEXT
             // Move to next (m,n)
             S_NEXT: begin
-                k_idx_d = '0;
-                acc_d   = '0;
+                k_idx_d       = '0;
+                acc_d         = '0;
+                a1_val_d      = '0;
+                b1_val_d      = '0;
+                lane1_valid_d = 1'b0;
 
                 if (n_idx_q == (dim_n - 1)) begin
                     n_idx_d = '0;
@@ -314,9 +466,10 @@ module gemm_top #(
             end
 
             default: begin
-                state_d = S_IDLE;
-                busy_d  = 1'b0;
-                done_d  = 1'b0;
+                state_d       = S_IDLE;
+                busy_d        = 1'b0;
+                done_d        = 1'b0;
+                lane1_valid_d = 1'b0;
             end
         endcase
     end
@@ -334,6 +487,10 @@ module gemm_top #(
 
             a_val_q      <= '0;
             b_val_q      <= '0;
+            a1_val_q     <= '0;
+            b1_val_q     <= '0;
+            lane1_valid_q<= 1'b0;
+
             acc_q        <= '0;
 
             busy         <= 1'b0;
@@ -347,9 +504,9 @@ module gemm_top #(
             mem_wr_data  <= '0;
             mem_wr_strb  <= '0;
 
-            gemm_perf_busy_cycles <= '0;
-            gemm_perf_mac_count   <= '0;
-            gemm_perf_output_count<= '0;
+            gemm_perf_busy_cycles  <= '0;
+            gemm_perf_mac_count    <= '0;
+            gemm_perf_output_count <= '0;
         end
         else begin
             state_q      <= state_d;
@@ -360,6 +517,10 @@ module gemm_top #(
 
             a_val_q      <= a_val_d;
             b_val_q      <= b_val_d;
+            a1_val_q     <= a1_val_d;
+            b1_val_q     <= b1_val_d;
+            lane1_valid_q<= lane1_valid_d;
+
             acc_q        <= acc_d;
 
             busy         <= busy_d;
@@ -378,6 +539,10 @@ module gemm_top #(
             //
             // Clear when a new job is accepted. This gives each job its own
             // snapshot. After done, values remain stable until the next job.
+            //
+            // In 2-lane mode, mac_count increments by the number of logical
+            // valid MAC lanes committed in S_MAC, not merely by one S_MAC
+            // state execution.
             // -------------------------------------------------------------
             if (start_accept) begin
                 gemm_perf_busy_cycles  <= '0;
@@ -390,7 +555,7 @@ module gemm_top #(
                 end
 
                 if (mac_commit) begin
-                    gemm_perf_mac_count <= gemm_perf_mac_count + 32'd1;
+                    gemm_perf_mac_count <= gemm_perf_mac_count + mac_commit_count;
                 end
 
                 if (output_commit) begin

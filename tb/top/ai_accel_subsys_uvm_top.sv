@@ -20,6 +20,8 @@ module ai_accel_subsys_uvm_top;
     localparam int GEMM_ACC_WIDTH  = 32;
     localparam int GEMM_DIM_WIDTH  = 8;
 
+    parameter  int GEMM_MAC_LANES  = 1;
+
     localparam int BYTES_PER_BEAT  = DATA_WIDTH / 8;
 
     // DMA / AXIS source memory model.
@@ -939,7 +941,8 @@ module ai_accel_subsys_uvm_top;
         .GEMM_A_WIDTH    (GEMM_A_WIDTH),
         .GEMM_B_WIDTH    (GEMM_B_WIDTH),
         .GEMM_ACC_WIDTH  (GEMM_ACC_WIDTH),
-        .GEMM_DIM_WIDTH  (GEMM_DIM_WIDTH)
+        .GEMM_DIM_WIDTH  (GEMM_DIM_WIDTH),
+        .GEMM_MAC_LANES  (GEMM_MAC_LANES)
     ) dut (
         .dma_clk              (dma_clk),
         .dma_rst_n            (dma_rst_n),
