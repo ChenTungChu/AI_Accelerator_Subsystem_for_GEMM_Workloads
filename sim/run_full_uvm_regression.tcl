@@ -421,6 +421,18 @@ run_reg_item "perf_counter_smoke" {
 }
 
 # ============================================================
+# Performance profile test
+# ============================================================
+run_reg_item "perf_profile" {
+    set UVM_TEST ai_accel_subsys_perf_profile_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

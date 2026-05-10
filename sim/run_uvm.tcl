@@ -61,6 +61,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_direct_stream_error_test \
     ai_accel_subsys_direct_stream_load_store_stress_test \
     ai_accel_subsys_perf_counter_smoke_test \
+    ai_accel_subsys_perf_profile_test \
 ]
 
 # --------------------------------------------------

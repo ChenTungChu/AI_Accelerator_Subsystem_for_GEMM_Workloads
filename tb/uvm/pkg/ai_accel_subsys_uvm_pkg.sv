@@ -119,6 +119,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_direct_stream_error_test.sv"
     `include "../test/ai_accel_subsys_direct_stream_load_store_stress_test.sv"
     `include "../test/ai_accel_subsys_perf_counter_smoke_test.sv"
+    `include "../test/ai_accel_subsys_perf_profile_test.sv"
 
 endpackage
 
