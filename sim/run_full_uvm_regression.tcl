@@ -461,6 +461,54 @@ run_reg_item "helper reset_recovery 5->101" {
 }
 
 # ============================================================
+# 2-lane GEMM subset regression
+#
+# These items validate the optional GEMM_MAC_LANES=2 datapath.
+# Default mainline regression remains GEMM_MAC_LANES=1 unless
+# explicitly overridden here.
+# ============================================================
+
+run_reg_item "gemm_2lane_perf_counter_smoke" {
+    set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 1
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_perf_profile" {
+    set UVM_TEST ai_accel_subsys_perf_profile_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 0
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_direct_stream_smoke" {
+    set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 1
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+}
+
+
+# ============================================================
 # Final summary
 # ============================================================
 
