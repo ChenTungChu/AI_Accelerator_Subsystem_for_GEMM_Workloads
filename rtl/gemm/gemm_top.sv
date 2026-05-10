@@ -7,7 +7,19 @@ module gemm_top #(
     parameter int A_DATA_WIDTH = 8,     // A/B element width
     parameter int B_DATA_WIDTH = 8,
     parameter int ACC_WIDTH    = 32,    // accumulation / C width
-    parameter int DIM_WIDTH    = 8      // M/N/K register width
+    parameter int DIM_WIDTH    = 8,     // M/N/K register width
+
+    // ------------------------------------------------------------
+    // GEMM MAC lane count
+    //
+    // P2A:
+    //   Only GEMM_MAC_LANES=1 is functionally active.
+    //   GEMM_MAC_LANES=2 will be enabled in the next patch.
+    //
+    // Default must remain 1 to preserve the existing 35/35
+    // regression baseline.
+    // ------------------------------------------------------------
+    parameter int GEMM_MAC_LANES = 1
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -84,6 +96,26 @@ module gemm_top #(
     localparam int A_BYTES   = (A_DATA_WIDTH + 7) / 8;   // currently 1
     localparam int B_BYTES   = (B_DATA_WIDTH + 7) / 8;   // currently 1
     localparam int C_BYTES   = (ACC_WIDTH    + 7) / 8;   // currently 4
+
+    // -------------------------------------------------------------------------
+    // Parameter guard
+    //
+    // P2A only enables the parameterized baseline. The RTL behavior is still
+    // the original single-lane GEMM when GEMM_MAC_LANES=1.
+    //
+    // GEMM_MAC_LANES=2 is reserved for the next patch.
+    // -------------------------------------------------------------------------
+    `ifndef SYNTHESIS
+        initial begin
+            if ((GEMM_MAC_LANES != 1) && (GEMM_MAC_LANES != 2)) begin
+                $fatal(1,
+                    "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1 and 2.",
+                    GEMM_MAC_LANES
+                );
+            end
+        end
+    `endif
+
 
     // -------------------------------------------------------------------------
     // Registers
