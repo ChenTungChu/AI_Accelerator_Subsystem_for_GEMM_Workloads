@@ -125,7 +125,6 @@ proc run_reg_item {name setup_body} {
 # ============================================================
 # Smoke test: primary host path
 # ============================================================
-
 run_reg_item "smoke CASE_ID=5" {
     set UVM_TEST ai_accel_subsys_smoke_test
     set CASE_ID 5
@@ -177,7 +176,6 @@ run_reg_item "smoke CASE_ID=403" {
 # ============================================================
 # DMA load smoke: primary DMA-load path
 # ============================================================
-
 run_reg_item "dma_load_smoke RUN_ALL" {
     set UVM_TEST ai_accel_subsys_dma_load_smoke_test
     set CASE_ID 100
@@ -187,7 +185,6 @@ run_reg_item "dma_load_smoke RUN_ALL" {
 # ============================================================
 # DMA load error / recovery test
 # ============================================================
-
 run_reg_item "dma_load_error invalid_launch_and_recovery" {
     set UVM_TEST ai_accel_subsys_dma_load_error_test
     set ENABLE_RESULT_CHECK 0
@@ -196,7 +193,6 @@ run_reg_item "dma_load_error invalid_launch_and_recovery" {
 # ============================================================
 # Back-to-back test: primary host path
 # ============================================================
-
 run_reg_item "back_to_back 100->101" {
     set UVM_TEST ai_accel_subsys_back_to_back_test
     set ENABLE_RESULT_CHECK 1
@@ -225,7 +221,6 @@ run_reg_item "back_to_back 5->101->400" {
 # ============================================================
 # Reset recovery test: primary host path
 # ============================================================
-
 run_reg_item "reset_recovery 5->101" {
     set UVM_TEST ai_accel_subsys_reset_recovery_test
     set ENABLE_RESULT_CHECK 1
@@ -243,7 +238,6 @@ run_reg_item "reset_recovery 5->400" {
 # ============================================================
 # Corner test: primary host path
 # ============================================================
-
 run_reg_item "corner default 5->101->105->403" {
     set UVM_TEST ai_accel_subsys_corner_test
     set ENABLE_RESULT_CHECK 1
@@ -256,7 +250,6 @@ run_reg_item "corner default 5->101->105->403" {
 #   ABORT_CASE_ID / RECOVERY_CASE_ID are passed through EXTRA_PLUSARGS
 #   because run_uvm.tcl currently forwards EXTRA_PLUSARGS as an escape hatch.
 # ============================================================
-
 run_reg_item "midrun_reset abort=5 recovery=101" {
     set UVM_TEST ai_accel_subsys_midrun_reset_test
     set ENABLE_RESULT_CHECK 1
@@ -268,7 +261,6 @@ run_reg_item "midrun_reset abort=5 recovery=101" {
 # ============================================================
 # DMA load stress test
 # ============================================================
-
 run_reg_item "dma_load_stress 8 jobs" {
     set UVM_TEST ai_accel_subsys_dma_load_stress_test
     set ENABLE_RESULT_CHECK 1
@@ -435,7 +427,6 @@ run_reg_item "perf_profile" {
 # ============================================================
 # Helper fallback sanity
 # ============================================================
-
 run_reg_item "helper smoke CASE_ID=101" {
     set UVM_TEST ai_accel_subsys_smoke_test
     set CASE_ID 101
@@ -467,7 +458,6 @@ run_reg_item "helper reset_recovery 5->101" {
 # Default mainline regression remains GEMM_MAC_LANES=1 unless
 # explicitly overridden here.
 # ============================================================
-
 run_reg_item "gemm_2lane_perf_counter_smoke" {
     set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
     set ENABLE_RESULT_CHECK 1
@@ -507,6 +497,112 @@ run_reg_item "gemm_2lane_direct_stream_smoke" {
     set GEMM_MAC_LANES 2
 }
 
+# ============================================================
+# 2-lane GEMM P3 stress / CDC hardening regression
+#
+# These items validate GEMM_MAC_LANES=2 across the three major
+# load/store paths:
+#
+#   1. DMA load A/B -> GEMM -> DMA store C
+#   2. AXI-Stream preload A/B -> GEMM -> DMA store C
+#   3. Direct Stream preload A/B -> GEMM -> DMA store C
+#
+# Each path is covered in:
+#   - default clock ratio: dma_clk=10ns, core_clk=14ns
+#   - CDC sanity ratio   : dma_clk=10ns, core_clk=13ns
+#
+# Expected regression total after adding these 6 items:
+#   38 + 6 = 44
+# ============================================================
+run_reg_item "gemm_2lane_dma_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set STORE_STRESS_JOB_COUNT 8
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 1
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_axis_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_direct_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_dma_load_store_cdc" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set STORE_STRESS_JOB_COUNT 8
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 1
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_axis_stream_load_store_cdc" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+    set GEMM_MAC_LANES 2
+}
+
+run_reg_item "gemm_2lane_direct_stream_load_store_cdc" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+    set GEMM_MAC_LANES 2
+}
 
 # ============================================================
 # Final summary

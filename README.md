@@ -15,20 +15,27 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, and UVM scoreboard-based verification.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and the first performance-oriented GEMM datapath upgrade.
 
 Current milestone:
 
 ```text
-v3.4.3 Direct Stream GEMM Frontend B1 Completed
+Performance GEMM P2: 2-Lane MAC Datapath Prototype Completed
 
 Regression:
-  TOTAL : 33
-  PASS  : 33
+  TOTAL : 38
+  PASS  : 38
   FAIL  : 0
 ```
 
-Direct Stream B1 means:
+The current baseline includes both:
+
+```text
+GEMM_MAC_LANES=1 mainline regression
+GEMM_MAC_LANES=2 focused performance subset regression
+```
+
+Direct Stream B1 remains supported:
 
 ```text
 AXI-MM source memory
@@ -41,6 +48,8 @@ AXI-MM source memory
     -> DMA store C to destination memory
     -> scoreboard compare
 ```
+
+Performance GEMM P2 adds a parameterized 2-lane K-parallel MAC path inside `gemm_top` while preserving the original single-lane behavior as the default safe configuration.
 
 ---
 
@@ -64,7 +73,22 @@ AXI-MM source memory
 - `direct_stream_preload_engine`
 - `axi_mm_dual_port_bram`
 
-The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline. Current development is focused on subsystem integration, DMA load/store behavior, AXI-Stream preload behavior, Direct Stream operand-buffer behavior, CDC-aware control/status crossing, and verification around that memory subsystem.
+The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline.
+
+`gemm_top` now supports:
+
+```systemverilog
+parameter int GEMM_MAC_LANES = 1
+```
+
+Supported lane settings:
+
+```text
+GEMM_MAC_LANES=1 : original single-MAC baseline
+GEMM_MAC_LANES=2 : 2-lane K-parallel MAC prototype
+```
+
+The default remains `1` so existing regression behavior is preserved unless the run script explicitly overrides the parameter.
 
 ---
 
@@ -91,6 +115,112 @@ For Direct Stream B1, A/B are loaded into local operand buffers instead of scrat
 
 ---
 
+## GEMM Compute Architecture
+
+### Single-lane baseline
+
+The default GEMM algorithm is:
+
+```text
+for m in 0 .. M-1:
+  for n in 0 .. N-1:
+    acc = 0
+    for k in 0 .. K-1:
+      acc += A[m][k] * B[k][n]
+    C[m][n] = acc
+```
+
+This is the compatibility baseline used by the main regression.
+
+### 2-lane K-parallel prototype
+
+When `GEMM_MAC_LANES=2`, the core processes up to two K positions per accumulation step:
+
+```text
+for k in 0 .. K-1 step 2:
+    acc += A[m][k + 0] * B[k + 0][n]
+
+    if (k + 1 < K):
+        acc += A[m][k + 1] * B[k + 1][n]
+```
+
+Odd-K cases are handled by lane masking. For example, `K=1` uses only lane 0, while `K=2` and `K=4` use both lanes.
+
+The first 2-lane implementation is correctness-first. It keeps the existing single-read local memory interface and sequentially collects lane operands before committing the multi-lane MAC step.
+
+---
+
+## Performance Counters
+
+The GEMM core exposes passive performance counters:
+
+```text
+gemm_perf_busy_cycles
+gemm_perf_mac_count
+gemm_perf_output_count
+```
+
+Counter policy:
+
+```text
+clear on reset
+clear on accepted GEMM start
+remain stable after done until next accepted GEMM start
+```
+
+Counter meaning:
+
+```text
+gemm_perf_busy_cycles  : cycles while GEMM is busy
+gemm_perf_mac_count    : logical MAC operations committed
+gemm_perf_output_count : C outputs committed
+```
+
+For both single-lane and 2-lane modes:
+
+```text
+gemm_perf_mac_count    = M * N * K
+gemm_perf_output_count = M * N
+```
+
+In 2-lane mode, `gemm_perf_mac_count` increments by the number of valid lanes committed, not by the number of MAC FSM states.
+
+---
+
+## Current Performance Profile Baselines
+
+### Single-lane baseline (`GEMM_MAC_LANES=1`)
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
+100     | 1 | 1 | 1 | 1    | 1       | 24
+101     | 2 | 2 | 2 | 8    | 4       | 230
+105     | 2 | 3 | 4 | 24   | 6       | 603
+5       | 4 | 4 | 4 | 64   | 16      | 1638
+400     | 4 | 4 | 4 | 64   | 16      | 1637
+401     | 4 | 4 | 4 | 64   | 16      | 1637
+402     | 4 | 4 | 4 | 64   | 16      | 1637
+403     | 4 | 4 | 4 | 64   | 16      | 1637
+```
+
+### 2-lane baseline (`GEMM_MAC_LANES=2`)
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
+100     | 1 | 1 | 1 | 1    | 1       | 24
+101     | 2 | 2 | 2 | 8    | 4       | 224
+105     | 2 | 3 | 4 | 24   | 6       | 594
+5       | 4 | 4 | 4 | 64   | 16      | 1609
+400     | 4 | 4 | 4 | 64   | 16      | 1610
+401     | 4 | 4 | 4 | 64   | 16      | 1610
+402     | 4 | 4 | 4 | 64   | 16      | 1610
+403     | 4 | 4 | 4 | 64   | 16      | 1610
+```
+
+`CASE_ID=100` has `K=1`, so lane 1 is masked and the cycle count remains unchanged. Cases with `K>=2` show the 2-lane path is active.
+
+---
+
 ## Verification Architecture
 
 The UVM environment includes:
@@ -114,6 +244,14 @@ The scoreboard checks:
 - latency sanity
 - ctrl/result pairing
 - result compare correctness
+
+Performance tests additionally check:
+
+- `gemm_perf_mac_count == M*N*K`
+- `gemm_perf_output_count == M*N`
+- `gemm_perf_busy_cycles > 0`
+- counter clear/update across multiple jobs
+- 2-lane profile summary generation
 
 ---
 
@@ -143,8 +281,6 @@ DMA source memory
     -> result_bridge / scoreboard
 ```
 
-The DMA load path verifies DMA-loaded A/B, GEMM execution, C readback, scoreboard compare, stress behavior, CDC sanity, and error recovery.
-
 ### DMA store / S2MM path
 
 ```text
@@ -156,24 +292,6 @@ DMA source memory
     -> destination AXI-MM memory model
     -> result_bridge / scoreboard
 ```
-
-The DMA store path verifies that GEMM result C can be moved out of scratchpad through a destination AXI-MM write path and compared from the destination memory model.
-
-### DMA load + store stress path
-
-```text
-repeat N jobs:
-    clear C
-    clear destination memory
-    preload DMA source A/B
-    DMA load A/B into scratchpad
-    run GEMM
-    DMA store C to destination memory
-    compare destination memory
-    publish result payload
-```
-
-This is the full DMA data-movement stress path.
 
 ### AXI-Stream preload path
 
@@ -190,25 +308,6 @@ DMA / AXIS source memory
     -> dma_store_engine
     -> destination AXI-MM memory model
     -> result_bridge / scoreboard
-```
-
-The AXI-Stream preload path verifies that A/B can be streamed into scratchpad through a CDC-aware AXI-Stream frontend before launching the existing GEMM datapath.
-
-V1 uses a headerless AXI-Stream payload:
-
-```text
-beat 0      : payload data
-beat 1      : payload data
-...
-beat N - 1  : payload data with TLAST = 1
-```
-
-The testbench provides metadata through control signals:
-
-```text
-axis_src_base_addr
-axis_dst_base_addr
-axis_load_beats
 ```
 
 ### Direct Stream GEMM frontend path
@@ -243,22 +342,7 @@ gemm_input_stream_mode = 1:
     GEMM C writes  -> scratchpad
 ```
 
-Direct Stream B1 uses a headerless AXI-Stream payload. Metadata is provided through control signals:
-
-```text
-ds_src_base_addr
-ds_dst_base_addr
-ds_load_beats
-ds_operand_sel
-gemm_input_stream_mode
-```
-
-Operand selection:
-
-```text
-ds_operand_sel = 0 : operand A
-ds_operand_sel = 1 : operand B
-```
+The 2-lane GEMM path has been verified in Direct Stream mode through the 2-lane direct-stream smoke regression subset.
 
 ---
 
@@ -275,10 +359,6 @@ Current CDC behavior:
 - Direct Stream source read side starts in `dma_clk`.
 - Direct Stream operand buffer write side runs in `core_clk`.
 - `axis_async_fifo` transfers `{tlast, tdata}` across the DMA/core clock boundary.
-- `axis_preload_engine` coordinates source-side MM2S and core-side stream loader activity for scratchpad preload.
-- `direct_stream_preload_engine` coordinates source-side MM2S and core-side stream loader activity for operand-buffer preload.
-- `acc_start` is rising-edge detected in `dma_clk`.
-- GEMM config is captured in `dma_clk` before start.
 - `acc_start` crosses into `core_clk` through a toggle synchronizer.
 - GEMM config is latched into core-domain registers at GEMM start.
 - `gemm_input_stream_mode` is captured with the GEMM job configuration.
@@ -298,8 +378,6 @@ Default clock periods:
 dma_clk  = 10 ns
 core_clk = 14 ns
 ```
-
-The full regression includes non-default clock-ratio sanity runs for DMA load, AXI-Stream load/store, and Direct Stream load/store paths.
 
 ---
 
@@ -323,6 +401,11 @@ Current UVM regression covers:
 - Direct Stream error and recovery behavior
 - Direct Stream load-store stress regression
 - Direct Stream CDC clock-ratio sanity
+- GEMM performance counter smoke
+- GEMM performance profile baseline
+- 2-lane GEMM performance counter smoke
+- 2-lane GEMM performance profile
+- 2-lane Direct Stream compatibility smoke
 - back-to-back GEMM jobs
 - reset recovery between jobs
 - mixed corner recipe
@@ -339,87 +422,15 @@ RUN_ALL recipe       : 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
 Corner recipe        : 5 -> 101 -> 105 -> 403
 ```
 
-### DMA load error coverage
-
-- zero `load_beats`
-- unaligned source address
-- unaligned destination address
-- source AXI RRESP error injection
-- Port0 ownership recovery after DMA error
-- valid DMA/GEMM recovery after errors
-
-### DMA store / S2MM error coverage
-
-- zero `store_byte_count`
-- unaligned scratchpad source address
-- unaligned destination address
-- destination AXI BRESP error injection
-- Port0 ownership recovery after DMA store error
-- valid S2MM recovery store after errors
-- optional manual `start_while_busy` run
-
-### AXI-Stream preload coverage
-
-- AXI-Stream preload A/B into scratchpad Port1
-- MM2S source read through `axi_mm2s_dma`
-- AXI-Stream CDC through `axis_async_fifo`
-- stream-to-scratchpad write through `axi_stream_loader` and `axis_scratchpad_write_adapter`
-- Port1 ownership switching between AXI-Stream preload and GEMM
-- GEMM execution using stream-preloaded A/B
-- DMA store of C to destination memory
-- scoreboard result compare and ctrl/result pairing
-
-### AXI-Stream preload error coverage
-
-- zero `axis_load_beats`
-- unaligned AXI-Stream source address
-- unaligned scratchpad destination address
-- AXI-Stream source RRESP error injection
-- valid AXI-Stream preload recovery after errors
-- valid GEMM + DMA store recovery after AXI-Stream preload errors
-
-### Direct Stream coverage
-
-- Direct Stream preload A/B into GEMM operand buffers
-- MM2S source read through `axi_mm2s_dma`
-- AXI-Stream CDC through `axis_async_fifo`
-- stream-to-operand-buffer write through `axi_stream_loader` and `gemm_operand_buffer_write_adapter`
-- GEMM A/B reads through `gemm_input_mem_router`
-- GEMM C writes to scratchpad
-- DMA store of C to destination memory
-- scoreboard result compare and ctrl/result pairing
-
-### Direct Stream error coverage
-
-- zero `ds_load_beats`
-- unaligned Direct Stream source address
-- unaligned Direct Stream destination/base address
-- invalid `ds_operand_sel` X-state check
-- Direct Stream source RRESP error injection
-- valid Direct Stream preload recovery after errors
-- valid GEMM + DMA store recovery after Direct Stream preload errors
-
-### Stress coverage
-
-DMA, AXI-Stream, and Direct Stream stress tests cover:
-
-- repeated load/preload A/B -> GEMM -> DMA store jobs
-- random or round-robin case selection
-- scoreboard pairing across multiple jobs
-- stale-result/stale-destination-memory prevention
-- CDC clock-ratio sanity
-- 8-job full-regression stress
-- longer manual/nightly stress target
-
 ---
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 33 items and is passing:
+The current full UVM regression contains 38 items and is passing:
 
 ```text
-TOTAL : 33
-PASS  : 33
+TOTAL : 38
+PASS  : 38
 FAIL  : 0
 ```
 
@@ -441,6 +452,11 @@ Covered categories:
 - Direct Stream error/recovery
 - Direct Stream load-store stress
 - Direct Stream CDC clock-ratio sanity
+- GEMM performance counter smoke
+- GEMM performance profile
+- GEMM 2-lane performance counter smoke
+- GEMM 2-lane performance profile
+- GEMM 2-lane Direct Stream smoke
 - back-to-back
 - reset recovery
 - corner recipe
@@ -452,7 +468,7 @@ Manual/non-regression stress status:
 ```text
 DMA load-store stress 20-job manual run       : PASS
 AXI-Stream load-store stress 20-job manual run: PASS
-Direct Stream load-store stress 20-job run    : not yet recorded
+Direct Stream load-store 20-job run           : not yet recorded
 ```
 
 ---
@@ -492,6 +508,71 @@ to avoid `$finish` confirmation popups during regression.
 
 ## Useful Single-Test Runs
 
+### Performance counter smoke, single-lane baseline
+
+```tcl
+set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set GEMM_MAC_LANES 1
+do run_uvm.tcl
+```
+
+### Performance profile, single-lane baseline
+
+```tcl
+set UVM_TEST ai_accel_subsys_perf_profile_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 1
+do run_uvm.tcl
+```
+
+### Performance counter smoke, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
+### Performance profile, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_perf_profile_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
+### Direct Stream smoke RUN_ALL, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
 ### DMA load RUN_ALL
 
 ```tcl
@@ -513,67 +594,12 @@ set STRESS_GAP_CYCLES 10
 do run_uvm.tcl
 ```
 
-### DMA load CDC sanity
-
-```tcl
-set UVM_TEST ai_accel_subsys_dma_load_stress_test
-set ENABLE_RESULT_CHECK 1
-set STRESS_JOB_COUNT 8
-set STRESS_SEED 20260502
-set STRESS_RANDOM 1
-set STRESS_GAP_CYCLES 10
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 13
-do run_uvm.tcl
-```
-
 ### DMA store / S2MM RUN_ALL
 
 ```tcl
 set UVM_TEST ai_accel_subsys_dma_store_smoke_test
 set ENABLE_RESULT_CHECK 1
 set RUN_ALL 1
-do run_uvm.tcl
-```
-
-### DMA store / S2MM error recovery
-
-```tcl
-set UVM_TEST ai_accel_subsys_dma_store_error_test
-set ENABLE_RESULT_CHECK 0
-do run_uvm.tcl
-```
-
-### Optional DMA store start-while-busy error run
-
-```tcl
-set UVM_TEST ai_accel_subsys_dma_store_error_test
-set ENABLE_RESULT_CHECK 0
-set EXTRA_PLUSARGS "+RUN_START_WHILE_BUSY=1"
-do run_uvm.tcl
-```
-
-### DMA load + store stress
-
-```tcl
-set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set STORE_STRESS_JOB_COUNT 8
-set STORE_STRESS_SEED 20260502
-set STORE_STRESS_RANDOM 1
-set STORE_STRESS_GAP_CYCLES 10
-do run_uvm.tcl
-```
-
-Longer manual/nightly version:
-
-```tcl
-set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set STORE_STRESS_JOB_COUNT 20
-set STORE_STRESS_SEED 20260502
-set STORE_STRESS_RANDOM 1
-set STORE_STRESS_GAP_CYCLES 10
 do run_uvm.tcl
 ```
 
@@ -586,106 +612,12 @@ set RUN_ALL 1
 do run_uvm.tcl
 ```
 
-### AXI-Stream preload error recovery
-
-```tcl
-set UVM_TEST ai_accel_subsys_axis_stream_preload_error_test
-set ENABLE_RESULT_CHECK 1
-set CASE_ID 100
-do run_uvm.tcl
-```
-
-### AXI-Stream load-store stress
-
-```tcl
-set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set AXIS_STRESS_JOB_COUNT 8
-set AXIS_STRESS_SEED 20260502
-set AXIS_STRESS_RANDOM 1
-set AXIS_STRESS_GAP_CYCLES 10
-do run_uvm.tcl
-```
-
-Longer manual/nightly version:
-
-```tcl
-set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set AXIS_STRESS_JOB_COUNT 20
-set AXIS_STRESS_SEED 20260502
-set AXIS_STRESS_RANDOM 1
-set AXIS_STRESS_GAP_CYCLES 10
-do run_uvm.tcl
-```
-
-AXI-Stream CDC sanity:
-
-```tcl
-set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set AXIS_STRESS_JOB_COUNT 8
-set AXIS_STRESS_SEED 20260502
-set AXIS_STRESS_RANDOM 1
-set AXIS_STRESS_GAP_CYCLES 10
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 13
-do run_uvm.tcl
-```
-
 ### Direct Stream smoke RUN_ALL
 
 ```tcl
 set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
 set ENABLE_RESULT_CHECK 1
 set RUN_ALL 1
-do run_uvm.tcl
-```
-
-### Direct Stream error recovery
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_error_test
-set ENABLE_RESULT_CHECK 1
-set CASE_ID 100
-do run_uvm.tcl
-```
-
-### Direct Stream load-store stress
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set DS_STRESS_JOB_COUNT 8
-set DS_STRESS_SEED 20260502
-set DS_STRESS_RANDOM 1
-set DS_STRESS_GAP_CYCLES 10
-do run_uvm.tcl
-```
-
-Longer manual/nightly version:
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set DS_STRESS_JOB_COUNT 20
-set DS_STRESS_SEED 20260502
-set DS_STRESS_RANDOM 1
-set DS_STRESS_GAP_CYCLES 10
-do run_uvm.tcl
-```
-
-Direct Stream CDC sanity:
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-set DS_STRESS_JOB_COUNT 8
-set DS_STRESS_SEED 20260502
-set DS_STRESS_RANDOM 1
-set DS_STRESS_GAP_CYCLES 10
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 13
 do run_uvm.tcl
 ```
 
@@ -698,8 +630,10 @@ do run_uvm.tcl
 Current log format:
 
 ```text
-YYYYMMDD_HHMMSS_<test_specific_name>.log
+YYYYMMDD_HHMMSS_<test_specific_name>_lanes_<GEMM_MAC_LANES>.log
 ```
+
+The lane tag makes 1-lane and 2-lane runs easier to distinguish.
 
 The log directory keeps only the newest 50 `.log` files by default. This can be overridden before running a test:
 
@@ -723,8 +657,6 @@ Known warning accepted.
 Functional regression passes.
 No BRAM interface semantic change required.
 ```
-
-The shared BRAM interface should not be modified only to remove this warning unless the BRAM repository regression is also updated and fully re-run.
 
 ---
 
@@ -762,6 +694,10 @@ At this checkpoint, the subsystem verifies:
 - Port0 ownership recovery after DMA load/store errors
 - Port1 ownership switching between AXI-Stream preload and GEMM
 - transparent scratchpad-mode bypass through `gemm_input_mem_router`
+- GEMM performance counters
+- single-lane performance profile baseline
+- 2-lane K-parallel GEMM datapath correctness
+- 2-lane Direct Stream operand-buffer compatibility
 - unattended full UVM regression flow
 
 ---
@@ -769,16 +705,19 @@ At this checkpoint, the subsystem verifies:
 ## Current Milestone Summary
 
 ```text
-v3.4.3 Direct Stream GEMM Frontend B1 Completed
+Performance GEMM P2: 2-Lane MAC Datapath Prototype Completed
 
 Completed:
-  Stage A: direct_stream_smoke RUN_ALL              PASS
-  Stage B: direct_stream_error_recovery             PASS
-  Stage C: direct_stream_load_store_stress          PASS
-  Stage D: direct_stream_load_store_stress CDC      PASS
+  P0: GEMM performance counter smoke             PASS
+  P1: GEMM performance profile baseline          PASS
+  P2A: GEMM_MAC_LANES parameter baseline         PASS
+  P2B: 2-lane FSM/datapath added                 PASS
+  P2C: 2-lane host-primary profile baseline      PASS
+  P2D: 2-lane Direct Stream compatibility        PASS
+  P2E: 2-lane subset regression                  PASS
 
 Regression:
-  33/33 PASS
+  38/38 PASS
 ```
 
 ---
@@ -803,6 +742,9 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - scoreboard-based result checking
 - reset and abort recovery tests
 - configurable clock-ratio regression coverage
+- GEMM performance counter and profile baseline
+- parameterized 1-lane / 2-lane GEMM compute path
+- focused 2-lane regression subset
 - full UVM regression automation
 
-This is the current subsystem verification baseline.
+This is the current subsystem verification and performance-GEMM baseline.

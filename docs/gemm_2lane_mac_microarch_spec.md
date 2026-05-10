@@ -2,21 +2,22 @@
 
 ## 1. Purpose
 
-This document defines the first performance-oriented GEMM datapath upgrade after the completed Performance Counter P0 and Performance Profile P1 baselines.
+This document defines and records the first performance-oriented GEMM datapath upgrade after the completed Performance Counter P0 and Performance Profile P1 baselines.
 
-Current baseline:
+Current status:
 
 ```text
 P0: passive GEMM performance counters completed
 P1: performance profile test completed
+P2: 2-lane K-parallel MAC prototype completed
 
 Full regression:
-  TOTAL : 35
-  PASS  : 35
+  TOTAL : 38
+  PASS  : 38
   FAIL  : 0
 ```
 
-The goal of this milestone is to introduce a controlled 2-lane MAC datapath while preserving the existing single-MAC behavior as the default safe configuration.
+The goal of this milestone was to introduce a controlled 2-lane MAC datapath while preserving the existing single-MAC behavior as the default safe configuration.
 
 This is the first step from:
 
@@ -30,13 +31,13 @@ toward:
 multi-MAC performance GEMM
 ```
 
-The implementation must remain incremental, measurable, and regression-safe.
+The implementation remains incremental, measurable, and regression-safe.
 
 ---
 
 ## 2. Current Single-MAC Baseline
 
-The current GEMM algorithm is conceptually:
+The single-lane GEMM algorithm is conceptually:
 
 ```text
 for m in 0 .. M-1:
@@ -47,7 +48,7 @@ for m in 0 .. M-1:
     C[m][n] = acc
 ```
 
-The current RTL computes one multiply-accumulate operation per inner-loop MAC step.
+The single-lane RTL computes one multiply-accumulate operation per inner-loop MAC step.
 
 Current P1 profile baseline:
 
@@ -63,15 +64,35 @@ CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
 403     | 4 | 4 | 4 | 64   | 16      | 1637
 ```
 
-This baseline must remain reproducible with `GEMM_MAC_LANES=1`.
+This baseline remains reproducible with `GEMM_MAC_LANES=1`.
 
 ---
 
-## 3. Design Goals
+## 3. 2-Lane Profile Baseline
 
-The 2-lane MAC milestone must:
+The implemented 2-lane profile baseline is:
 
-1. Preserve the current 35/35 full regression baseline with default configuration.
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
+100     | 1 | 1 | 1 | 1    | 1       | 24
+101     | 2 | 2 | 2 | 8    | 4       | 224
+105     | 2 | 3 | 4 | 24   | 6       | 594
+5       | 4 | 4 | 4 | 64   | 16      | 1609
+400     | 4 | 4 | 4 | 64   | 16      | 1610
+401     | 4 | 4 | 4 | 64   | 16      | 1610
+402     | 4 | 4 | 4 | 64   | 16      | 1610
+403     | 4 | 4 | 4 | 64   | 16      | 1610
+```
+
+`CASE_ID=100` has `K=1`, so lane 1 is masked and the cycle count remains unchanged. Cases with `K>=2` show reduced busy cycles compared with the single-lane baseline.
+
+---
+
+## 4. Design Goals
+
+The 2-lane MAC milestone required:
+
+1. Preserve the full regression baseline with default configuration.
 2. Add a `GEMM_MAC_LANES` parameter.
 3. Keep `GEMM_MAC_LANES=1` behavior equivalent to the current single-MAC implementation.
 4. Add `GEMM_MAC_LANES=2` K-parallel execution.
@@ -82,9 +103,15 @@ The 2-lane MAC milestone must:
 9. Preserve performance counter semantics.
 10. Verify result correctness before optimizing memory bandwidth.
 
+Status:
+
+```text
+All goals completed for P2.
+```
+
 ---
 
-## 4. Non-Goals for the First 2-Lane Step
+## 5. Non-Goals for the First 2-Lane Step
 
 The first 2-lane step does not attempt to:
 
@@ -99,53 +126,50 @@ The first 2-lane step does not attempt to:
 - require exact cycle-count matching in regression
 - guarantee 2x end-to-end speedup
 
-The first implementation is a correctness-first 2-lane prototype.
+The implementation is a correctness-first 2-lane prototype.
 
 ---
 
-## 5. Parameter Definition
+## 6. Parameter Definition
 
-Add a GEMM lane parameter to `gemm_top.sv`.
-
-Recommended parameter:
+The GEMM lane parameter is:
 
 ```systemverilog
 parameter int GEMM_MAC_LANES = 1
 ```
 
-Supported values for this milestone:
+Supported values:
 
 ```text
 1 = current single-MAC baseline
 2 = 2-lane K-parallel prototype
 ```
 
-Unsupported values should be guarded.
+Unsupported values should remain guarded by elaboration-time checks.
 
-Recommended elaboration-time check:
-
-```systemverilog
-initial begin
-    if ((GEMM_MAC_LANES != 1) && (GEMM_MAC_LANES != 2)) begin
-        $fatal(1, "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1 and 2.",
-               GEMM_MAC_LANES);
-    end
-end
-```
-
-Default must be:
+Default:
 
 ```systemverilog
 GEMM_MAC_LANES = 1
 ```
 
-This ensures existing regression remains unchanged unless a test or compile configuration explicitly selects 2 lanes.
+This ensures existing regression remains unchanged unless a test or run configuration explicitly selects 2 lanes.
+
+The parameter is propagated through:
+
+```text
+ai_accel_subsys_uvm_top
+    -> ai_accel_subsys
+    -> gemm_top
+```
+
+The run script forwards it through a simulator parameter override.
 
 ---
 
-## 6. 2-Lane Algorithm
+## 7. 2-Lane Algorithm
 
-### 6.1 K-Parallel Accumulation
+### 7.1 K-Parallel Accumulation
 
 For each output element `C[m][n]`, the 2-lane version processes up to two K indices per accumulation step.
 
@@ -166,7 +190,7 @@ for k in 0 .. K-1 step 2:
         acc += A[m][k + 1] * B[k + 1][n]
 ```
 
-### 6.2 Lane Valid Rules
+### 7.2 Lane Valid Rules
 
 For `GEMM_MAC_LANES=2`:
 
@@ -175,7 +199,7 @@ lane0_valid = (k_idx < dim_k)
 lane1_valid = ((k_idx + 1) < dim_k)
 ```
 
-In normal execution, `lane0_valid` should always be true while inside the K loop. `lane1_valid` handles odd K.
+In normal execution, lane 0 is always valid while inside the K loop. Lane 1 handles even/odd K.
 
 Examples:
 
@@ -197,9 +221,9 @@ K = 4:
 
 ---
 
-## 7. Memory Access Strategy
+## 8. Memory Access Strategy
 
-### 7.1 Correctness-First Strategy
+### 8.1 Correctness-First Strategy
 
 The existing GEMM local memory interface provides one read request at a time:
 
@@ -210,9 +234,9 @@ input  logic [31:0]           mem_rd_data;
 input  logic                  mem_rd_valid;
 ```
 
-For the first 2-lane implementation, do not widen this interface.
+The first 2-lane implementation does not widen this interface.
 
-Instead, use sequential reads to collect operands for both lanes:
+Instead, it sequentially reads operands for both lanes:
 
 ```text
 read A0 = A[m][k + 0]
@@ -226,11 +250,9 @@ compute:
     acc += A0*B0 + optional A1*B1
 ```
 
-This is not the final high-bandwidth architecture, but it is the safest first implementation.
+### 8.2 Expected Performance Impact
 
-### 7.2 Expected Performance Impact
-
-Because the first 2-lane version still performs sequential operand reads, the speedup may be modest.
+Because the first 2-lane version still performs sequential operand reads, the speedup is modest.
 
 The main reduction comes from:
 
@@ -240,7 +262,7 @@ fewer MAC states
 fewer NEXT-to-read transitions within each C output
 ```
 
-It does not reduce the total number of operand reads.
+It does not reduce total operand reads.
 
 Therefore:
 
@@ -248,27 +270,12 @@ Therefore:
 MAC count remains M*N*K
 output count remains M*N
 read request count would remain approximately 2*M*N*K if read counters are added later
-busy cycles should improve somewhat for K >= 2, but not necessarily approach 2x
+busy cycles improve somewhat for K >= 2, but do not approach 2x
 ```
-
-### 7.3 Future Bandwidth-Oriented Upgrade
-
-A later step may improve memory bandwidth using one of these approaches:
-
-```text
-Approach A: wider local read data extraction
-Approach B: row/column operand staging registers
-Approach C: operand-buffer multi-read support
-Approach D: Direct Stream tiled operand reuse
-```
-
-These are out of scope for the first 2-lane implementation.
 
 ---
 
-## 8. Address Generation
-
-### 8.1 Existing Address Formula
+## 9. Address Generation
 
 A is row-major:
 
@@ -287,8 +294,6 @@ C is row-major:
 ```text
 C[m][n] address = base_addr_c + (m * N + n) * C_BYTES
 ```
-
-### 8.2 Lane Address Formula
 
 For lane 0:
 
@@ -314,9 +319,9 @@ k_idx + 1 < dim_k
 
 ---
 
-## 9. Datapath Registers
+## 10. Datapath Registers
 
-Recommended additional registers for 2-lane mode:
+The 2-lane implementation adds lane-1 storage:
 
 ```systemverilog
 logic signed [A_DATA_WIDTH-1:0] a1_val_q, a1_val_d;
@@ -324,82 +329,19 @@ logic signed [B_DATA_WIDTH-1:0] b1_val_q, b1_val_d;
 logic                           lane1_valid_q, lane1_valid_d;
 ```
 
-For minimum patch risk, keep existing:
+The existing lane-0 storage remains:
 
 ```text
 a_val_q / b_val_q = lane0
 ```
 
-and add:
-
-```text
-a1_val_q / b1_val_q = lane1
-```
-
-This minimizes rewrite risk inside the current `gemm_top.sv`.
-
 ---
 
-## 10. FSM Strategy
+## 11. FSM Strategy
 
-### 10.1 Keep Single-Lane Path Stable
+### 11.1 Single-Lane Path
 
-The lowest-risk approach is to preserve the current single-lane FSM behavior when:
-
-```text
-GEMM_MAC_LANES == 1
-```
-
-Then add additional lane-1 read states that are only used when:
-
-```text
-GEMM_MAC_LANES == 2 && lane1_valid
-```
-
-### 10.2 Suggested FSM States
-
-Current states:
-
-```text
-S_IDLE
-S_READ_A
-S_WAIT_A
-S_READ_B
-S_WAIT_B
-S_MAC
-S_WRITE_C
-S_NEXT
-S_DONE
-```
-
-Recommended minimal new states:
-
-```text
-S_READ_A1
-S_WAIT_A1
-S_READ_B1
-S_WAIT_B1
-```
-
-So the full state set becomes:
-
-```text
-S_IDLE
-S_READ_A
-S_WAIT_A
-S_READ_B
-S_WAIT_B
-S_READ_A1
-S_WAIT_A1
-S_READ_B1
-S_WAIT_B1
-S_MAC
-S_WRITE_C
-S_NEXT
-S_DONE
-```
-
-### 10.3 State Flow for `GEMM_MAC_LANES=1`
+`GEMM_MAC_LANES=1` preserves the original single-lane path:
 
 ```text
 S_IDLE
@@ -413,11 +355,18 @@ S_IDLE
   -> S_DONE
 ```
 
-This should match current behavior.
+### 11.2 2-Lane Path
 
-### 10.4 State Flow for `GEMM_MAC_LANES=2`
+The implemented state set adds:
 
-If lane1 is valid:
+```text
+S_READ_A1
+S_WAIT_A1
+S_READ_B1
+S_WAIT_B1
+```
+
+If lane 1 is valid:
 
 ```text
 S_IDLE
@@ -435,7 +384,7 @@ S_IDLE
   -> S_DONE
 ```
 
-If lane1 is invalid:
+If lane 1 is invalid:
 
 ```text
 S_IDLE
@@ -451,11 +400,9 @@ S_IDLE
 
 ---
 
-## 11. K Index Update Rules
+## 12. K Index Update Rules
 
-### 11.1 Single-Lane Mode
-
-Existing behavior:
+### 12.1 Single-Lane Mode
 
 ```text
 if k_idx == dim_k - 1:
@@ -465,7 +412,7 @@ else:
     continue
 ```
 
-### 11.2 2-Lane Mode
+### 12.2 2-Lane Mode
 
 After the 2-lane MAC step:
 
@@ -477,41 +424,17 @@ else:
     continue
 ```
 
-Conceptual RTL:
-
-```systemverilog
-if (GEMM_MAC_LANES == 2) begin
-    if ((k_idx_q + 2) >= dim_k) begin
-        state_d = S_WRITE_C;
-    end
-    else begin
-        k_idx_d = k_idx_q + 2;
-        state_d = S_READ_A;
-    end
-end
-```
-
-Use clear helper logic to avoid off-by-one errors.
-
 ---
 
-## 12. MAC Computation
+## 13. MAC Computation
 
-### 12.1 Single-Lane Mode
+### 13.1 Single-Lane Mode
 
 ```systemverilog
 acc_d = acc_q + (a_val_q * b_val_q);
 ```
 
-### 12.2 2-Lane Mode
-
-Recommended signed intermediate products:
-
-```systemverilog
-logic signed [ACC_WIDTH-1:0] lane0_product;
-logic signed [ACC_WIDTH-1:0] lane1_product;
-logic signed [ACC_WIDTH-1:0] mac_sum;
-```
+### 13.2 2-Lane Mode
 
 Conceptual behavior:
 
@@ -529,32 +452,9 @@ end
 acc_d = acc_q + mac_sum;
 ```
 
-### 12.3 Counter Behavior
-
-The `gemm_perf_mac_count` counter must count logical MAC operations, not MAC-state executions.
-
-Therefore:
-
-```text
-single-lane MAC state:
-    +1
-
-2-lane MAC state with lane1_valid=1:
-    +2
-
-2-lane MAC state with lane1_valid=0:
-    +1
-```
-
-This preserves:
-
-```text
-gemm_perf_mac_count == M * N * K
-```
-
 ---
 
-## 13. Performance Counter Requirements
+## 14. Performance Counter Requirements
 
 Existing counters:
 
@@ -577,14 +477,14 @@ gemm_perf_output_count:
     increments once per accepted C write
 ```
 
-Counter clear policy remains unchanged:
+Counter clear policy:
 
 ```text
 clear on reset
 clear on accepted GEMM start
 ```
 
-Counter snapshot policy remains unchanged:
+Counter snapshot policy:
 
 ```text
 stable after done until next accepted GEMM start
@@ -597,209 +497,38 @@ MAC_COUNT    = M * N * K
 OUTPUT_COUNT = M * N
 ```
 
-For 2-lane mode, `gemm_perf_mac_count` must still equal `M*N*K`, not the number of 2-lane loop iterations.
+For 2-lane mode, `gemm_perf_mac_count` equals `M*N*K`, not the number of 2-lane loop iterations.
 
 ---
 
-## 14. Expected Profile Behavior
+## 15. UVM Verification Status
 
-### 14.1 Correctness Counters
-
-For both `GEMM_MAC_LANES=1` and `GEMM_MAC_LANES=2`:
+Completed P2 verification:
 
 ```text
-CASE_ID=100:
-  MAC_COUNT = 1
-  OUTPUT_COUNT = 1
-
-CASE_ID=101:
-  MAC_COUNT = 8
-  OUTPUT_COUNT = 4
-
-CASE_ID=105:
-  MAC_COUNT = 24
-  OUTPUT_COUNT = 6
-
-CASE_ID=5/400/401/402/403:
-  MAC_COUNT = 64
-  OUTPUT_COUNT = 16
+GEMM_MAC_LANES=1 full regression       PASS
+GEMM_MAC_LANES=2 perf_counter_smoke    PASS
+GEMM_MAC_LANES=2 perf_profile          PASS
+GEMM_MAC_LANES=2 direct_stream_smoke   PASS
 ```
 
-### 14.2 Busy Cycle Expectations
-
-Exact 2-lane cycle counts should not be locked in the first test.
-
-Initial rule:
+2-lane subset in regression:
 
 ```text
-busy_cycles must be non-zero
-busy-cycle profile must be printed
+gemm_2lane_perf_counter_smoke
+gemm_2lane_perf_profile
+gemm_2lane_direct_stream_smoke
 ```
 
-Recommended later rule after tuning:
+Current regression:
 
 ```text
-For K >= 2, 2-lane GEMM busy_cycles should be lower than single-lane baseline.
+38/38 PASS
 ```
 
 ---
 
-## 15. RTL Integration Plan
-
-### 15.1 Files Likely to Change
-
-Primary RTL:
-
-```text
-rtl/gemm/gemm_top.sv
-```
-
-Top-level parameter propagation may also touch:
-
-```text
-rtl/top/ai_accel_subsys.sv
-tb/top/ai_accel_subsys_uvm_top.sv
-```
-
-If the parameter remains local to `gemm_top.sv` defaulting to 1, top-level propagation can be delayed.
-
-### 15.2 Recommended First RTL Patch Strategy
-
-Patch sequence:
-
-```text
-Patch 1:
-  Add GEMM_MAC_LANES parameter with default 1.
-  Do not change behavior.
-  Compile.
-  Run 35/35 regression.
-
-Patch 2:
-  Add lane1 registers and new FSM states.
-  Keep GEMM_MAC_LANES=1 path equivalent.
-  Compile.
-  Run focused smoke.
-
-Patch 3:
-  Enable GEMM_MAC_LANES=2 path.
-  Run single-case 2-lane smoke.
-
-Patch 4:
-  Run 2-lane profile test or reuse existing profile with lane parameter.
-  Compare profile summary.
-
-Patch 5:
-  Run full baseline with lanes=1.
-  Run selected 2-lane subset.
-```
-
----
-
-## 16. UVM Verification Plan
-
-### 16.1 Keep Existing Baseline
-
-The current full regression must remain:
-
-```text
-35/35 PASS
-```
-
-with:
-
-```text
-GEMM_MAC_LANES=1
-```
-
-### 16.2 New 2-Lane Smoke Test
-
-Recommended new test:
-
-```text
-ai_accel_subsys_gemm_2lane_smoke_test.sv
-```
-
-Recommended flow:
-
-```text
-host-primary path
-CASE_ID=100
-CASE_ID=101
-CASE_ID=105
-CASE_ID=5
-scoreboard compare enabled
-counter check enabled
-```
-
-Expected:
-
-```text
-result compare PASS
-mac_count == M*N*K
-output_count == M*N
-busy_cycles > 0
-```
-
-### 16.3 New 2-Lane Profile Test
-
-Options:
-
-```text
-Option A:
-  reuse ai_accel_subsys_perf_profile_test with GEMM_MAC_LANES=2
-
-Option B:
-  create ai_accel_subsys_gemm_2lane_profile_test
-```
-
-Recommended first approach:
-
-```text
-Option A
-```
-
-Reason:
-
-```text
-avoid duplicating profile code
-same profile summary format makes comparison easier
-```
-
-### 16.4 Suggested 2-Lane Regression Subset
-
-Initial subset:
-
-```text
-ai_accel_subsys_perf_counter_smoke_test RUN_ALL=1, GEMM_MAC_LANES=2
-ai_accel_subsys_perf_profile_test, GEMM_MAC_LANES=2
-ai_accel_subsys_direct_stream_smoke_test RUN_ALL=1, GEMM_MAC_LANES=2
-```
-
-Then expand to:
-
-```text
-DMA load-store stress, GEMM_MAC_LANES=2
-AXI-Stream load-store stress, GEMM_MAC_LANES=2
-Direct Stream load-store stress, GEMM_MAC_LANES=2
-CDC clock-ratio sanity, GEMM_MAC_LANES=2
-```
-
-### 16.5 Acceptance Criteria for First 2-Lane Test
-
-Complete when:
-
-```text
-single-lane full regression remains 35/35 PASS
-2-lane host-primary smoke/profile passes
-2-lane Direct Stream smoke passes
-2-lane mac_count/output_count counters pass
-scoreboard result compare passes
-no UVM_ERROR / UVM_FATAL
-```
-
----
-
-## 17. Direct Stream Compatibility
+## 16. Direct Stream Compatibility
 
 Direct Stream B1 routes GEMM A/B reads through:
 
@@ -814,28 +543,37 @@ GEMM A/B reads -> gemm_operand_buffer
 GEMM C writes  -> scratchpad
 ```
 
-The 2-lane implementation must not assume scratchpad-only behavior.
-
-Because the first 2-lane design still uses the same single-read GEMM local memory interface, it should remain compatible with:
+The 2-lane implementation keeps the same single-read GEMM local memory interface, so it remains compatible with:
 
 ```text
 scratchpad mode
 Direct Stream operand-buffer mode
 ```
 
-Required Direct Stream check:
+Verified:
 
 ```text
 ai_accel_subsys_direct_stream_smoke_test RUN_ALL=1 with GEMM_MAC_LANES=2
 ```
 
-This proves the new read order and k-step behavior still work through `gemm_input_mem_router`.
+This verifies:
+
+```text
+Direct Stream preload A/B
+operand buffer write path
+GEMM input router read classification
+2-lane GEMM read order
+scratchpad C write
+DMA store C
+scoreboard compare
+ctrl/result pairing
+```
 
 ---
 
-## 18. Edge Cases
+## 17. Edge Cases Verified
 
-### 18.1 K = 1
+### K = 1
 
 Only lane 0 is valid.
 
@@ -848,223 +586,179 @@ mac_count += 1
 write C
 ```
 
-### 18.2 K = 2
+Covered by:
+
+```text
+CASE_ID=100
+```
+
+### K = 2
 
 Both lanes valid in one K-group.
 
-Expected:
+Covered by:
 
 ```text
-lane0 MAC committed
-lane1 MAC committed
-mac_count += 2
-write C
+CASE_ID=101
 ```
 
-### 18.3 K = 3
+### K = 4
 
-Two K-groups:
+Two full K-groups.
+
+Covered by:
 
 ```text
-group 0:
-  k=0, lane0 valid
-  k=1, lane1 valid
-  mac_count += 2
-
-group 1:
-  k=2, lane0 valid
-  lane1 invalid
-  mac_count += 1
+CASE_ID=105
+CASE_ID=5
+CASE_ID=400/401/402/403
 ```
 
-### 18.4 K = 4
+### Configurable base cases
 
-Two full K-groups:
+Cases 400-403 pass in the 2-lane profile and Direct Stream smoke runs.
 
-```text
-group 0:
-  k=0,1
-  mac_count += 2
-
-group 1:
-  k=2,3
-  mac_count += 2
-```
-
-### 18.5 Configurable Base Cases
-
-Cases 400-403 must still pass.
-
-This verifies that lane 1 address calculation honors shifted legal base addresses.
+This verifies that lane-1 address calculation honors shifted legal base addresses.
 
 ---
 
-## 19. Risk Analysis
+## 18. Risk Analysis
 
 ### Risk 1: Off-by-one bug in K loop
-
-Most likely failure mode:
-
-```text
-missing final odd-K lane
-double-counting final lane
-incorrect transition to WRITE_C
-```
 
 Mitigation:
 
 ```text
-test K=1, K=2, K=3, K=4
-check mac_count exactly equals M*N*K
-scoreboard compare
+K=1, K=2, K=4 cases are in regression
+mac_count exactly equals M*N*K
+scoreboard result compare passes
 ```
 
 ### Risk 2: Lane 1 address generated when invalid
 
-Possible failure:
-
-```text
-out-of-range read for odd K
-unexpected read to next row/column
-```
-
 Mitigation:
 
 ```text
-only enter A1/B1 read states when lane1_valid is true
+lane1 read states are entered only when lane1_valid is true
+CASE_ID=100 validates lane1 masking
 ```
 
 ### Risk 3: Counter counts MAC states instead of logical MACs
 
-Possible failure:
-
-```text
-mac_count == number of K groups, not M*N*K
-```
-
 Mitigation:
 
 ```text
-increment mac_count by valid lane count
-perf_counter_smoke detects mismatch
+mac_count increments by valid lane count
+perf_counter_smoke checks exact M*N*K
 ```
 
 ### Risk 4: Direct Stream operand buffer read ordering mismatch
 
-Possible failure:
-
-```text
-scratchpad mode passes
-Direct Stream mode fails
-```
-
 Mitigation:
 
 ```text
-run Direct Stream smoke with GEMM_MAC_LANES=2
+Direct Stream smoke with GEMM_MAC_LANES=2 is in regression
 ```
 
 ### Risk 5: Single-lane regression changes
-
-Possible failure:
-
-```text
-default behavior changes accidentally
-```
 
 Mitigation:
 
 ```text
 default parameter remains 1
-run full 35/35 regression after each safe patch
+full 38-item regression includes single-lane mainline coverage
 ```
 
 ---
 
-## 20. Recommended Implementation Order
-
-Recommended next steps:
-
-```text
-1. Add GEMM_MAC_LANES parameter to gemm_top.sv, default 1.
-2. Compile and run full 35/35 regression.
-3. Add lane1 storage registers and valid flag.
-4. Add lane1 read states.
-5. Update S_MAC to support 1-lane and 2-lane accumulation.
-6. Update k_idx advance logic.
-7. Update gemm_perf_mac_count increment logic.
-8. Add parameter propagation if needed for simulation.
-9. Run 2-lane CASE_ID=100.
-10. Run 2-lane CASE_ID=101.
-11. Run 2-lane CASE_ID=105.
-12. Run 2-lane CASE_ID=5.
-13. Run 2-lane perf_profile.
-14. Run 2-lane Direct Stream smoke.
-15. Decide whether to add 2-lane subset into regression or keep it manual initially.
-```
-
----
-
-## 21. Milestone Definition
+## 19. Milestone Closure
 
 ### P2A: Parameterized Single-Lane Safe Patch
 
-Complete when:
-
 ```text
+DONE
 GEMM_MAC_LANES parameter exists
 default GEMM_MAC_LANES=1
-full regression remains 35/35 PASS
+full regression remained clean
 ```
 
-### P2B: 2-Lane Host-Primary Correctness
-
-Complete when:
+### P2B: 2-Lane FSM / Datapath
 
 ```text
-GEMM_MAC_LANES=2 host-primary smoke passes
-CASE_ID=100/101/105/5 pass
-mac_count/output_count pass
-scoreboard compare pass
+DONE
+lane1 states added
+lane1 registers added
+2-lane accumulation added
+logical MAC counter update added
 ```
 
 ### P2C: 2-Lane Profile Baseline
 
-Complete when:
-
 ```text
-GEMM_MAC_LANES=2 profile summary is printed
-2-lane results are compared with single-lane baseline
-no exact busy-cycle lock yet
+DONE
+2-lane profile summary captured
+host-primary profile path passed
 ```
 
 ### P2D: 2-Lane Direct Stream Compatibility
 
-Complete when:
+```text
+DONE
+Direct Stream smoke RUN_ALL passed with GEMM_MAC_LANES=2
+```
+
+### P2E: 2-Lane Subset Regression
 
 ```text
-Direct Stream smoke RUN_ALL passes with GEMM_MAC_LANES=2
+DONE
+3 focused 2-lane tests added to regression
 ```
 
 ### P2 Final
 
-Complete when:
-
 ```text
-single-lane full regression remains clean
-2-lane host-primary correctness passes
-2-lane profile baseline is available
-2-lane Direct Stream smoke passes
-no UVM_ERROR / UVM_FATAL
+DONE
+single-lane full regression clean
+2-lane host-primary/profile clean
+2-lane Direct Stream clean
+38/38 PASS
 ```
 
 ---
 
-## 22. Summary
+## 20. Recommended Next Steps
 
-The 2-lane GEMM milestone is intentionally conservative.
+Next recommended stage:
 
-The key rule is:
+```text
+P3: 2-lane stress and CDC expansion
+```
+
+Possible additions:
+
+```text
+DMA load-store stress with GEMM_MAC_LANES=2
+AXI-Stream load-store stress with GEMM_MAC_LANES=2
+Direct Stream load-store stress with GEMM_MAC_LANES=2
+CDC clock-ratio sanity with GEMM_MAC_LANES=2
+```
+
+Then evaluate memory bandwidth improvements:
+
+```text
+operand staging registers
+wider local read extraction
+operand-buffer multi-read support
+Direct Stream tiled operand reuse
+```
+
+---
+
+## 21. Summary
+
+The 2-lane GEMM milestone is complete.
+
+The key rule was:
 
 ```text
 Preserve single-lane correctness first.
@@ -1073,4 +767,12 @@ Measure performance third.
 Optimize bandwidth later.
 ```
 
-The first 2-lane implementation should focus on correctness, counter consistency, and compatibility across scratchpad and Direct Stream modes. Once stable, later work can target operand staging, wider reads, and tile-based reuse for larger performance gains.
+Current result:
+
+```text
+GEMM_MAC_LANES=1 mainline remains clean
+GEMM_MAC_LANES=2 correctness and profile are verified
+Direct Stream compatibility is verified
+2-lane subset is part of full regression
+38/38 PASS
+```

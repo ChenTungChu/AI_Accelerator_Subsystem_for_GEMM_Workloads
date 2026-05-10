@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 33
-#   PASS  : 33
+#   TOTAL : 38
+#   PASS  : 38
 #   FAIL  : 0
 #
 # Major coverage:
@@ -23,6 +23,11 @@
 #   - Direct Stream GEMM frontend error/recovery
 #   - Direct Stream load-store stress
 #   - Direct Stream CDC clock-ratio sanity
+#   - GEMM performance counter smoke
+#   - GEMM performance profile
+#   - 2-lane GEMM performance counter smoke
+#   - 2-lane GEMM performance profile
+#   - 2-lane Direct Stream compatibility smoke
 #   - back-to-back jobs
 #   - reset recovery
 #   - corner recipe
@@ -310,6 +315,61 @@ ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_
 # ------------------------------------------------------------
 ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
 
+
+
+# ------------------------------------------------------------
+# Performance GEMM counter smoke test
+#
+# Coverage:
+#   - passive GEMM performance counters
+#   - mac_count == M*N*K
+#   - output_count == M*N
+#   - busy_cycles > 0
+#   - RUN_ALL profile cases:
+#       100 -> 101 -> 105 -> 5
+# ------------------------------------------------------------
+ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# Performance GEMM profile test
+#
+# Coverage:
+#   - single-lane GEMM profile baseline
+#   - 8-case profile summary
+#   - host-primary path
+#   - scoreboard result compare and ctrl/result pairing
+#
+# RUN_ALL/profile recipe:
+#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# ------------------------------------------------------------
+ai_accel_subsys_perf_profile_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# 2-lane GEMM subset regression
+#
+# Note:
+#   GEMM_MAC_LANES is a simulator/run-script parameter, not a DUT plusarg.
+#   The run flow maps GEMM_MAC_LANES=2 to the top-level parameter override.
+#
+# Coverage:
+#   - optional GEMM_MAC_LANES=2 datapath
+#   - K=1 lane1 mask behavior
+#   - K>=2 lane1 active behavior
+#   - logical MAC/output counter correctness
+#   - host-primary performance profile
+#   - Direct Stream operand-buffer compatibility
+# ------------------------------------------------------------
+
+# 2-lane counter smoke
+ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 2-lane profile
+ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 2-lane Direct Stream compatibility smoke
+ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 
 # ------------------------------------------------------------
 # Back-to-back test (primary host path)
