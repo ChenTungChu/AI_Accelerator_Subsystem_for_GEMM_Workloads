@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 25
-#   PASS  : 25
+#   TOTAL : 33
+#   PASS  : 33
 #   FAIL  : 0
 #
 # Major coverage:
@@ -15,8 +15,17 @@
 #   - DMA store / S2MM smoke
 #   - DMA store / S2MM error/recovery
 #   - DMA load + GEMM + DMA store stress
+#   - AXI-Stream preload smoke
+#   - AXI-Stream preload error/recovery
+#   - AXI-Stream load-store stress
+#   - AXI-Stream CDC clock-ratio sanity
+#   - Direct Stream GEMM frontend smoke
+#   - Direct Stream GEMM frontend error/recovery
+#   - Direct Stream load-store stress
+#   - Direct Stream CDC clock-ratio sanity
 #   - back-to-back jobs
 #   - reset recovery
+#   - corner recipe
 #   - mid-run reset / abort recovery
 #   - helper fallback sanity
 # ============================================================
@@ -156,6 +165,150 @@ ai_accel_subsys_dma_store_error_test +ENABLE_RESULT_CHECK=0
 #   STORE_STRESS_JOB_COUNT=20
 # ------------------------------------------------------------
 ai_accel_subsys_dma_load_store_stress_test +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10
+
+
+# ------------------------------------------------------------
+# AXI-Stream preload smoke test
+#
+# Coverage:
+#   AXI source memory
+#     -> axis_src_axi_ar/r responder
+#     -> axi_mm2s_dma
+#     -> axis_async_fifo
+#     -> axi_stream_loader
+#     -> axis_scratchpad_write_adapter
+#     -> scratchpad_port1_owner_mux
+#     -> BRAM Port1
+#     -> GEMM
+#     -> DMA store C
+#     -> destination memory compare / scoreboard
+#
+# RUN_ALL recipe:
+#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# ------------------------------------------------------------
+ai_accel_subsys_axis_stream_preload_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# AXI-Stream preload error / recovery test
+#
+# Coverage:
+#   - zero axis_load_beats
+#   - unaligned AXI-Stream source address
+#   - unaligned scratchpad destination address
+#   - AXI-Stream source RRESP error injection
+#   - valid AXI-Stream preload recovery after errors
+#   - valid GEMM + DMA store recovery after errors
+# ------------------------------------------------------------
+ai_accel_subsys_axis_stream_preload_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# AXI-Stream load-store stress test
+#
+# Coverage:
+#   - repeated full AXI-Stream frontend path:
+#       AXI-Stream preload A/B
+#         -> GEMM
+#         -> DMA store C
+#         -> destination memory compare
+#         -> scoreboard result pairing
+#   - random case selection
+#   - repeated Port1 owner switching:
+#       HOST/GEMM -> AXIS_PRELOAD -> GEMM -> DMA_STORE
+#   - stale destination memory prevention
+#
+# Full-regression version:
+#   8 jobs
+#
+# Manual/nightly version already verified:
+#   AXIS_STRESS_JOB_COUNT=20
+# ------------------------------------------------------------
+ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10
+
+
+# ------------------------------------------------------------
+# AXI-Stream load-store CDC clock-ratio sanity
+#
+# Coverage:
+#   - same AXI-Stream load-store stress flow
+#   - non-default dma_clk/core_clk ratio
+#   - validates MM2S -> axis_async_fifo -> stream loader CDC
+# ------------------------------------------------------------
+ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+
+# ------------------------------------------------------------
+# Direct Stream GEMM frontend smoke test
+#
+# Coverage:
+#   Direct Stream source memory
+#     -> ds_src_axi_ar/r responder
+#     -> axi_mm2s_dma
+#     -> axis_async_fifo
+#     -> axi_stream_loader
+#     -> gemm_operand_buffer_write_adapter
+#     -> gemm_operand_buffer A/B
+#     -> gemm_input_mem_router
+#     -> GEMM reads A/B from operand buffer
+#     -> scratchpad C
+#     -> DMA store C
+#     -> destination memory compare / scoreboard
+#
+# RUN_ALL recipe:
+#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# ------------------------------------------------------------
+ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# Direct Stream GEMM frontend error / recovery test
+#
+# Coverage:
+#   - zero ds_load_beats
+#   - unaligned Direct Stream source address
+#   - unaligned Direct Stream destination/base address
+#   - invalid ds_operand_sel X-state check
+#   - Direct Stream source RRESP error injection
+#   - valid Direct Stream preload recovery after errors
+#   - valid GEMM + DMA store recovery after errors
+# ------------------------------------------------------------
+ai_accel_subsys_direct_stream_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
+
+
+# ------------------------------------------------------------
+# Direct Stream load-store stress test
+#
+# Coverage:
+#   - repeated full Direct Stream frontend path:
+#       Direct Stream preload A/B
+#         -> GEMM reads A/B from operand buffer
+#         -> DMA store C
+#         -> destination memory compare
+#         -> scoreboard result pairing
+#   - random case selection
+#   - repeated operand buffer clear/load/read flow
+#   - stale destination memory prevention
+#
+# Full-regression version:
+#   8 jobs
+#
+# Manual/nightly target:
+#   DS_STRESS_JOB_COUNT=20
+# ------------------------------------------------------------
+ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10
+
+
+# ------------------------------------------------------------
+# Direct Stream load-store CDC clock-ratio sanity
+#
+# Coverage:
+#   - same Direct Stream load-store stress flow
+#   - non-default dma_clk/core_clk ratio
+#   - validates MM2S -> axis_async_fifo -> stream loader
+#     -> operand buffer write path CDC behavior
+# ------------------------------------------------------------
+ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
 
 
 # ------------------------------------------------------------

@@ -411,6 +411,16 @@ run_reg_item "direct_stream_load_store_stress_cdc_10_13" {
 }
 
 # ============================================================
+# Performance counter smoke test
+# ============================================================
+run_reg_item "perf_counter_smoke" {
+    set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 1
+}
+
+# ============================================================
 # Helper fallback sanity
 # ============================================================
 

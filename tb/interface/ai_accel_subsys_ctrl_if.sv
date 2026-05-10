@@ -101,6 +101,17 @@ interface ai_accel_subsys_ctrl_if #(
     logic acc_done;
 
     // ------------------------------------------------------------
+    // GEMM performance counters
+    //
+    // Core-clock-domain snapshots from gemm_top.
+    // Counters clear on accepted GEMM start and remain stable
+    // after GEMM done until the next accepted start.
+    // ------------------------------------------------------------
+    logic [31:0] gemm_perf_busy_cycles;
+    logic [31:0] gemm_perf_mac_count;
+    logic [31:0] gemm_perf_output_count;
+
+    // ------------------------------------------------------------
     // Runtime configuration
     // ------------------------------------------------------------
     logic [ADDR_WIDTH-1:0] base_addr_a;
@@ -420,6 +431,10 @@ interface ai_accel_subsys_ctrl_if #(
 
         input  acc_busy;
         input  acc_done;
+
+        input  gemm_perf_busy_cycles;
+        input  gemm_perf_mac_count;
+        input  gemm_perf_output_count;
     endclocking
 
     // ------------------------------------------------------------
@@ -476,6 +491,10 @@ interface ai_accel_subsys_ctrl_if #(
         input acc_start;
         input acc_busy;
         input acc_done;
+
+        input gemm_perf_busy_cycles;
+        input gemm_perf_mac_count;
+        input gemm_perf_output_count;
 
         input base_addr_a;
         input base_addr_b;

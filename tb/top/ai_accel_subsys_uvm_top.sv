@@ -78,6 +78,13 @@ module ai_accel_subsys_uvm_top;
     logic acc_done;
 
     // ============================================================
+    // GEMM performance counter wires
+    // ============================================================
+    logic [31:0] gemm_perf_busy_cycles;
+    logic [31:0] gemm_perf_mac_count;
+    logic [31:0] gemm_perf_output_count;
+
+    // ============================================================
     // DMA load status wires
     // ============================================================
     logic dma_load_busy;
@@ -1063,7 +1070,12 @@ module ai_accel_subsys_uvm_top;
 
         .dim_m                  (ctrl_if.dim_m),
         .dim_n                  (ctrl_if.dim_n),
-        .dim_k                  (ctrl_if.dim_k)
+        .dim_k                  (ctrl_if.dim_k),
+
+        // GEMM performance counters
+        .gemm_perf_busy_cycles  (gemm_perf_busy_cycles),
+        .gemm_perf_mac_count    (gemm_perf_mac_count),
+        .gemm_perf_output_count (gemm_perf_output_count)        
     );
 
     // ============================================================
@@ -1074,6 +1086,10 @@ module ai_accel_subsys_uvm_top;
 
     assign ctrl_if.acc_busy   = acc_busy;
     assign ctrl_if.acc_done   = acc_done;
+
+    assign ctrl_if.gemm_perf_busy_cycles  = gemm_perf_busy_cycles;
+    assign ctrl_if.gemm_perf_mac_count    = gemm_perf_mac_count;
+    assign ctrl_if.gemm_perf_output_count = gemm_perf_output_count;
 
     assign ctrl_if.dma_load_busy  = dma_load_busy;
     assign ctrl_if.dma_load_done  = dma_load_done;

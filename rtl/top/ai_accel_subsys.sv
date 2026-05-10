@@ -219,7 +219,18 @@ module ai_accel_subsys #(
 
     input  logic [GEMM_DIM_WIDTH-1:0] dim_m,
     input  logic [GEMM_DIM_WIDTH-1:0] dim_n,
-    input  logic [GEMM_DIM_WIDTH-1:0] dim_k
+    input  logic [GEMM_DIM_WIDTH-1:0] dim_k,
+
+    // ------------------------------------------------------------
+    // GEMM performance counters
+    //
+    // Core-clock-domain snapshots.
+    // Values are cleared on accepted GEMM start and remain stable
+    // after GEMM done until the next accepted start.
+    // ------------------------------------------------------------
+    output logic [31:0]               gemm_perf_busy_cycles,
+    output logic [31:0]               gemm_perf_mac_count,
+    output logic [31:0]               gemm_perf_output_count
 );
 
     // ============================================================
@@ -1477,7 +1488,11 @@ module ai_accel_subsys #(
         .mem_wr_en     (gemm_mem_wr_en),
         .mem_wr_addr   (gemm_mem_wr_addr),
         .mem_wr_data   (gemm_mem_wr_data),
-        .mem_wr_strb   (gemm_mem_wr_strb)
+        .mem_wr_strb   (gemm_mem_wr_strb),
+
+        .gemm_perf_busy_cycles  (gemm_perf_busy_cycles),
+        .gemm_perf_mac_count    (gemm_perf_mac_count),
+        .gemm_perf_output_count (gemm_perf_output_count)
     );
 
     // ============================================================

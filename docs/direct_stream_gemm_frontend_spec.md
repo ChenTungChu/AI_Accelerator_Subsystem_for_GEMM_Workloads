@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-This document defines the next architecture milestone after the completed AXI-Stream preload baseline.
+This document defines the implemented **Direct Stream GEMM Frontend B1** architecture for the AI Accelerator Subsystem.
 
-The current completed AXI-Stream Option A path is:
+The previous completed AXI-Stream Option A path is:
 
 ```text
 AXI-MM source memory
@@ -19,29 +19,31 @@ AXI-MM source memory
     -> destination memory compare / scoreboard
 ```
 
-Current full regression baseline before this milestone:
-
-```text
-TOTAL : 29
-PASS  : 29
-FAIL  : 0
-```
-
-This document defines the next path:
+The completed Direct Stream B1 path is:
 
 ```text
 AXI-MM source memory
     -> AXI MM2S DMA
     -> AXI-Stream CDC boundary
-    -> direct-stream operand frontend
-    -> operand buffer A/B
+    -> direct_stream_preload_engine
+    -> gemm_operand_buffer_write_adapter
+    -> gemm_operand_buffer A/B
+    -> gemm_input_mem_router
     -> existing GEMM compute
     -> scratchpad C
     -> DMA store / S2MM
     -> destination memory compare / scoreboard
 ```
 
-The goal is to move A/B input feeding away from scratchpad preload and toward a direct stream-backed GEMM input frontend, while preserving the existing GEMM compute behavior and the existing C output path.
+The goal of B1 is to move A/B input feeding away from scratchpad preload and toward a stream-backed local operand-buffer frontend, while preserving the existing GEMM compute behavior and the existing C output path.
+
+Current full regression baseline after Direct Stream B1 completion:
+
+```text
+TOTAL : 33
+PASS  : 33
+FAIL  : 0
+```
 
 ---
 
@@ -71,7 +73,7 @@ This path proves:
 
 ### 2.2 Option B: Direct Stream GEMM Frontend
 
-New milestone.
+Implemented as B1.
 
 ```text
 AXI Stream
@@ -90,8 +92,6 @@ GEMM C writes
 
 ### 2.3 B1: Stream-Backed Operand Buffer
 
-This spec selects **B1** as the first direct-stream architecture.
-
 B1 means:
 
 ```text
@@ -106,12 +106,12 @@ This is not yet a fully cycle-by-cycle streaming systolic frontend. It is the sa
 
 ## 3. Design Goals
 
-The direct-stream frontend must:
+The Direct Stream B1 frontend must:
 
-1. Preserve the existing 29/29 baseline.
+1. Preserve the existing scratchpad, DMA, and AXI-Stream baseline.
 2. Keep the existing GEMM compute core mostly unchanged.
 3. Avoid using scratchpad for A/B in direct-stream mode.
-4. Continue using scratchpad for C output in V1.
+4. Continue using scratchpad for C output in B1.
 5. Reuse the proven MM2S and AXI-Stream CDC infrastructure.
 6. Reuse the existing DMA store / S2MM result path.
 7. Support fixed, variable-dimension, and configurable-base cases.
@@ -119,12 +119,15 @@ The direct-stream frontend must:
 9. Support error/recovery tests.
 10. Support stress and CDC clock-ratio sanity tests.
 11. Allow direct-stream mode and scratchpad mode to coexist.
+12. Preserve AXI-Stream Option A scratchpad preload behavior.
+
+Current status: all goals above are implemented and covered by regression.
 
 ---
 
-## 4. Non-Goals for V1
+## 4. Non-Goals for B1
 
-The first direct-stream version does **not** attempt to:
+B1 does **not** attempt to:
 
 - stream operands directly into MAC lanes every cycle
 - tile a large matrix across many stream packets
@@ -140,7 +143,7 @@ Those are future milestones.
 
 ---
 
-## 5. Selected Architecture
+## 5. Implemented Architecture
 
 ### 5.1 High-Level Architecture
 
@@ -184,6 +187,7 @@ Those are future milestones.
 │           ▼                                                    │
 │  gemm_input_mem_router                                         │
 │     - A/B reads from operand buffer in direct-stream mode       │
+│     - transparent scratchpad bypass in scratchpad mode          │
 │     - C writes to existing scratchpad adapter                  │
 │                                                                │
 │  existing GEMM compute                                         │
@@ -229,13 +233,15 @@ GEMM A/B reads -> operand buffer
 GEMM C writes  -> scratchpad
 ```
 
+The router is intentionally transparent in scratchpad mode. This preserves the existing host, DMA load/store, and AXI-Stream scratchpad-preload regression baseline.
+
 ---
 
 ## 6. Mode Model
 
-### 6.1 New GEMM Input Mode
+### 6.1 GEMM Input Mode
 
-Recommended mode signal:
+Implemented mode signal:
 
 ```systemverilog
 logic gemm_input_stream_mode;
@@ -253,17 +259,17 @@ Mode behavior:
 This is the existing baseline behavior.
 
 ```text
-DMA load or host preload A/B into scratchpad
+DMA load, AXI-Stream preload, or host preload A/B into scratchpad
 GEMM reads A/B from scratchpad
 GEMM writes C to scratchpad
-DMA store exports C
+Host readback or DMA store exports C
 ```
 
-This mode must preserve all existing 29 regression items.
+This mode preserves the existing baseline and remains covered by full regression.
 
 ### 6.3 Direct-Stream Mode
 
-New behavior:
+New B1 behavior:
 
 ```text
 direct stream preload A into operand buffer
@@ -275,21 +281,21 @@ DMA store exports C
 
 ### 6.4 Mode Coexistence Rule
 
-The mode is selected per job.
+The mode is selected per GEMM job.
 
 The testbench/software must not change `gemm_input_stream_mode` while:
 
 ```text
-direct_stream_load_busy == 1
+ds_load_busy == 1
 acc_busy == 1
 dma_store_busy == 1
 ```
 
-Recommended enforcement:
+Implemented policy:
 
-- testbench follows this sequencing
-- RTL may latch mode at GEMM start
-- assertions can flag illegal changes during active operations
+- testbench follows correct sequencing
+- RTL captures `gemm_input_stream_mode` with the GEMM job configuration
+- scratchpad mode and direct-stream mode can coexist across different jobs
 
 ---
 
@@ -298,15 +304,18 @@ Recommended enforcement:
 ### 7.1 Direct-Stream A/B Preload Sequence
 
 ```text
-1. Configure direct-stream mode.
-2. Preload A stream into operand buffer A.
-3. Preload B stream into operand buffer B.
-4. Start GEMM.
-5. GEMM reads A/B from operand buffer.
-6. GEMM writes C into scratchpad.
-7. DMA store C to destination memory.
-8. Compare destination memory.
-9. Publish scoreboard result.
+1. Clear scratchpad C.
+2. Clear destination memory.
+3. Preload source memory with A/B payloads.
+4. Direct-stream preload A into operand buffer A.
+5. Direct-stream preload B into operand buffer B.
+6. Set gemm_input_stream_mode = 1.
+7. Start GEMM.
+8. GEMM reads A/B from operand buffer.
+9. GEMM writes C into scratchpad.
+10. DMA store C to destination memory.
+11. Compare destination memory.
+12. Publish scoreboard result.
 ```
 
 ### 7.2 A Preload
@@ -337,6 +346,7 @@ After both direct-stream operand loads complete:
 gemm_input_stream_mode = 1
 acc_start
 wait acc_done
+gemm_input_stream_mode = 0, for cleanup / next non-stream job
 dma_store_start
 wait dma_store_done
 compare destination memory
@@ -347,9 +357,9 @@ publish scoreboard result
 
 ## 8. Packet Format
 
-### 8.1 V1 Packet Format
+### 8.1 B1 Packet Format
 
-V1 keeps the same headerless AXI-Stream packet model as Option A:
+B1 keeps the same headerless AXI-Stream packet model as Option A:
 
 ```text
 beat 0      : payload data
@@ -371,9 +381,11 @@ ds_load_beats
 ds_operand_sel
 base_addr_a
 base_addr_b
+base_addr_c
 dim_m
 dim_n
 dim_k
+gemm_input_stream_mode
 ```
 
 ### 8.3 Future Header Option
@@ -396,28 +408,28 @@ This is not required for B1.
 
 ### 9.1 Goal
 
-The operand buffer should allow GEMM to keep using its existing address-generation behavior.
+The operand buffer allows GEMM to keep using its existing address-generation behavior.
 
-Therefore, operand-buffer reads should be selected by address range.
+Operand-buffer reads are selected by address range.
 
 ### 9.2 Address Matching
 
 In direct-stream mode, the memory router checks GEMM read addresses.
 
-Recommended rule:
+Implemented rule:
 
 ```text
-if mem_rd_addr is within A region:
+if mem_rd_addr starts within A region:
     serve from operand_buffer A
 
-else if mem_rd_addr is within B region:
+else if mem_rd_addr starts within B region:
     serve from operand_buffer B
 
 else:
-    route read to scratchpad adapter
+    return synthetic zero read and flag router error
 ```
 
-For V1, only A/B reads are expected during compute.
+In scratchpad mode, all GEMM reads and writes pass transparently to `gemm_scratchpad_adapter`.
 
 ### 9.3 Region Definitions
 
@@ -442,7 +454,21 @@ B_region_bytes = ceil(B_bytes / BYTES_PER_BEAT) * BYTES_PER_BEAT
 
 The rounded region size accounts for final-beat padding.
 
-### 9.4 Local Offset Calculation
+### 9.4 Start-Address Decode Policy
+
+The router uses the read **start address** for A/B region classification, not the full 32-bit read window.
+
+Reason:
+
+```text
+GEMM operand reads are byte-addressed int8 element reads.
+The 32-bit read data is only the local-memory container.
+The active operand is selected by the requested byte address.
+```
+
+This is required for cases where a valid int8 element is near the end of an operand region, such as A offset 7 in an 8-byte A matrix.
+
+### 9.5 Local Offset Calculation
 
 For A:
 
@@ -464,7 +490,7 @@ The operand buffer uses local offsets internally.
 
 ### 10.1 Transfer Unit
 
-V1 remains beat-count based:
+B1 remains beat-count based:
 
 ```text
 ds_load_beats = ceil(matrix_bytes / BYTES_PER_BEAT)
@@ -486,17 +512,17 @@ BYTES_PER_BEAT = 8
 
 A and B matrix payloads remain compact row-major int8 arrays.
 
-If a matrix payload does not fill the final beat, unused bytes must be padded with zero or ignored by GEMM.
+If a matrix payload does not fill the final beat, unused bytes are stored as part of the padded operand region but ignored by GEMM.
 
-The operand buffer may store the full final beat. GEMM uses only the configured M/N/K footprint.
+GEMM uses only the configured M/N/K footprint.
 
 ### 10.3 WSTRB Policy
 
-The existing `axi_stream_loader` currently emits full write strobes.
+The existing `axi_stream_loader` emits full write strobes.
 
-For V1 this is acceptable because:
+For B1 this is acceptable because:
 
-- A and B operand buffers are logically separate regions
+- A and B operand buffers are logically separate
 - padded bytes are outside the active matrix footprint
 - GEMM only reads valid configured matrix addresses
 
@@ -508,11 +534,11 @@ Add byte_count and final-beat WSTRB support.
 
 ---
 
-## 11. Proposed New RTL Blocks
+## 11. Implemented RTL Blocks
 
 ### 11.1 direct_stream_preload_engine
 
-Recommended file:
+File:
 
 ```text
 rtl/subsystem/direct_stream_preload_engine.sv
@@ -551,11 +577,11 @@ debug status
 
 Implementation note:
 
-This can be derived from the existing `axis_preload_engine`, but the scratchpad write adapter is replaced with an operand-buffer write adapter.
+This block is derived from the existing `axis_preload_engine` architecture, but the scratchpad write adapter is replaced with an operand-buffer write adapter.
 
 ### 11.2 gemm_operand_buffer
 
-Recommended file:
+File:
 
 ```text
 rtl/subsystem/gemm_operand_buffer.sv
@@ -567,8 +593,6 @@ Role:
 stores streamed A/B operands
 serves GEMM A/B reads in direct-stream mode
 ```
-
-Recommended interfaces:
 
 Write side, core_clk domain:
 
@@ -600,15 +624,17 @@ a_loaded
 b_loaded
 a_written_beats
 b_written_beats
-write_error
-read_error
+read_count
+write_error_pulse
+read_error_pulse
+error
 ```
 
-V1 implementation can be simple register-array or inferred RAM.
+B1 uses a local byte-addressed buffer model for A and B.
 
 ### 11.3 gemm_operand_buffer_write_adapter
 
-Recommended file:
+File:
 
 ```text
 rtl/subsystem/gemm_operand_buffer_write_adapter.sv
@@ -646,16 +672,17 @@ buf_wr_last
 
 Behavior:
 
-- converts stream-loader linear writes into operand-buffer writes
-- checks address alignment
-- tracks accepted/completed writes
+- converts stream-loader logical writes into operand-buffer local writes
+- computes `buf_wr_addr = wr_addr - operand_base_addr`
+- checks address alignment and underflow
+- tracks accepted/forwarded/dropped writes
 - reports sticky error
 
-This should be much simpler than the scratchpad write adapter because there is no AXI B response.
+This is much simpler than the scratchpad write adapter because there is no AXI B response.
 
 ### 11.4 gemm_input_mem_router
 
-Recommended file:
+File:
 
 ```text
 rtl/subsystem/gemm_input_mem_router.sv
@@ -667,20 +694,6 @@ Role:
 routes GEMM local memory requests to:
     operand buffer for A/B reads in direct-stream mode
     scratchpad adapter for C writes and scratchpad-mode A/B reads
-```
-
-Input from GEMM:
-
-```systemverilog
-gemm_mem_req_ready
-gemm_mem_rd_en
-gemm_mem_rd_addr
-gemm_mem_rd_data
-gemm_mem_rd_valid
-gemm_mem_wr_en
-gemm_mem_wr_addr
-gemm_mem_wr_data
-gemm_mem_wr_strb
 ```
 
 Backend 0:
@@ -698,7 +711,7 @@ existing gemm_scratchpad_adapter local memory interface
 Behavior in scratchpad mode:
 
 ```text
-all GEMM reads and writes route to gemm_scratchpad_adapter
+all GEMM reads and writes route transparently to gemm_scratchpad_adapter
 ```
 
 Behavior in direct-stream mode:
@@ -706,14 +719,12 @@ Behavior in direct-stream mode:
 ```text
 A/B reads route to operand buffer
 C writes route to gemm_scratchpad_adapter
-unexpected non-A/B reads may route to scratchpad or flag an error
+unexpected non-A/B reads return zero and flag router error
 ```
 
-### 11.5 direct_stream_frontend_status
+### 11.5 Direct Stream Status
 
-This may be implemented as discrete status outputs rather than a separate module.
-
-Recommended status signals:
+Implemented status signals include:
 
 ```systemverilog
 ds_load_busy
@@ -721,33 +732,28 @@ ds_load_done
 ds_load_error
 ds_a_loaded
 ds_b_loaded
-ds_router_error
+gemm_router_error
 ds_operand_buffer_error
+ds_loader_accepted_beats
+ds_loader_written_beats
+ds_adapter_accepted_writes
+ds_adapter_forwarded_writes
+ds_adapter_dropped_writes
 ```
+
+Some debug/status signals are internal to `ai_accel_subsys.sv` and are not exposed through `ctrl_if` unless required by tests.
 
 ---
 
 ## 12. Top-Level Integration
 
-### 12.1 New Source AXI Port
+### 12.1 Direct Stream Source AXI Port
 
-The direct-stream preload path needs a source AXI-MM read interface.
-
-Recommended naming:
+The direct-stream preload path uses a dedicated source AXI-MM read interface:
 
 ```text
 ds_src_axi_ar*
 ds_src_axi_r*
-```
-
-Alternative:
-
-The existing `axis_src_axi_ar/r` responder may be reused if direct-stream mode replaces the current AXI-Stream preload path in the testbench.
-
-Recommendation for clarity:
-
-```text
-Use a new ds_src_axi_ar/r port for direct stream.
 ```
 
 Reason:
@@ -757,9 +763,9 @@ Reason:
 - avoids sharing one source responder between two frontend modes
 - allows independent RRESP error injection
 
-### 12.2 New Control Fields
+### 12.2 Control Fields
 
-Add to `ai_accel_subsys_ctrl_if`:
+Added to `ai_accel_subsys_ctrl_if`:
 
 ```systemverilog
 logic                  gemm_input_stream_mode;
@@ -775,47 +781,39 @@ logic                  ds_load_done;
 logic                  ds_load_error;
 ```
 
-Optional debug:
+Added Direct Stream source RRESP injection control:
 
 ```systemverilog
-logic                  ds_a_loaded;
-logic                  ds_b_loaded;
-logic                  ds_router_error;
-logic                  ds_operand_buffer_error;
-logic [31:0]           ds_loader_accepted_beats;
-logic [31:0]           ds_loader_written_beats;
+logic      ds_src_inject_rresp_error;
+int signed ds_src_inject_rresp_error_beat;
+
+task automatic ds_src_set_rresp_error(
+    input bit        enable,
+    input int signed beat_index
+);
 ```
 
 ### 12.3 GEMM Start Gating
 
-GEMM start should be accepted only when:
+Implemented minimum gating:
 
 ```text
-ds_load_busy == 0
-axis_load_busy == 0
-dma_load_busy == 0
-dma_store_busy == 0
+acc_start accepted only when:
+    axis_load_busy == 0
+    ds_load_busy   == 0
 ```
 
-In direct-stream mode, GEMM start should also require:
+Testbench sequencing guarantees that direct-stream A/B preloads complete before GEMM start.
+
+Future enhancement:
 
 ```text
-ds_a_loaded == 1
-ds_b_loaded == 1
+Add explicit RTL start rejection/error if direct-stream mode starts before A/B loaded.
 ```
-
-Recommended behavior:
-
-```text
-If acc_start occurs while direct-stream operands are not loaded:
-    reject start or flag an error
-```
-
-For V1, the testbench should sequence correctly. RTL should at least prevent illegal overlap.
 
 ### 12.4 GEMM Adapter Integration
 
-Existing path:
+Old path:
 
 ```text
 gemm_top
@@ -849,23 +847,26 @@ The existing AXI-Stream preload Option A path still uses `scratchpad_port1_owner
 
 ### 13.1 Direct Stream Load Errors
 
-`ds_load_error` should assert for:
+`ds_load_error` is covered for:
 
 - zero `ds_load_beats`
 - unaligned source address
 - unaligned destination/logical operand address
 - AXI source `RRESP` error
+- invalid `ds_operand_sel` X-state check
+
+Expected future coverage candidates:
+
 - unexpected `RID`
 - missing or invalid `RLAST`
 - early `TLAST`
 - missing `TLAST`
 - operand buffer write overflow
-- invalid `ds_operand_sel`
 - start while busy
 
 ### 13.2 Operand Buffer Read Errors
 
-Router or operand buffer should flag error for:
+Router or operand buffer can flag error for:
 
 - GEMM read from A before A is loaded
 - GEMM read from B before B is loaded
@@ -873,23 +874,26 @@ Router or operand buffer should flag error for:
 - GEMM read beyond allocated operand buffer depth
 - illegal mode change during GEMM active
 
+Current direct-stream tests use legal GEMM sequencing and do not intentionally trigger read-side operand-buffer errors yet.
+
 ### 13.3 Recovery Policy
 
-After an error:
+After a direct-stream preload error:
 
 ```text
-ds_load_error = 1 for done pulse or sticky status
+ds_load_error = 1 on completion
 system returns to idle
 next valid direct-stream load can proceed
-valid direct-stream A/B preload + GEMM + DMA store should recover
+valid direct-stream A/B preload + GEMM + DMA store recovers
 ```
 
-Recommended recovery test:
+Implemented recovery test sequence:
 
 ```text
 zero beats error
 unaligned source error
 unaligned destination error
+invalid operand select error
 source RRESP error
 valid direct-stream A/B preload
 GEMM
@@ -900,11 +904,11 @@ scoreboard pass
 
 ---
 
-## 14. Verification Plan
+## 14. Verification Plan and Implemented Tests
 
 ### 14.1 Subsystem Smoke Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_direct_stream_smoke_test
@@ -913,50 +917,57 @@ ai_accel_subsys_direct_stream_smoke_test
 Flow:
 
 ```text
-1. set gemm_input_stream_mode = 1
-2. clear scratchpad C
-3. clear destination memory
-4. preload source memory with A payload
-5. direct-stream preload A into operand buffer
-6. preload source memory with B payload
-7. direct-stream preload B into operand buffer
-8. start GEMM
-9. wait acc_done
-10. DMA store C to destination memory
-11. compare destination memory
-12. publish result to scoreboard
+1. clear scratchpad C
+2. clear destination memory
+3. preload source memory with A/B payloads
+4. direct-stream preload A into operand buffer
+5. direct-stream preload B into operand buffer
+6. set gemm_input_stream_mode = 1
+7. start GEMM
+8. wait acc_done
+9. DMA store C to destination memory
+10. compare destination memory
+11. publish result to scoreboard
 ```
 
-Recommended first runs:
+Passing coverage:
 
 ```text
 CASE_ID=100
 CASE_ID=101
-RUN_ALL=1: 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+CASE_ID=105
+CASE_ID=5
+CASE_ID=400
+CASE_ID=401
+CASE_ID=402
+CASE_ID=403
 ```
 
 ### 14.2 Subsystem Error Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_direct_stream_error_test
 ```
 
-Coverage:
+Covered:
 
 - zero `ds_load_beats`
 - unaligned source address
 - unaligned logical destination address
 - source AXI RRESP error
-- invalid operand select
-- GEMM start before A/B loaded
+- invalid operand select X-state
 - valid direct-stream recovery after errors
 - valid GEMM + DMA store recovery after errors
 
+Future error coverage candidate:
+
+- GEMM start before A/B loaded
+
 ### 14.3 Subsystem Stress Test
 
-Recommended new test:
+Implemented test:
 
 ```text
 ai_accel_subsys_direct_stream_load_store_stress_test
@@ -973,7 +984,7 @@ destination memory compare
 scoreboard publish
 ```
 
-Recommended knobs:
+Implemented knobs:
 
 ```text
 DS_STRESS_JOB_COUNT
@@ -982,13 +993,13 @@ DS_STRESS_RANDOM
 DS_STRESS_GAP_CYCLES
 ```
 
-Recommended full-regression version:
+Full-regression version:
 
 ```text
 8 jobs
 ```
 
-Recommended manual/nightly version:
+Manual/nightly target:
 
 ```text
 20 jobs
@@ -996,7 +1007,7 @@ Recommended manual/nightly version:
 
 ### 14.4 CDC Sanity
 
-Recommended clock-ratio sanity:
+Implemented clock-ratio sanity:
 
 ```text
 DMA_CLK_PERIOD_NS  = 10
@@ -1009,13 +1020,14 @@ Coverage:
 - stream data crosses async FIFO
 - operand buffer write side runs in core_clk
 - direct-stream load done/error returns to dma_clk
-- GEMM starts only after A/B are loaded
+- GEMM starts only after A/B are loaded by test sequencing
+- DMA store path remains valid after direct-stream GEMM completion
 
 ---
 
-## 15. Regression Plan
+## 15. Regression Plan and Completion Status
 
-Current baseline before Direct Stream GEMM Frontend:
+Baseline before Direct Stream GEMM Frontend:
 
 ```text
 TOTAL : 29
@@ -1023,43 +1035,49 @@ PASS  : 29
 FAIL  : 0
 ```
 
-Recommended staged additions:
+Completed staged additions:
 
 ### Stage B1-A: Direct-stream smoke
 
 ```text
 +1 item
-Expected full regression: 30 / 30 PASS
+Full regression: 30 / 30 PASS
 ```
 
 ### Stage B1-B: Direct-stream error/recovery
 
 ```text
 +1 item
-Expected full regression: 31 / 31 PASS
+Full regression: 31 / 31 PASS
 ```
 
 ### Stage B1-C: Direct-stream load-store stress
 
 ```text
 +1 item
-Expected full regression: 32 / 32 PASS
+Full regression: 32 / 32 PASS
 ```
 
 ### Stage B1-D: Direct-stream CDC clock-ratio sanity
 
 ```text
 +1 item
-Expected full regression: 33 / 33 PASS
+Full regression: 33 / 33 PASS
 ```
 
-Each stage must preserve the existing 29 baseline tests.
+Current final B1 regression baseline:
+
+```text
+TOTAL : 33
+PASS  : 33
+FAIL  : 0
+```
 
 ---
 
 ## 16. Acceptance Criteria
 
-The Direct Stream GEMM Frontend B1 milestone is complete when:
+The Direct Stream GEMM Frontend B1 milestone is complete because:
 
 1. Existing 29/29 regression remains passing.
 2. Direct-stream A/B preload does not write A/B into scratchpad.
@@ -1079,42 +1097,95 @@ The Direct Stream GEMM Frontend B1 milestone is complete when:
 
 ---
 
-## 17. Recommended Implementation Sequence
+## 17. Implementation Sequence Completed
 
-Recommended RTL implementation order:
-
-```text
-1. Add gemm_operand_buffer.sv.
-2. Add gemm_operand_buffer_write_adapter.sv.
-3. Add direct_stream_preload_engine.sv.
-4. Add gemm_input_mem_router.sv.
-5. Integrate gemm_input_mem_router into ai_accel_subsys.sv.
-6. Integrate direct_stream_preload_engine into ai_accel_subsys.sv.
-7. Extend ai_accel_subsys_ctrl_if.sv with direct-stream control/status.
-8. Extend ai_accel_subsys_uvm_top.sv with ds_src_axi responder.
-9. Add ai_accel_subsys_direct_stream_smoke_test.sv.
-10. Add ai_accel_subsys_direct_stream_error_test.sv.
-11. Add ai_accel_subsys_direct_stream_load_store_stress_test.sv.
-12. Add direct-stream CDC clock-ratio regression item.
-```
-
-Recommended first RTL target after this spec:
+Completed RTL and UVM integration sequence:
 
 ```text
-gemm_operand_buffer.sv
+1. Added gemm_operand_buffer.sv.
+2. Added gemm_operand_buffer_write_adapter.sv.
+3. Added direct_stream_preload_engine.sv.
+4. Added gemm_input_mem_router.sv.
+5. Integrated gemm_input_mem_router into ai_accel_subsys.sv.
+6. Integrated direct_stream_preload_engine into ai_accel_subsys.sv.
+7. Extended ai_accel_subsys_ctrl_if.sv with direct-stream control/status.
+8. Extended ai_accel_subsys_uvm_top.sv with ds_src_axi responder.
+9. Added ai_accel_subsys_direct_stream_smoke_test.sv.
+10. Added ai_accel_subsys_direct_stream_error_test.sv.
+11. Added ai_accel_subsys_direct_stream_load_store_stress_test.sv.
+12. Added direct-stream CDC clock-ratio regression item.
 ```
 
-Reason:
+Current milestone:
 
-- it is local to the core clock domain
-- it does not touch the top-level integration yet
-- it can compile independently
-- it defines the direct-stream data storage contract
-- the later router and preload engine will connect to it
+```text
+v3.4.3 Direct Stream GEMM Frontend B1 Completed
+Regression: 33/33 PASS
+```
 
 ---
 
-## 18. Future Option B2: True Streaming GEMM Compute
+## 18. Useful Single-Test Runs
+
+### Direct Stream smoke RUN_ALL
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+set ENABLE_RESULT_CHECK 1
+set RUN_ALL 1
+do run_uvm.tcl
+```
+
+### Direct Stream error recovery
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_error_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+do run_uvm.tcl
+```
+
+### Direct Stream load-store stress, full-regression version
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+### Direct Stream load-store stress, longer manual/nightly version
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 20
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+do run_uvm.tcl
+```
+
+### Direct Stream load-store CDC sanity
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 13
+do run_uvm.tcl
+```
+
+---
+
+## 19. Future Option B2: True Streaming GEMM Compute
 
 After B1 is stable, a more aggressive direct streaming model can be considered.
 
@@ -1140,4 +1211,4 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a passing regression baseline.
+B2 should not begin until B1 has a stable passing regression baseline. B1 now satisfies that requirement with `33/33 PASS`.

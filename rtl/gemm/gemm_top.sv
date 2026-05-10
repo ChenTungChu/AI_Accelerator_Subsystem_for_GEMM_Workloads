@@ -46,7 +46,24 @@ module gemm_top #(
     output logic                     mem_wr_en,
     output logic [ADDR_WIDTH-1:0]    mem_wr_addr,
     output logic [31:0]              mem_wr_data,
-    output logic [3:0]               mem_wr_strb
+    output logic [3:0]               mem_wr_strb,
+
+    // -------------------------------------------------------------------------
+    // Performance counters
+    //
+    // Passive debug/status only. These counters must not feed back into
+    // control decisions.
+    //
+    // Counter clear policy:
+    //   - reset
+    //   - accepted start in S_IDLE
+    //
+    // Snapshot policy:
+    //   - values remain stable after done until next accepted start
+    // -------------------------------------------------------------------------
+    output logic [31:0]              gemm_perf_busy_cycles,
+    output logic [31:0]              gemm_perf_mac_count,
+    output logic [31:0]              gemm_perf_output_count
 );
 
     // -------------------------------------------------------------------------
@@ -92,6 +109,20 @@ module gemm_top #(
     logic [ADDR_WIDTH-1:0]          mem_wr_addr_d;
     logic [31:0]                    mem_wr_data_d;
     logic [3:0]                     mem_wr_strb_d;
+
+    // -------------------------------------------------------------------------
+    // Performance counter helper events
+    // -------------------------------------------------------------------------
+    logic                           start_accept;
+    logic                           mac_commit;
+    logic                           output_commit;
+
+    assign start_accept = (state_q == S_IDLE) && start;
+    assign mac_commit   = (state_q == S_MAC);
+
+    // One C output is committed when WRITE_C request is accepted.
+    assign output_commit =
+        (state_q == S_WRITE_C) && mem_req_ready;
 
     // -------------------------------------------------------------------------
     // Address helper signals
@@ -283,6 +314,10 @@ module gemm_top #(
             mem_wr_addr  <= '0;
             mem_wr_data  <= '0;
             mem_wr_strb  <= '0;
+
+            gemm_perf_busy_cycles <= '0;
+            gemm_perf_mac_count   <= '0;
+            gemm_perf_output_count<= '0;
         end
         else begin
             state_q      <= state_d;
@@ -305,6 +340,31 @@ module gemm_top #(
             mem_wr_addr  <= mem_wr_addr_d;
             mem_wr_data  <= mem_wr_data_d;
             mem_wr_strb  <= mem_wr_strb_d;
+
+            // -------------------------------------------------------------
+            // Passive performance counters
+            //
+            // Clear when a new job is accepted. This gives each job its own
+            // snapshot. After done, values remain stable until the next job.
+            // -------------------------------------------------------------
+            if (start_accept) begin
+                gemm_perf_busy_cycles  <= '0;
+                gemm_perf_mac_count    <= '0;
+                gemm_perf_output_count <= '0;
+            end
+            else begin
+                if (busy) begin
+                    gemm_perf_busy_cycles <= gemm_perf_busy_cycles + 32'd1;
+                end
+
+                if (mac_commit) begin
+                    gemm_perf_mac_count <= gemm_perf_mac_count + 32'd1;
+                end
+
+                if (output_commit) begin
+                    gemm_perf_output_count <= gemm_perf_output_count + 32'd1;
+                end
+            end
         end
     end
 
