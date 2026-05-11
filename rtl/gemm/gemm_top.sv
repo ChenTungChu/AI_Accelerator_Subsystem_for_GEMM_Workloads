@@ -10,7 +10,9 @@ module gemm_top #(
     parameter int DIM_WIDTH    = 8,     // M/N/K register width
     parameter int GEMM_MAC_LANES = 1,   // GEMM MAC lane count
 
-    parameter bit GEMM_ENABLE_B_CACHE = 1'b0
+    parameter bit GEMM_ENABLE_B_CACHE = 1'b0,
+    parameter int GEMM_B_CACHE_MAX_K  = 4,
+    parameter int GEMM_B_CACHE_MAX_N  = 4
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -108,14 +110,30 @@ module gemm_top #(
                 GEMM_MAC_LANES
             );
         end
+
+        if (GEMM_B_CACHE_MAX_K <= 0) begin
+            $fatal(1,
+                "Unsupported GEMM_B_CACHE_MAX_K=%0d. Must be > 0.",
+                GEMM_B_CACHE_MAX_K
+            );
+        end
+
+        if (GEMM_B_CACHE_MAX_N <= 0) begin
+            $fatal(1,
+                "Unsupported GEMM_B_CACHE_MAX_N=%0d. Must be > 0.",
+                GEMM_B_CACHE_MAX_N
+            );
+        end
     end
 `endif
 
 `ifndef SYNTHESIS
     initial begin
-        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d",
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d",
                  GEMM_MAC_LANES,
-                 GEMM_ENABLE_B_CACHE);
+                 GEMM_ENABLE_B_CACHE,
+                 GEMM_B_CACHE_MAX_K,
+                 GEMM_B_CACHE_MAX_N);
     end
 `endif
 
@@ -149,6 +167,52 @@ module gemm_top #(
     logic [ADDR_WIDTH-1:0]          mem_wr_addr_d;
     logic [31:0]                    mem_wr_data_d;
     logic [3:0]                     mem_wr_strb_d;
+
+    // -------------------------------------------------------------------------
+    // P4 B-cache storage / helper state
+    //
+    // P4C-1 only adds storage and preload index registers.
+    // These signals are not used to alter the FSM yet.
+    //
+    // Later patches will use:
+    //   - b_cache_active_job_q
+    //   - bcache_k_q / bcache_n_q
+    //   - b_cache_q[k][n]
+    //
+    // Current behavior remains identical when GEMM_ENABLE_B_CACHE=0.
+    // -------------------------------------------------------------------------
+    logic signed [B_DATA_WIDTH-1:0] b_cache_q [0:GEMM_B_CACHE_MAX_K-1][0:GEMM_B_CACHE_MAX_N-1];
+    logic signed [B_DATA_WIDTH-1:0] b_cache_d [0:GEMM_B_CACHE_MAX_K-1][0:GEMM_B_CACHE_MAX_N-1];
+
+    logic [DIM_WIDTH-1:0]           bcache_k_q, bcache_k_d;
+    logic [DIM_WIDTH-1:0]           bcache_n_q, bcache_n_d;
+
+    logic                           b_cache_active_job_q;
+    logic                           b_cache_active_job_d;
+
+    // -------------------------------------------------------------------------
+    // P4 B-cache helper signals
+    //
+    // b_cache_dim_supported:
+    //   Current first B-cache prototype only supports bounded K/N.
+    //
+    // b_cache_active_calc:
+    //   Combinational eligibility based on current configuration.
+    //
+    // b_cache_active_job_q:
+    //   Latched at accepted start in P4C-1, but not used to control FSM yet.
+    // -------------------------------------------------------------------------
+    logic b_cache_dim_supported;
+    logic b_cache_active_calc;
+
+    always_comb begin
+        b_cache_dim_supported =
+            (int'(dim_k) <= GEMM_B_CACHE_MAX_K) &&
+            (int'(dim_n) <= GEMM_B_CACHE_MAX_N);
+
+        b_cache_active_calc =
+            GEMM_ENABLE_B_CACHE && b_cache_dim_supported;
+    end
 
     // -------------------------------------------------------------------------
     // K helper signals
@@ -275,6 +339,16 @@ module gemm_top #(
         mem_wr_data_d = mem_wr_data;
         mem_wr_strb_d = 4'b0000;
 
+        bcache_k_d            = bcache_k_q;
+        bcache_n_d            = bcache_n_q;
+        b_cache_active_job_d  = b_cache_active_job_q;
+
+        for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin
+            for (int bn = 0; bn < GEMM_B_CACHE_MAX_N; bn++) begin
+                b_cache_d[bk][bn] = b_cache_q[bk][bn];
+            end
+        end        
+
         case (state_q)
 
             // IDLE
@@ -291,6 +365,10 @@ module gemm_top #(
                     a1_val_d      = '0;
                     b1_val_d      = '0;
                     lane1_valid_d = 1'b0;
+
+                    bcache_k_d           = '0;
+                    bcache_n_d           = '0;
+                    b_cache_active_job_d = b_cache_active_calc;                    
 
                     acc_d         = '0;
                     busy_d        = 1'b1;
@@ -503,6 +581,16 @@ module gemm_top #(
             mem_wr_data  <= '0;
             mem_wr_strb  <= '0;
 
+            bcache_k_q           <= '0;
+            bcache_n_q           <= '0;
+            b_cache_active_job_q <= 1'b0;
+
+            for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin
+                for (int bn = 0; bn < GEMM_B_CACHE_MAX_N; bn++) begin
+                    b_cache_q[bk][bn] <= '0;
+                end
+            end            
+
             gemm_perf_busy_cycles  <= '0;
             gemm_perf_mac_count    <= '0;
             gemm_perf_output_count <= '0;
@@ -532,6 +620,16 @@ module gemm_top #(
             mem_wr_addr  <= mem_wr_addr_d;
             mem_wr_data  <= mem_wr_data_d;
             mem_wr_strb  <= mem_wr_strb_d;
+
+            bcache_k_q           <= bcache_k_d;
+            bcache_n_q           <= bcache_n_d;
+            b_cache_active_job_q <= b_cache_active_job_d;
+
+            for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin
+                for (int bn = 0; bn < GEMM_B_CACHE_MAX_N; bn++) begin
+                    b_cache_q[bk][bn] <= b_cache_d[bk][bn];
+                end
+            end            
 
             // -------------------------------------------------------------
             // Passive performance counters
