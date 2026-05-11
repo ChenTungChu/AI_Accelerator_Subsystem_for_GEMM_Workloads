@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 38
-#   PASS  : 38
+#   TOTAL : 44
+#   PASS  : 44
 #   FAIL  : 0
 #
 # Major coverage:
@@ -28,6 +28,12 @@
 #   - 2-lane GEMM performance counter smoke
 #   - 2-lane GEMM performance profile
 #   - 2-lane Direct Stream compatibility smoke
+#   - 2-lane DMA load-store stress
+#   - 2-lane AXI-Stream load-store stress
+#   - 2-lane Direct Stream load-store stress
+#   - 2-lane DMA load-store CDC sanity
+#   - 2-lane AXI-Stream load-store CDC sanity
+#   - 2-lane Direct Stream load-store CDC sanity
 #   - back-to-back jobs
 #   - reset recovery
 #   - corner recipe
@@ -370,6 +376,43 @@ ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CH
 
 # 2-lane Direct Stream compatibility smoke
 ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+
+# ------------------------------------------------------------
+# 2-lane GEMM P3 stress / CDC hardening regression
+#
+# Note:
+#   These items validate GEMM_MAC_LANES=2 across the three major
+#   load/store paths:
+#
+#     1. DMA load A/B -> GEMM -> DMA store C
+#     2. AXI-Stream preload A/B -> GEMM -> DMA store C
+#     3. Direct Stream preload A/B -> GEMM -> DMA store C
+#
+#   Each path is covered in:
+#     - default clock ratio: dma_clk=10ns, core_clk=14ns
+#     - CDC sanity ratio   : dma_clk=10ns, core_clk=13ns
+# ------------------------------------------------------------
+
+# 2-lane DMA load-store stress, default clock ratio
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 2-lane AXI-Stream load-store stress, default clock ratio
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 2-lane Direct Stream load-store stress, default clock ratio
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 2-lane DMA load-store CDC sanity, 10ns/13ns
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+# 2-lane AXI-Stream load-store CDC sanity, 10ns/13ns
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+# 2-lane Direct Stream load-store CDC sanity, 10ns/13ns
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
 
 # ------------------------------------------------------------
 # Back-to-back test (primary host path)

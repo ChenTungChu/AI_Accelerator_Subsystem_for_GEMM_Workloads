@@ -10,10 +10,11 @@ Current status:
 P0: passive GEMM performance counters completed
 P1: performance profile test completed
 P2: 2-lane K-parallel MAC prototype completed
+P3: 2-lane stress / CDC hardening completed
 
 Full regression:
-  TOTAL : 38
-  PASS  : 38
+  TOTAL : 44
+  PASS  : 44
   FAIL  : 0
 ```
 
@@ -503,13 +504,19 @@ For 2-lane mode, `gemm_perf_mac_count` equals `M*N*K`, not the number of 2-lane 
 
 ## 15. UVM Verification Status
 
-Completed P2 verification:
+Completed P2/P3 verification:
 
 ```text
-GEMM_MAC_LANES=1 full regression       PASS
-GEMM_MAC_LANES=2 perf_counter_smoke    PASS
-GEMM_MAC_LANES=2 perf_profile          PASS
-GEMM_MAC_LANES=2 direct_stream_smoke   PASS
+GEMM_MAC_LANES=1 full regression                       PASS
+GEMM_MAC_LANES=2 perf_counter_smoke                    PASS
+GEMM_MAC_LANES=2 perf_profile                          PASS
+GEMM_MAC_LANES=2 direct_stream_smoke                   PASS
+GEMM_MAC_LANES=2 DMA load-store stress                 PASS
+GEMM_MAC_LANES=2 AXI-Stream load-store stress          PASS
+GEMM_MAC_LANES=2 Direct Stream load-store stress       PASS
+GEMM_MAC_LANES=2 DMA load-store CDC sanity             PASS
+GEMM_MAC_LANES=2 AXI-Stream load-store CDC sanity      PASS
+GEMM_MAC_LANES=2 Direct Stream load-store CDC sanity   PASS
 ```
 
 2-lane subset in regression:
@@ -518,12 +525,18 @@ GEMM_MAC_LANES=2 direct_stream_smoke   PASS
 gemm_2lane_perf_counter_smoke
 gemm_2lane_perf_profile
 gemm_2lane_direct_stream_smoke
+gemm_2lane_dma_load_store_stress
+gemm_2lane_axis_stream_load_store_stress
+gemm_2lane_direct_stream_load_store_stress
+gemm_2lane_dma_load_store_cdc
+gemm_2lane_axis_stream_load_store_cdc
+gemm_2lane_direct_stream_load_store_cdc
 ```
 
 Current regression:
 
 ```text
-38/38 PASS
+44/44 PASS
 ```
 
 ---
@@ -567,6 +580,48 @@ scratchpad C write
 DMA store C
 scoreboard compare
 ctrl/result pairing
+```
+
+---
+
+## 16A. P3 Stress / CDC Verification
+
+P3 extends the original 2-lane smoke/profile coverage into repeated load-store stress and non-default clock-ratio sanity.
+
+Verified stress paths:
+
+```text
+DMA load A/B -> GEMM 2-lane -> DMA store C
+AXI-Stream preload A/B -> GEMM 2-lane -> DMA store C
+Direct Stream preload A/B -> GEMM 2-lane -> DMA store C
+```
+
+Verified clock ratios:
+
+```text
+default stress ratio : dma_clk=10ns, core_clk=14ns
+CDC sanity ratio     : dma_clk=10ns, core_clk=13ns
+```
+
+Regression items added in P3:
+
+```text
+gemm_2lane_dma_load_store_stress
+gemm_2lane_axis_stream_load_store_stress
+gemm_2lane_direct_stream_load_store_stress
+gemm_2lane_dma_load_store_cdc
+gemm_2lane_axis_stream_load_store_cdc
+gemm_2lane_direct_stream_load_store_cdc
+```
+
+All P3 items complete with:
+
+```text
+result compare PASS
+control/result pairing PASS
+UVM_WARNING=0
+UVM_ERROR=0
+UVM_FATAL=0
 ```
 
 ---
@@ -666,7 +721,7 @@ Mitigation:
 
 ```text
 default parameter remains 1
-full 38-item regression includes single-lane mainline coverage
+full 44-item regression includes single-lane mainline coverage
 ```
 
 ---
@@ -721,29 +776,64 @@ DONE
 single-lane full regression clean
 2-lane host-primary/profile clean
 2-lane Direct Stream clean
-38/38 PASS
+44/44 PASS
+```
+
+### P3A: 2-Lane DMA Load-Store Stress
+
+```text
+DONE
+8-job random stress passed
+dma_clk=10ns, core_clk=14ns
+```
+
+### P3B: 2-Lane AXI-Stream Load-Store Stress
+
+```text
+DONE
+8-job random stress passed
+dma_clk=10ns, core_clk=14ns
+```
+
+### P3C: 2-Lane Direct Stream Load-Store Stress
+
+```text
+DONE
+8-job random stress passed
+dma_clk=10ns, core_clk=14ns
+```
+
+### P3D: 2-Lane CDC Sanity
+
+```text
+DONE
+DMA load-store CDC passed
+AXI-Stream load-store CDC passed
+Direct Stream load-store CDC passed
+dma_clk=10ns, core_clk=13ns
+```
+
+### P3E: 2-Lane Stress / CDC Regression
+
+```text
+DONE
+6 focused P3 tests added to regression
+44/44 PASS
 ```
 
 ---
 
 ## 20. Recommended Next Steps
 
-Next recommended stage:
+P3 is complete. The next recommended stage is:
 
 ```text
-P3: 2-lane stress and CDC expansion
+P4: operand reuse / memory-bandwidth optimization
 ```
 
-Possible additions:
+The first 2-lane implementation still uses sequential local operand reads. Further performance gains should come from reducing memory-read overhead and increasing operand reuse.
 
-```text
-DMA load-store stress with GEMM_MAC_LANES=2
-AXI-Stream load-store stress with GEMM_MAC_LANES=2
-Direct Stream load-store stress with GEMM_MAC_LANES=2
-CDC clock-ratio sanity with GEMM_MAC_LANES=2
-```
-
-Then evaluate memory bandwidth improvements:
+Evaluate memory bandwidth improvements:
 
 ```text
 operand staging registers
@@ -772,7 +862,8 @@ Current result:
 ```text
 GEMM_MAC_LANES=1 mainline remains clean
 GEMM_MAC_LANES=2 correctness and profile are verified
-Direct Stream compatibility is verified
-2-lane subset is part of full regression
-38/38 PASS
+DMA / AXI-Stream / Direct Stream stress are verified
+DMA / AXI-Stream / Direct Stream CDC sanity is verified
+2-lane stress / CDC subset is part of full regression
+44/44 PASS
 ```

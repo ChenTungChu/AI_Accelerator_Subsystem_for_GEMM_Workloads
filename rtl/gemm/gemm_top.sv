@@ -8,18 +8,9 @@ module gemm_top #(
     parameter int B_DATA_WIDTH = 8,
     parameter int ACC_WIDTH    = 32,    // accumulation / C width
     parameter int DIM_WIDTH    = 8,     // M/N/K register width
+    parameter int GEMM_MAC_LANES = 1,   // GEMM MAC lane count
 
-    // ------------------------------------------------------------
-    // GEMM MAC lane count
-    //
-    // Supported:
-    //   1 = original single-MAC baseline
-    //   2 = 2-lane K-parallel MAC prototype
-    //
-    // Default remains 1 to preserve the existing regression
-    // baseline unless explicitly overridden.
-    // ------------------------------------------------------------
-    parameter int GEMM_MAC_LANES = 1
+    parameter bit GEMM_ENABLE_B_CACHE = 1'b0
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -117,6 +108,14 @@ module gemm_top #(
                 GEMM_MAC_LANES
             );
         end
+    end
+`endif
+
+`ifndef SYNTHESIS
+    initial begin
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d",
+                 GEMM_MAC_LANES,
+                 GEMM_ENABLE_B_CACHE);
     end
 `endif
 

@@ -16,7 +16,9 @@ module ai_accel_subsys #(
     parameter int APPLY_BEAT_IDX_W  = 8,
     parameter int COMMIT_BEAT_IDX_W = 8,
 
-    parameter int GEMM_MAC_LANES    = 1
+    parameter int GEMM_MAC_LANES    = 1,
+
+    parameter bit GEMM_ENABLE_B_CACHE = 1'b0
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -1464,7 +1466,8 @@ module ai_accel_subsys #(
         .B_DATA_WIDTH (GEMM_B_WIDTH),
         .ACC_WIDTH    (GEMM_ACC_WIDTH),
         .DIM_WIDTH    (GEMM_DIM_WIDTH),
-        .GEMM_MAC_LANES (GEMM_MAC_LANES)
+        .GEMM_MAC_LANES (GEMM_MAC_LANES),
+        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),

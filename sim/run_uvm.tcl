@@ -481,6 +481,26 @@ if {$UVM_TEST eq "ai_accel_subsys_direct_stream_load_store_stress_test"} {
     lappend EXTRA_ARGS +DS_STRESS_GAP_CYCLES=$DS_STRESS_GAP_CYCLES
 }
 
+# --------------------------------------------------
+# GEMM B-cache parameter
+#
+# Default:
+#   GEMM_ENABLE_B_CACHE=0 keeps the current P3 baseline.
+#
+# Manual B-cache run:
+#   set GEMM_ENABLE_B_CACHE 1
+#   do run_uvm.tcl
+# --------------------------------------------------
+if {![info exists GEMM_ENABLE_B_CACHE]} {
+    set GEMM_ENABLE_B_CACHE 0
+}
+
+if {($GEMM_ENABLE_B_CACHE != 0) && ($GEMM_ENABLE_B_CACHE != 1)} {
+    error "Unsupported GEMM_ENABLE_B_CACHE='$GEMM_ENABLE_B_CACHE'. Supported values: 0, 1"
+}
+
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE"
+
 
 # --------------------------------------------------
 # Extra plusargs
@@ -546,7 +566,7 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 }
 
 # Add lane count to every log name so 1-lane and 2-lane runs are easy to distinguish.
-set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}.log"] $LOG_BASENAME]
+set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}_bcache_${GEMM_ENABLE_B_CACHE}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -566,6 +586,7 @@ transcript on
 vsim -L uvm12 \
   -voptargs=+acc \
   -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
+  -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
   work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \

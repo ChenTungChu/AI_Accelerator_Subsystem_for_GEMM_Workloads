@@ -20,11 +20,11 @@ The current focus is subsystem integration, DMA load/store behavior, AXI-Stream 
 Current milestone:
 
 ```text
-Performance GEMM P2: 2-Lane MAC Datapath Prototype Completed
+Performance GEMM P3: 2-Lane Stress / CDC Hardening Completed
 
 Regression:
-  TOTAL : 38
-  PASS  : 38
+  TOTAL : 44
+  PASS  : 44
   FAIL  : 0
 ```
 
@@ -33,6 +33,7 @@ The current baseline includes both:
 ```text
 GEMM_MAC_LANES=1 mainline regression
 GEMM_MAC_LANES=2 focused performance subset regression
+GEMM_MAC_LANES=2 stress / CDC hardening subset regression
 ```
 
 Direct Stream B1 remains supported:
@@ -49,7 +50,9 @@ AXI-MM source memory
     -> scoreboard compare
 ```
 
-Performance GEMM P2 adds a parameterized 2-lane K-parallel MAC path inside `gemm_top` while preserving the original single-lane behavior as the default safe configuration.
+Performance GEMM P2 added a parameterized 2-lane K-parallel MAC path inside `gemm_top` while preserving the original single-lane behavior as the default safe configuration.
+
+Performance GEMM P3 expands the 2-lane coverage from smoke/profile into stress and CDC sanity across the DMA, AXI-Stream, and Direct Stream load-store paths.
 
 ---
 
@@ -426,11 +429,11 @@ Corner recipe        : 5 -> 101 -> 105 -> 403
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 38 items and is passing:
+The current full UVM regression contains 44 items and is passing:
 
 ```text
-TOTAL : 38
-PASS  : 38
+TOTAL : 44
+PASS  : 44
 FAIL  : 0
 ```
 
@@ -457,18 +460,27 @@ Covered categories:
 - GEMM 2-lane performance counter smoke
 - GEMM 2-lane performance profile
 - GEMM 2-lane Direct Stream smoke
+- GEMM 2-lane DMA load-store stress
+- GEMM 2-lane AXI-Stream load-store stress
+- GEMM 2-lane Direct Stream load-store stress
+- GEMM 2-lane DMA load-store CDC sanity
+- GEMM 2-lane AXI-Stream load-store CDC sanity
+- GEMM 2-lane Direct Stream load-store CDC sanity
 - back-to-back
 - reset recovery
 - corner recipe
 - mid-run reset / abort recovery
 - helper fallback sanity
 
-Manual/non-regression stress status:
+P3 2-lane stress / CDC regression status:
 
 ```text
-DMA load-store stress 20-job manual run       : PASS
-AXI-Stream load-store stress 20-job manual run: PASS
-Direct Stream load-store 20-job run           : not yet recorded
+2-lane DMA load-store stress, 10/14            : PASS
+2-lane AXI-Stream load-store stress, 10/14     : PASS
+2-lane Direct Stream load-store stress, 10/14  : PASS
+2-lane DMA load-store CDC, 10/13               : PASS
+2-lane AXI-Stream load-store CDC, 10/13        : PASS
+2-lane Direct Stream load-store CDC, 10/13     : PASS
 ```
 
 ---
@@ -572,6 +584,65 @@ set CORE_CLK_PERIOD_NS 14
 set GEMM_MAC_LANES 2
 do run_uvm.tcl
 ```
+
+### DMA load-store stress, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 8
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
+### AXI-Stream load-store stress, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set AXIS_STRESS_JOB_COUNT 8
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
+### Direct Stream load-store stress, 2-lane
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+do run_uvm.tcl
+```
+
+### DMA / AXI-Stream / Direct Stream CDC sanity, 2-lane
+
+Use the same stress commands above and switch the core clock to 13ns:
+
+```tcl
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 13
+set GEMM_MAC_LANES 2
+```
+
 
 ### DMA load RUN_ALL
 
@@ -698,6 +769,8 @@ At this checkpoint, the subsystem verifies:
 - single-lane performance profile baseline
 - 2-lane K-parallel GEMM datapath correctness
 - 2-lane Direct Stream operand-buffer compatibility
+- 2-lane DMA / AXI-Stream / Direct Stream stress coverage
+- 2-lane DMA / AXI-Stream / Direct Stream CDC sanity
 - unattended full UVM regression flow
 
 ---
@@ -705,7 +778,7 @@ At this checkpoint, the subsystem verifies:
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P2: 2-Lane MAC Datapath Prototype Completed
+Performance GEMM P3: 2-Lane Stress / CDC Hardening Completed
 
 Completed:
   P0: GEMM performance counter smoke             PASS
@@ -715,9 +788,14 @@ Completed:
   P2C: 2-lane host-primary profile baseline      PASS
   P2D: 2-lane Direct Stream compatibility        PASS
   P2E: 2-lane subset regression                  PASS
+  P3A: 2-lane DMA load-store stress              PASS
+  P3B: 2-lane AXI-Stream load-store stress       PASS
+  P3C: 2-lane Direct Stream load-store stress    PASS
+  P3D: 2-lane CDC sanity                         PASS
+  P3E: 2-lane stress / CDC regression subset     PASS
 
 Regression:
-  38/38 PASS
+  44/44 PASS
 ```
 
 ---
@@ -744,7 +822,8 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - configurable clock-ratio regression coverage
 - GEMM performance counter and profile baseline
 - parameterized 1-lane / 2-lane GEMM compute path
-- focused 2-lane regression subset
+- focused 2-lane smoke/profile regression subset
+- 2-lane stress / CDC hardening regression subset
 - full UVM regression automation
 
 This is the current subsystem verification and performance-GEMM baseline.

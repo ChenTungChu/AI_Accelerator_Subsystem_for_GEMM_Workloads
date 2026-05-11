@@ -22,6 +22,8 @@ module ai_accel_subsys_uvm_top;
 
     parameter  int GEMM_MAC_LANES  = 1;
 
+    parameter  bit GEMM_ENABLE_B_CACHE = 1'b0;
+
     localparam int BYTES_PER_BEAT  = DATA_WIDTH / 8;
 
     // DMA / AXIS source memory model.
@@ -942,7 +944,8 @@ module ai_accel_subsys_uvm_top;
         .GEMM_B_WIDTH    (GEMM_B_WIDTH),
         .GEMM_ACC_WIDTH  (GEMM_ACC_WIDTH),
         .GEMM_DIM_WIDTH  (GEMM_DIM_WIDTH),
-        .GEMM_MAC_LANES  (GEMM_MAC_LANES)
+        .GEMM_MAC_LANES  (GEMM_MAC_LANES),
+        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE)
     ) dut (
         .dma_clk              (dma_clk),
         .dma_rst_n            (dma_rst_n),
@@ -1109,6 +1112,16 @@ module ai_accel_subsys_uvm_top;
     assign ctrl_if.ds_load_busy  = ds_load_busy;
     assign ctrl_if.ds_load_done  = ds_load_done;
     assign ctrl_if.ds_load_error = ds_load_error;
+
+
+    // ============================================================
+    // GEMM config display
+    // ============================================================
+    initial begin
+        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d",
+                GEMM_MAC_LANES,
+                GEMM_ENABLE_B_CACHE);
+    end
 
     // ============================================================
     // BRAM observation interface ready

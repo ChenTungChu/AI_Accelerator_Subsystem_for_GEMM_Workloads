@@ -10,13 +10,14 @@ The project has now completed the first performance sequence:
 P0: GEMM performance counter baseline
 P1: GEMM performance profile baseline
 P2: 2-lane K-parallel MAC datapath prototype
+P3: 2-lane stress / CDC hardening
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 38
-PASS  : 38
+TOTAL : 44
+PASS  : 44
 FAIL  : 0
 ```
 
@@ -40,7 +41,7 @@ error/recovery flows
 scoreboard-based result compare
 ```
 
-The 38-item regression now also includes:
+The 44-item regression now also includes:
 
 ```text
 GEMM performance counter smoke
@@ -48,6 +49,10 @@ GEMM performance profile
 GEMM_MAC_LANES=2 performance counter smoke
 GEMM_MAC_LANES=2 performance profile
 GEMM_MAC_LANES=2 Direct Stream smoke
+GEMM_MAC_LANES=2 DMA load-store stress
+GEMM_MAC_LANES=2 AXI-Stream load-store stress
+GEMM_MAC_LANES=2 Direct Stream load-store stress
+GEMM_MAC_LANES=2 DMA / AXI-Stream / Direct Stream CDC sanity
 ```
 
 ---
@@ -357,6 +362,28 @@ scoreboard result compare
 ctrl/result pairing
 ```
 
+P3 adds the following 2-lane stress / CDC subset:
+
+```text
+gemm_2lane_dma_load_store_stress
+gemm_2lane_axis_stream_load_store_stress
+gemm_2lane_direct_stream_load_store_stress
+gemm_2lane_dma_load_store_cdc
+gemm_2lane_axis_stream_load_store_cdc
+gemm_2lane_direct_stream_load_store_cdc
+```
+
+This subset protects:
+
+```text
+DMA load A/B -> GEMM -> DMA store C
+AXI-Stream preload A/B -> GEMM -> DMA store C
+Direct Stream preload A/B -> GEMM -> DMA store C
+scoreboard result compare under repeated jobs
+clock-ratio sanity at dma_clk=10ns, core_clk=13ns
+```
+
+
 ---
 
 ## 10. Risks and Mitigations
@@ -390,6 +417,7 @@ Mitigation:
 
 ```text
 run Direct Stream smoke with GEMM_MAC_LANES=2 in regression
+run DMA / AXI-Stream / Direct Stream 2-lane stress and CDC sanity in regression
 ```
 
 ### Risk 4: Single-lane regression changes
@@ -398,22 +426,31 @@ Mitigation:
 
 ```text
 GEMM_MAC_LANES default remains 1
-run full 38-item regression after changes
+run full 44-item regression after changes
 ```
 
 ---
 
 ## 11. Recommended Next Stages
 
-### Stage P3: 2-Lane Stress Expansion
+### Stage P3: 2-Lane Stress / CDC Hardening
 
-Possible additions:
+Implemented and verified:
 
 ```text
-DMA load-store stress, GEMM_MAC_LANES=2
-AXI-Stream load-store stress, GEMM_MAC_LANES=2
-Direct Stream load-store stress, GEMM_MAC_LANES=2
-CDC clock-ratio sanity, GEMM_MAC_LANES=2
+DMA load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
+AXI-Stream load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
+Direct Stream load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
+DMA load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
+AXI-Stream load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
+Direct Stream load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
+```
+
+Status:
+
+```text
+PASS
+Regression moved from 38/38 to 44/44
 ```
 
 ### Stage P4: Memory-Bandwidth Improvement
@@ -444,14 +481,16 @@ memory bandwidth bottlenecks are understood
 ## 12. Current Acceptance Status
 
 ```text
-Performance Counter Baseline      : DONE
-Performance Profile Baseline      : DONE
-2-Lane MAC Prototype              : DONE
-2-Lane Direct Stream Compatibility: DONE
-2-Lane Regression Subset          : DONE
+Performance Counter Baseline        : DONE
+Performance Profile Baseline        : DONE
+2-Lane MAC Prototype                : DONE
+2-Lane Direct Stream Compatibility  : DONE
+2-Lane Smoke/Profile Regression     : DONE
+2-Lane Stress / CDC Hardening       : DONE
+2-Lane Stress / CDC Regression      : DONE
 
 Regression:
-  38/38 PASS
+  44/44 PASS
 ```
 
 ---
