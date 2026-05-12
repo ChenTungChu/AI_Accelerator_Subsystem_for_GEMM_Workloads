@@ -58,6 +58,43 @@ proc clear_uvm_run_vars {} {
     unset -nocomplain POST_RESET_CASE_ID
     unset -nocomplain RESET_HOLD_CYCLES
     unset -nocomplain POST_RESET_SETTLE_CYCLES
+
+    # Clock-ratio knobs
+    unset -nocomplain DMA_CLK_PERIOD_NS
+    unset -nocomplain CORE_CLK_PERIOD_NS
+
+    # GEMM datapath feature knobs
+    unset -nocomplain GEMM_MAC_LANES
+    unset -nocomplain GEMM_ENABLE_B_CACHE
+    unset -nocomplain GEMM_B_CACHE_MAX_K
+    unset -nocomplain GEMM_B_CACHE_MAX_N
+
+    # DMA-load stress knobs
+    unset -nocomplain STRESS_JOB_COUNT
+    unset -nocomplain STRESS_SEED
+    unset -nocomplain STRESS_RANDOM
+    unset -nocomplain STRESS_GAP_CYCLES
+
+    # DMA load-store / store stress knobs
+    unset -nocomplain STORE_STRESS_JOB_COUNT
+    unset -nocomplain STORE_STRESS_SEED
+    unset -nocomplain STORE_STRESS_RANDOM
+    unset -nocomplain STORE_STRESS_GAP_CYCLES
+
+    # AXI-Stream stress knobs
+    unset -nocomplain AXIS_STRESS_JOB_COUNT
+    unset -nocomplain AXIS_STRESS_SEED
+    unset -nocomplain AXIS_STRESS_RANDOM
+    unset -nocomplain AXIS_STRESS_GAP_CYCLES
+
+    # Direct Stream stress knobs
+    unset -nocomplain DS_STRESS_JOB_COUNT
+    unset -nocomplain DS_STRESS_SEED
+    unset -nocomplain DS_STRESS_RANDOM
+    unset -nocomplain DS_STRESS_GAP_CYCLES
+
+    # Misc directed/debug knobs
+    unset -nocomplain RUN_START_WHILE_BUSY
 }
 
 # ------------------------------------------------------------
@@ -602,6 +639,81 @@ run_reg_item "gemm_2lane_direct_stream_load_store_cdc" {
     set DMA_CLK_PERIOD_NS 10
     set CORE_CLK_PERIOD_NS 13
     set GEMM_MAC_LANES 2
+}
+
+# ============================================================
+# 2-lane GEMM P4 B-cache representative regression
+#
+# These items validate GEMM_ENABLE_B_CACHE=1 together with the
+# already-hardened GEMM_MAC_LANES=2 datapath.
+#
+# P4E already covered both default clock and CDC variants manually.
+# Full regression keeps only the default-clock representative set
+# to avoid making every full regression too heavy.
+#
+# Covered paths:
+#   1. DMA load A/B -> GEMM with B-cache -> DMA store C
+#   2. AXI-Stream preload A/B -> GEMM with B-cache -> DMA store C
+#   3. Direct Stream preload A/B -> GEMM with B-cache -> DMA store C
+#
+# Expected regression total after adding these 3 items:
+#   44 + 3 = 47
+# ============================================================
+run_reg_item "gemm_2lane_bcache_dma_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set STORE_STRESS_JOB_COUNT 8
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 1
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+}
+
+run_reg_item "gemm_2lane_bcache_axis_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+}
+
+run_reg_item "gemm_2lane_bcache_direct_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
 }
 
 # ============================================================

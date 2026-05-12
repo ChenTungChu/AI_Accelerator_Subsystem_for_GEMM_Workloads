@@ -1485,6 +1485,7 @@ module ai_accel_subsys #(
         .dim_k         (dim_k_core_q),
 
         .mem_req_ready (gemm_mem_req_ready),
+        .mem_wr_done   (gemm_mem_done),
 
         .mem_rd_en     (gemm_mem_rd_en),
         .mem_rd_addr   (gemm_mem_rd_addr),
