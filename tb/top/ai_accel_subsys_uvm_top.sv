@@ -24,6 +24,10 @@ module ai_accel_subsys_uvm_top;
 
     parameter  bit GEMM_ENABLE_B_CACHE = 1'b0;
 
+    // P5 safe parameter patch.
+    // Default-off so the current P4 baseline behavior is unchanged.
+    parameter  bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0;
+
     localparam int BYTES_PER_BEAT  = DATA_WIDTH / 8;
 
     // DMA / AXIS source memory model.
@@ -945,7 +949,8 @@ module ai_accel_subsys_uvm_top;
         .GEMM_ACC_WIDTH  (GEMM_ACC_WIDTH),
         .GEMM_DIM_WIDTH  (GEMM_DIM_WIDTH),
         .GEMM_MAC_LANES  (GEMM_MAC_LANES),
-        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE)
+        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE),
+        .GEMM_ENABLE_PACKED_BCACHE_PRELOAD (GEMM_ENABLE_PACKED_BCACHE_PRELOAD)
     ) dut (
         .dma_clk              (dma_clk),
         .dma_rst_n            (dma_rst_n),
@@ -1118,9 +1123,10 @@ module ai_accel_subsys_uvm_top;
     // GEMM config display
     // ============================================================
     initial begin
-        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d",
+        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d",
                 GEMM_MAC_LANES,
-                GEMM_ENABLE_B_CACHE);
+                GEMM_ENABLE_B_CACHE,
+                GEMM_ENABLE_PACKED_BCACHE_PRELOAD);
     end
 
     // ============================================================

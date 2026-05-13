@@ -4,24 +4,25 @@
 
 This document defines the performance-oriented GEMM architecture milestone on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the first performance sequence:
+The project has now completed the first performance sequence through P4:
 
 ```text
 P0: GEMM performance counter baseline
 P1: GEMM performance profile baseline
 P2: 2-lane K-parallel MAC datapath prototype
 P3: 2-lane stress / CDC hardening
+P4: B-cache operand reuse optimization
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 44
-PASS  : 44
+TOTAL : 47
+PASS  : 47
 FAIL  : 0
 ```
 
-The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths.
+The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths. P4 adds an optional B-operand cache for small GEMM shapes and validates it across the DMA, AXI-Stream, and Direct Stream load/store flows.
 
 ---
 
@@ -41,7 +42,7 @@ error/recovery flows
 scoreboard-based result compare
 ```
 
-The 44-item regression now also includes:
+The 47-item regression now also includes:
 
 ```text
 GEMM performance counter smoke
@@ -53,6 +54,7 @@ GEMM_MAC_LANES=2 DMA load-store stress
 GEMM_MAC_LANES=2 AXI-Stream load-store stress
 GEMM_MAC_LANES=2 Direct Stream load-store stress
 GEMM_MAC_LANES=2 DMA / AXI-Stream / Direct Stream CDC sanity
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 representative DMA / AXI-Stream / Direct Stream load-store stress
 ```
 
 ---
@@ -386,6 +388,111 @@ clock-ratio sanity at dma_clk=10ns, core_clk=13ns
 
 ---
 
+---
+
+## 9A. P4 B-Cache Operand Reuse Closure
+
+P4 adds an optional B-operand cache path to reduce repeated B reads during GEMM compute.
+
+New parameters:
+
+```systemverilog
+parameter bit GEMM_ENABLE_B_CACHE = 1'b0;
+parameter int GEMM_B_CACHE_MAX_K  = 4;
+parameter int GEMM_B_CACHE_MAX_N  = 4;
+```
+
+Default behavior remains no-cache:
+
+```text
+GEMM_ENABLE_B_CACHE=0:
+    preserve the P3 1-lane / 2-lane baseline behavior
+```
+
+When enabled and the dimensions are supported:
+
+```text
+GEMM_ENABLE_B_CACHE=1
+and dim_k <= GEMM_B_CACHE_MAX_K
+and dim_n <= GEMM_B_CACHE_MAX_N:
+    preload B[k][n] once per GEMM job
+    read A from the existing local memory path during compute
+    source B operands from the local B cache during compute
+```
+
+Unsupported dimensions fall back to the original no-cache path.
+
+### B-cache compute source selection
+
+For the 2-lane datapath:
+
+```text
+lane0 B operand = b_cache[k_idx][n_idx]
+lane1 B operand = b_cache[k_idx + 1][n_idx], when lane1_valid
+```
+
+The no-cache path remains:
+
+```text
+lane0 B operand = memory read B[k_idx][n_idx]
+lane1 B operand = memory read B[k_idx + 1][n_idx], when lane1_valid
+```
+
+### GEMM done semantic fix
+
+During P4D Direct Stream compatibility testing, the Direct Stream + B-cache flow exposed a completion-semantic issue: `acc_done` could be observed after the final C write request was accepted, but before the final C write was completed and visible to the following DMA store.
+
+The fix changes `gemm_top.done` semantics to:
+
+```text
+assert done only after the final C write completion is observed
+```
+
+This was implemented by adding a wait-for-C-write-completion state after `S_WRITE_C` and before advancing to `S_NEXT` / `S_DONE`.
+
+This semantic is stronger and safer for all flows:
+
+```text
+Host readback
+DMA store / S2MM
+AXI-Stream preload -> GEMM -> DMA store
+Direct Stream preload -> GEMM -> DMA store
+```
+
+### P4 validation
+
+Manual and regression validation completed:
+
+```text
+P4C: B-cache compute bypass / perf profile              PASS
+P4D: B-cache + Direct Stream compatibility              PASS
+P4E: B-cache stress / CDC manual subset                  PASS
+P4F: Representative B-cache tests added to full regression PASS
+```
+
+Final full regression:
+
+```text
+TOTAL : 47
+PASS  : 47
+FAIL  : 0
+```
+
+Representative B-cache regression items:
+
+```text
+gemm_2lane_bcache_dma_load_store_stress
+gemm_2lane_bcache_axis_stream_load_store_stress
+gemm_2lane_bcache_direct_stream_load_store_stress
+```
+
+P4E also manually covered the CDC variants at:
+
+```text
+dma_clk  = 10ns
+core_clk = 13ns
+```
+
 ## 10. Risks and Mitigations
 
 ### Risk 1: Counters change timing
@@ -426,57 +533,50 @@ Mitigation:
 
 ```text
 GEMM_MAC_LANES default remains 1
-run full 44-item regression after changes
+run full 47-item regression after changes
 ```
 
 ---
 
 ## 11. Recommended Next Stages
 
-### Stage P3: 2-Lane Stress / CDC Hardening
+### Stage P4: B-Cache Operand Reuse Optimization
 
 Implemented and verified:
 
 ```text
-DMA load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
-AXI-Stream load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
-Direct Stream load-store stress, GEMM_MAC_LANES=2, dma/core=10ns/14ns
-DMA load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
-AXI-Stream load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
-Direct Stream load-store CDC sanity, GEMM_MAC_LANES=2, dma/core=10ns/13ns
+Optional B-cache parameterization
+B-cache preload FSM
+B-cache compute bypass for lane0/lane1 B operands
+Fallback to no-cache path when disabled or unsupported
+Direct Stream compatibility
+DMA / AXI-Stream / Direct Stream stress validation
+Representative B-cache regression inclusion
 ```
 
 Status:
 
 ```text
 PASS
-Regression moved from 38/38 to 44/44
+Regression moved from 44/44 to 47/47
 ```
 
-### Stage P4: Memory-Bandwidth Improvement
+### Stage P5: 32-bit Packed Operand Read / Scratchpad Bandwidth Utilization
 
-The first 2-lane design proves arithmetic-lane correctness but does not widen the memory interface.
-
-Future options:
+Recommended next optimization:
 
 ```text
-operand staging registers
-wider local operand extraction
-operand-buffer multi-read support
-Direct Stream tiled operand reuse
+use 32-bit local reads to fetch multiple int8 operands
+unpack aligned byte lanes locally
+reduce narrow operand-read request count
+preserve the existing result model and scoreboard checks
 ```
 
-### Stage P5: 4-Lane Planning
-
-Do not start 4-lane until:
+P5 should begin from the clean P4 checkpoint:
 
 ```text
-2-lane result correctness is stable
-2-lane regression subset is clean
-memory bandwidth bottlenecks are understood
+2-lane GEMM + B-cache + full regression 47/47 PASS
 ```
-
----
 
 ## 12. Current Acceptance Status
 
@@ -488,19 +588,23 @@ Performance Profile Baseline        : DONE
 2-Lane Smoke/Profile Regression     : DONE
 2-Lane Stress / CDC Hardening       : DONE
 2-Lane Stress / CDC Regression      : DONE
+B-Cache Operand Reuse Optimization  : DONE
+B-Cache Direct Stream Compatibility : DONE
+B-Cache Stress / CDC Manual Subset  : DONE
+B-Cache Regression Inclusion        : DONE
 
 Regression:
-  44/44 PASS
+  47/47 PASS
 ```
 
 ---
 
 ## 13. Future Direction
 
-After P2, the project can move toward:
+After P4, the project can move toward:
 
 ```text
-2-lane stress and CDC expansion
+32-bit packed operand reads
 operand staging buffers
 wider or multi-read operand access
 tile-based GEMM

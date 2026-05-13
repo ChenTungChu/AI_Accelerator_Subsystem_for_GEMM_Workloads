@@ -18,7 +18,11 @@ module ai_accel_subsys #(
 
     parameter int GEMM_MAC_LANES    = 1,
 
-    parameter bit GEMM_ENABLE_B_CACHE = 1'b0
+    parameter bit GEMM_ENABLE_B_CACHE = 1'b0,
+
+    // P5 safe parameter patch.
+    // Default-off so the current P4 baseline behavior is unchanged.
+    parameter bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -1467,7 +1471,8 @@ module ai_accel_subsys #(
         .ACC_WIDTH    (GEMM_ACC_WIDTH),
         .DIM_WIDTH    (GEMM_DIM_WIDTH),
         .GEMM_MAC_LANES (GEMM_MAC_LANES),
-        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE)
+        .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE),
+        .GEMM_ENABLE_PACKED_BCACHE_PRELOAD (GEMM_ENABLE_PACKED_BCACHE_PRELOAD)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),

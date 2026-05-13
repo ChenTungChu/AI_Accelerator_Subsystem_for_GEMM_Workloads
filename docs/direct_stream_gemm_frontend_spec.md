@@ -37,13 +37,30 @@ AXI-MM source memory
 
 The goal of B1 is to move A/B input feeding away from scratchpad preload and toward a stream-backed local operand-buffer frontend, while preserving the existing GEMM compute behavior and the existing C output path.
 
-Current full regression baseline after Direct Stream B1 completion:
+Historical full regression baseline after Direct Stream B1 completion:
 
 ```text
 TOTAL : 33
 PASS  : 33
 FAIL  : 0
 ```
+
+
+Current project status after P4 B-cache closure:
+
+```text
+Performance GEMM P4: B-cache Operand Reuse Optimization Completed
+Full regression: 47/47 PASS
+```
+
+Direct Stream B1 remains compatible with:
+
+```text
+GEMM_MAC_LANES=1 baseline
+GEMM_MAC_LANES=2 2-lane MAC datapath
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 B-cache datapath
+```
+
 
 ---
 
@@ -1065,7 +1082,7 @@ Full regression: 32 / 32 PASS
 Full regression: 33 / 33 PASS
 ```
 
-Current final B1 regression baseline:
+Historical final B1 regression baseline:
 
 ```text
 TOTAL : 33
@@ -1116,14 +1133,73 @@ Completed RTL and UVM integration sequence:
 12. Added direct-stream CDC clock-ratio regression item.
 ```
 
-Current milestone:
+Historical Direct Stream B1 milestone:
 
 ```text
 v3.4.3 Direct Stream GEMM Frontend B1 Completed
 Regression: 33/33 PASS
 ```
 
+Current subsystem milestone after P4:
+
+```text
+Performance GEMM P4: B-cache Operand Reuse Optimization Completed
+Regression: 47/47 PASS
+```
+
 ---
+
+
+---
+
+## 17A. P4 B-Cache Compatibility
+
+Direct Stream B1 was validated with the P4 B-cache GEMM datapath.
+
+Configuration:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=4
+GEMM_B_CACHE_MAX_N=4
+```
+
+In Direct Stream mode with B-cache enabled:
+
+```text
+Direct Stream preload A -> gemm_operand_buffer A
+Direct Stream preload B -> gemm_operand_buffer B
+B-cache preload reads B through gemm_input_mem_router
+GEMM compute reads A through gemm_input_mem_router
+GEMM compute reads B from local b_cache
+GEMM writes C to scratchpad
+DMA store exports C
+scoreboard compares result
+```
+
+P4D initially exposed a useful completion-semantics issue: Direct Stream can start DMA store immediately after `acc_done`, so `gemm_top.done` must not assert until the final C write is complete.
+
+The corrected completion contract is:
+
+```text
+acc_done / gemm_top.done means final C write completion has occurred
+```
+
+P4 Direct Stream validation completed:
+
+```text
+Direct Stream smoke RUN_ALL + B-cache                 PASS
+Direct Stream load-store stress + B-cache, 10/14      PASS
+Direct Stream load-store stress + B-cache, 10/13 CDC  PASS
+Representative full-regression B-cache Direct Stream  PASS
+```
+
+Full regression after P4:
+
+```text
+47/47 PASS
+```
 
 ## 18. Useful Single-Test Runs
 
@@ -1134,6 +1210,45 @@ set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
 set ENABLE_RESULT_CHECK 1
 set RUN_ALL 1
 do run_uvm.tcl
+```
+
+
+### Direct Stream smoke RUN_ALL, 2-lane + B-cache
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+do run_uvm.tcl
+```
+
+### Direct Stream load-store stress, 2-lane + B-cache
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+do run_uvm.tcl
+```
+
+For the P4E CDC variant, switch:
+
+```tcl
+set CORE_CLK_PERIOD_NS 13
 ```
 
 ### Direct Stream error recovery
@@ -1211,4 +1326,4 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a stable passing regression baseline. B1 now satisfies that requirement with `33/33 PASS`.
+B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P4 subsystem checkpoint is `47/47 PASS`.

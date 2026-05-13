@@ -2,32 +2,95 @@
 
 ## 1. Purpose
 
-This document defines the next GEMM performance milestone after the completed 2-lane MAC datapath and 2-lane stress / CDC hardening work.
+This document records the completed P4 GEMM operand-reuse milestone after the 2-lane MAC datapath and 2-lane stress / CDC hardening work.
 
 Current baseline:
 
 ```text
 P2: 2-lane GEMM MAC datapath prototype completed
 P3: 2-lane stress / CDC hardening completed
+P4: B-cache operand reuse optimization completed
 
 Full regression:
-  TOTAL : 44
-  PASS  : 44
+  TOTAL : 47
+  PASS  : 47
   FAIL  : 0
 ```
 
-P4 focuses on reducing operand-memory bandwidth pressure and improving operand reuse.
+P4 reduces operand-memory bandwidth pressure by caching the B matrix once per GEMM job and reusing it during compute.
 
 The key observation is:
 
 ```text
 P2 increased MAC parallelism,
-but the GEMM core still performs many repeated operand reads.
+but the GEMM core still performed many repeated B operand reads.
 ```
 
-The first P4 target is a low-risk B-operand cache prototype.
+The implemented P4 target is a low-risk, optional B-operand cache prototype.
 
 ---
+
+---
+
+## 1A. P4 Closure Summary
+
+P4 is complete.
+
+Implemented RTL behavior:
+
+```text
+GEMM_ENABLE_B_CACHE=0:
+    preserve the no-cache P3 baseline
+
+GEMM_ENABLE_B_CACHE=1 and supported dimensions:
+    preload B[k][n] into a local B cache
+    compute lane0 B from b_cache[k][n]
+    compute lane1 B from b_cache[k+1][n] when lane1_valid
+```
+
+Supported cache dimensions for the current milestone:
+
+```text
+GEMM_B_CACHE_MAX_K = 4
+GEMM_B_CACHE_MAX_N = 4
+```
+
+Current supported case set:
+
+```text
+CASE_ID=100     dim=(1,1,1)
+CASE_ID=101     dim=(2,2,2)
+CASE_ID=105     dim=(2,3,4)
+CASE_ID=5       dim=(4,4,4)
+CASE_ID=400-403 dim=(4,4,4) with shifted legal base addresses
+```
+
+Important correctness fix found during P4D:
+
+```text
+gemm_top.done now asserts only after the final C write completion,
+not merely after the final C write request is accepted.
+```
+
+This prevents a following DMA store from reading C before the final GEMM write is visible.
+
+Validation completed:
+
+```text
+P4C: B-cache compute bypass / perf profile              PASS
+P4D: B-cache Direct Stream compatibility                PASS
+P4E: B-cache DMA / AXIS / Direct Stream stress          PASS
+P4E: B-cache CDC subset at dma/core=10ns/13ns           PASS
+P4F: Representative B-cache tests added to regression   PASS
+```
+
+Final regression:
+
+```text
+TOTAL : 47
+PASS  : 47
+FAIL  : 0
+```
 
 ## 2. Current Baseline
 
@@ -61,7 +124,7 @@ input  logic                  mem_rd_valid;
 
 ### 2.2 Current Performance Status
 
-Current 2-lane profile baseline:
+Pre-P4 2-lane no-cache profile baseline:
 
 ```text
 CASE_ID | KIND | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
@@ -75,7 +138,7 @@ CASE_ID | KIND | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
 403     | 2    | 4 | 4 | 4 | 64   | 16      | 1610
 ```
 
-P4 should not require exact cycle matching at first. It should preserve correctness and report profile changes.
+P4 does not lock exact cycle matching in regression. It preserves correctness, reports profile changes, and protects representative B-cache flows in full regression.
 
 ---
 
@@ -138,9 +201,9 @@ That is a 37.5% reduction in GEMM operand-read requests for the 4x4x4 case.
 
 ## 4. P4 Design Goals
 
-P4 must:
+The P4 implementation satisfies:
 
-1. Preserve the existing 44/44 full regression baseline by default.
+1. Preserve the existing pre-P4 44/44 baseline by default, and preserve the current 47/47 full regression after P4 inclusion.
 2. Add operand reuse without changing the DMA / AXI-Stream / Direct Stream frontend protocols.
 3. Keep `GEMM_ENABLE_B_CACHE=0` behavior equivalent to the current P3 baseline.
 4. Add an optional B-operand cache path controlled by a parameter.
@@ -156,7 +219,7 @@ P4 must:
 
 ## 5. Non-Goals for First P4 Step
 
-The first P4 step does not attempt to:
+The completed first P4 step does not attempt to:
 
 - implement 4-lane or wider MAC
 - implement systolic-array scheduling
@@ -304,7 +367,7 @@ Out of scope for first P4.
 
 ## 7. Chosen First P4 Architecture
 
-The first P4 implementation should be:
+The completed first P4 implementation is:
 
 ```text
 P4B: Optional B operand cache prototype
@@ -339,7 +402,7 @@ Default must be:
 GEMM_ENABLE_B_CACHE = 1'b0
 ```
 
-This preserves the current 44/44 regression baseline.
+This preserved the pre-P4 44/44 regression baseline; after P4F, the current full regression baseline is 47/47.
 
 Recommended additional parameters:
 
@@ -379,7 +442,7 @@ dim_k <= GEMM_B_CACHE_MAX_K
 dim_n <= GEMM_B_CACHE_MAX_N
 ```
 
-Recommended behavior for unsupported dimensions:
+Implemented behavior for unsupported dimensions:
 
 ```text
 fallback to original no-cache path
@@ -414,7 +477,7 @@ Alternative flattened storage:
 logic signed [B_DATA_WIDTH-1:0] b_cache_q [GEMM_B_CACHE_MAX_K*GEMM_B_CACHE_MAX_N];
 ```
 
-Recommended first implementation:
+Implemented first version:
 
 ```text
 2D array for readability
@@ -773,7 +836,7 @@ gemm_perf_b_cache_hit_count
 
 These are not required for first B-cache correctness, but they would make bandwidth optimization easier to measure.
 
-Recommended first-step policy:
+Current P4 policy:
 
 ```text
 Do not add new top-level counter ports in the first patch unless needed.
@@ -808,7 +871,7 @@ C writes remain unchanged.
 
 Therefore, the B-cache implementation must not assume scratchpad-only behavior.
 
-Required Direct Stream test:
+Completed Direct Stream test:
 
 ```text
 GEMM_ENABLE_B_CACHE=1
@@ -837,7 +900,7 @@ AXI-Stream preload A/B path
 Direct Stream preload A/B path
 ```
 
-Required stress tests after smoke/profile passes:
+Completed stress tests after smoke/profile passed:
 
 ```text
 GEMM_ENABLE_B_CACHE=1, GEMM_MAC_LANES=2:
@@ -846,7 +909,7 @@ GEMM_ENABLE_B_CACHE=1, GEMM_MAC_LANES=2:
   ai_accel_subsys_direct_stream_load_store_stress_test
 ```
 
-Required CDC tests:
+Completed CDC subset:
 
 ```text
 dma_clk=10ns
@@ -857,98 +920,62 @@ GEMM_MAC_LANES=2
 
 ---
 
-## 18. Verification Plan
+## 18. Verification Closure
 
 ### 18.1 P4A: Spec
 
-Complete when:
+Status:
 
 ```text
-gemm_operand_reuse_bandwidth_spec.md exists
-architecture and verification plan are defined
+DONE
 ```
 
 ### 18.2 P4B: Safe Parameter Patch
 
-Add:
+Implemented:
 
 ```systemverilog
-parameter bit GEMM_ENABLE_B_CACHE = 1'b0
+parameter bit GEMM_ENABLE_B_CACHE = 1'b0;
+parameter int GEMM_B_CACHE_MAX_K  = 4;
+parameter int GEMM_B_CACHE_MAX_N  = 4;
 ```
-
-No functional behavior change.
 
 Acceptance:
 
 ```text
 compile PASS
-44/44 regression PASS
+baseline regression remained clean
 ```
 
-### 18.3 P4C: B Cache RTL Prototype
+### 18.3 P4C: B Cache RTL Prototype / Compute Bypass
 
-Add:
+Implemented:
 
 ```text
 B cache storage
 B cache preload FSM
 b_cache_active helper
-B cache compute bypass for S_READ_B / S_READ_B1
+B cache compute bypass for lane0/lane1 B operands
+fallback to original B memory-read path when inactive
 ```
 
 Acceptance:
 
 ```text
-GEMM_ENABLE_B_CACHE=0:
-  44/44 regression PASS
-
-GEMM_ENABLE_B_CACHE=1:
-  focused B-cache smoke PASS
-```
-
-### 18.4 P4D: B Cache Host-Primary Profile
-
-Recommended test reuse:
-
-```text
-ai_accel_subsys_perf_counter_smoke_test RUN_ALL=1
-ai_accel_subsys_perf_profile_test
-```
-
-Run with:
-
-```tcl
-set GEMM_MAC_LANES 2
-set GEMM_ENABLE_B_CACHE 1
-set FORCE_HELPER_MEM_PATH 0
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 14
-```
-
-Expected:
-
-```text
+perf_counter_smoke RUN_ALL PASS
+perf_profile PASS
 result compare PASS
 mac_count/output_count PASS
-profile summary printed
-busy-cycle profile captured
 ```
 
-### 18.5 P4E: B Cache Direct Stream Compatibility
+### 18.4 P4D: Direct Stream Compatibility
 
-Run:
+Validated:
 
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
-set ENABLE_RESULT_CHECK 1
-set CASE_ID 100
-set RUN_ALL 1
-set FORCE_HELPER_MEM_PATH 0
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 14
-set GEMM_MAC_LANES 2
-set GEMM_ENABLE_B_CACHE 1
-do run_uvm.tcl
+```text
+GEMM_ENABLE_B_CACHE=1
+GEMM_MAC_LANES=2
+ai_accel_subsys_direct_stream_smoke_test RUN_ALL=1
 ```
 
 Acceptance:
@@ -959,59 +986,42 @@ scoreboard compare PASS
 no UVM_ERROR / UVM_FATAL
 ```
 
-### 18.6 P4F: B Cache Stress / CDC
-
-Run:
+P4D also exposed and closed the GEMM completion semantic issue:
 
 ```text
-DMA load-store stress
-AXI-Stream load-store stress
-Direct Stream load-store stress
-DMA load-store CDC
-AXI-Stream load-store CDC
-Direct Stream load-store CDC
+done waits for final C write completion before assertion
 ```
 
-With:
+### 18.5 P4E: B Cache Stress / CDC
+
+Manually validated:
 
 ```text
-GEMM_MAC_LANES=2
-GEMM_ENABLE_B_CACHE=1
+DMA load-store stress + B-cache, 10/14                  PASS
+DMA load-store stress + B-cache, 10/13 CDC              PASS
+AXI-Stream load-store stress + B-cache, 10/14           PASS
+AXI-Stream load-store stress + B-cache, 10/13 CDC       PASS
+Direct Stream load-store stress + B-cache, 10/14        PASS
+Direct Stream load-store stress + B-cache, 10/13 CDC    PASS
 ```
 
-Acceptance:
+### 18.6 P4F: Regression Inclusion
 
-```text
-all selected stress jobs PASS
-scoreboard compare PASS
-control/result pairing PASS
-no UVM_ERROR / UVM_FATAL
-```
-
-### 18.7 P4G: Regression Inclusion
-
-Add focused B-cache subset only after manual runs pass.
-
-Recommended first subset:
-
-```text
-gemm_2lane_bcache_perf_counter_smoke
-gemm_2lane_bcache_perf_profile
-gemm_2lane_bcache_direct_stream_smoke
-```
-
-Potential later subset:
+Added representative default-clock B-cache subset:
 
 ```text
 gemm_2lane_bcache_dma_load_store_stress
 gemm_2lane_bcache_axis_stream_load_store_stress
 gemm_2lane_bcache_direct_stream_load_store_stress
-gemm_2lane_bcache_dma_load_store_cdc
-gemm_2lane_bcache_axis_stream_load_store_cdc
-gemm_2lane_bcache_direct_stream_load_store_cdc
 ```
 
----
+Final acceptance:
+
+```text
+TOTAL : 47
+PASS  : 47
+FAIL  : 0
+```
 
 ## 19. Suggested Tcl Runs
 
@@ -1101,6 +1111,26 @@ Use the same stress tests as above.
 
 ---
 
+
+### 19.6 B-Cache Full-Regression Representative Items
+
+The full regression includes these P4F representative B-cache tests:
+
+```text
+gemm_2lane_bcache_dma_load_store_stress
+gemm_2lane_bcache_axis_stream_load_store_stress
+gemm_2lane_bcache_direct_stream_load_store_stress
+```
+
+These are default-clock representatives:
+
+```text
+dma_clk  = 10ns
+core_clk = 14ns
+```
+
+The CDC variants were validated manually during P4E and can be kept as manual/nightly targets.
+
 ## 20. Risk Analysis
 
 ### Risk 1: B Cache Preload Address Bug
@@ -1166,7 +1196,7 @@ Mitigation:
 
 ```text
 default parameter remains 0
-run full 44/44 regression after each safe patch
+run the full baseline regression after each safe patch
 ```
 
 ### Risk 5: Direct Stream Router Assumption
@@ -1213,7 +1243,7 @@ Patch 1:
   Propagate parameter through ai_accel_subsys and ai_accel_subsys_uvm_top.
   Add run_uvm.tcl default/guard.
   No functional behavior change.
-  Compile and run 44/44.
+  Compile and run the applicable baseline regression at that patch point.
 
 Patch 2:
   Add b_cache storage and preload indices.
@@ -1252,10 +1282,12 @@ Patch 9:
 
 ## 22. Acceptance Criteria
 
-P4 first closure is complete when:
+P4 closure is complete.
+
+Completed acceptance:
 
 ```text
-GEMM_ENABLE_B_CACHE=0 full regression remains 44/44 PASS
+GEMM_ENABLE_B_CACHE=0 baseline remains protected
 GEMM_ENABLE_B_CACHE=1 perf_counter_smoke RUN_ALL PASS
 GEMM_ENABLE_B_CACHE=1 perf_profile PASS
 GEMM_ENABLE_B_CACHE=1 Direct Stream smoke RUN_ALL PASS
@@ -1265,7 +1297,7 @@ no UVM_ERROR / UVM_FATAL
 profile summary captured
 ```
 
-P4 stress closure is complete when:
+P4 stress closure is complete:
 
 ```text
 B-cache DMA load-store stress PASS
@@ -1274,14 +1306,12 @@ B-cache Direct Stream load-store stress PASS
 B-cache DMA / AXI-Stream / Direct Stream CDC sanity PASS
 ```
 
-P4 regression closure is complete when:
+P4 regression closure is complete:
 
 ```text
-selected B-cache subset is added to run_full_uvm_regression.tcl
-new full regression PASS
+selected B-cache subset added to run_full_uvm_regression.tcl
+full regression PASS: 47/47
 ```
-
----
 
 ## 23. Future Work After B Cache
 
@@ -1315,7 +1345,7 @@ A packed preload can reduce preload request count by extracting 4 B elements fro
 
 ## 24. Summary
 
-P4 should improve GEMM performance by reducing repeated operand reads rather than immediately adding more MAC lanes.
+P4 improves GEMM performance by reducing repeated operand reads rather than immediately adding more MAC lanes.
 
 The safest first optimization is:
 
@@ -1333,4 +1363,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `44/44 PASS` baseline gives enough safety to begin this work incrementally.
+The current `47/47 PASS` baseline is the clean checkpoint for the next performance milestone.

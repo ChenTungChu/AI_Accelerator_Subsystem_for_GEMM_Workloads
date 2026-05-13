@@ -12,7 +12,11 @@ module gemm_top #(
 
     parameter bit GEMM_ENABLE_B_CACHE = 1'b0,
     parameter int GEMM_B_CACHE_MAX_K  = 4,
-    parameter int GEMM_B_CACHE_MAX_N  = 4
+    parameter int GEMM_B_CACHE_MAX_N  = 4,
+
+    // P5 safe parameter patch.
+    // Default-off so the current P4 baseline behavior is unchanged.
+    parameter bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -107,11 +111,12 @@ module gemm_top #(
 
 `ifndef SYNTHESIS
     initial begin
-        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d",
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d",
                  GEMM_MAC_LANES,
                  GEMM_ENABLE_B_CACHE,
                  GEMM_B_CACHE_MAX_K,
-                 GEMM_B_CACHE_MAX_N);
+                 GEMM_B_CACHE_MAX_N,
+                 GEMM_ENABLE_PACKED_BCACHE_PRELOAD);
     end
 `endif
 

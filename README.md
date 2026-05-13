@@ -15,25 +15,26 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and the first performance-oriented GEMM datapath upgrade.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and performance-oriented GEMM datapath upgrades. The performance path now includes a parameterized 2-lane K-parallel MAC datapath and a B-operand cache / compute-bypass optimization.
 
 Current milestone:
 
 ```text
-Performance GEMM P3: 2-Lane Stress / CDC Hardening Completed
+Performance GEMM P4: B-cache Operand Reuse Optimization Completed
 
 Regression:
-  TOTAL : 44
-  PASS  : 44
+  TOTAL : 47
+  PASS  : 47
   FAIL  : 0
 ```
 
-The current baseline includes both:
+The current baseline includes:
 
 ```text
 GEMM_MAC_LANES=1 mainline regression
 GEMM_MAC_LANES=2 focused performance subset regression
 GEMM_MAC_LANES=2 stress / CDC hardening subset regression
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 representative regression
 ```
 
 Direct Stream B1 remains supported:
@@ -53,6 +54,8 @@ AXI-MM source memory
 Performance GEMM P2 added a parameterized 2-lane K-parallel MAC path inside `gemm_top` while preserving the original single-lane behavior as the default safe configuration.
 
 Performance GEMM P3 expands the 2-lane coverage from smoke/profile into stress and CDC sanity across the DMA, AXI-Stream, and Direct Stream load-store paths.
+
+Performance GEMM P4 adds B-operand cache support for the 2-lane GEMM path. When the configured GEMM dimensions fit within the cache limits, B operands are preloaded once per job and reused during compute, reducing repeated B reads from the scratchpad or operand-buffer path. P4 also fixed the GEMM completion semantics so `done` is asserted only after the final C write has completed, which prevents downstream DMA-store readback from observing stale C data.
 
 ---
 
@@ -81,7 +84,10 @@ The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline.
 `gemm_top` now supports:
 
 ```systemverilog
-parameter int GEMM_MAC_LANES = 1
+parameter int GEMM_MAC_LANES       = 1
+parameter bit GEMM_ENABLE_B_CACHE  = 1'b0
+parameter int GEMM_B_CACHE_MAX_K   = 4
+parameter int GEMM_B_CACHE_MAX_N   = 4
 ```
 
 Supported lane settings:
@@ -91,7 +97,14 @@ GEMM_MAC_LANES=1 : original single-MAC baseline
 GEMM_MAC_LANES=2 : 2-lane K-parallel MAC prototype
 ```
 
-The default remains `1` so existing regression behavior is preserved unless the run script explicitly overrides the parameter.
+Supported B-cache settings:
+
+```text
+GEMM_ENABLE_B_CACHE=0 : original no-cache B operand path
+GEMM_ENABLE_B_CACHE=1 : preload B[k][n] into a local cache when dim_k/dim_n fit the configured cache bounds
+```
+
+The default remains `GEMM_MAC_LANES=1` and `GEMM_ENABLE_B_CACHE=0` so existing regression behavior is preserved unless the run script explicitly overrides these parameters.
 
 ---
 
@@ -151,6 +164,35 @@ Odd-K cases are handled by lane masking. For example, `K=1` uses only lane 0, wh
 
 The first 2-lane implementation is correctness-first. It keeps the existing single-read local memory interface and sequentially collects lane operands before committing the multi-lane MAC step.
 
+### B-cache operand reuse prototype
+
+When `GEMM_ENABLE_B_CACHE=1` and the active job fits within `GEMM_B_CACHE_MAX_K` and `GEMM_B_CACHE_MAX_N`, `gemm_top` preloads the B matrix tile into a small local cache before compute begins:
+
+```text
+for k in 0 .. K-1:
+  for n in 0 .. N-1:
+    b_cache[k][n] = B[k][n]
+```
+
+During compute, B operands are read from the local cache instead of repeatedly issuing B reads through the local memory request interface:
+
+```text
+lane0 B operand = b_cache[k + 0][n]
+lane1 B operand = b_cache[k + 1][n] when lane1 is valid
+```
+
+If the job dimensions do not fit the configured cache bounds, the design falls back to the original non-cache B operand path. This keeps the optimization correctness-safe for unsupported dimensions.
+
+### GEMM completion semantics
+
+`gemm_top.done` now means:
+
+```text
+all C write requests have completed and the final C word is visible to downstream readers
+```
+
+This is stronger than the earlier request-issued definition and is required for flows that launch DMA store immediately after `acc_done`.
+
 ---
 
 ## Performance Counters
@@ -176,7 +218,7 @@ Counter meaning:
 ```text
 gemm_perf_busy_cycles  : cycles while GEMM is busy
 gemm_perf_mac_count    : logical MAC operations committed
-gemm_perf_output_count : C outputs committed
+gemm_perf_output_count : C outputs whose local-memory write completion has been observed
 ```
 
 For both single-lane and 2-lane modes:
@@ -186,7 +228,7 @@ gemm_perf_mac_count    = M * N * K
 gemm_perf_output_count = M * N
 ```
 
-In 2-lane mode, `gemm_perf_mac_count` increments by the number of valid lanes committed, not by the number of MAC FSM states.
+In 2-lane mode, `gemm_perf_mac_count` increments by the number of valid lanes committed, not by the number of MAC FSM states. `gemm_perf_output_count` increments when each C write completion is observed, matching the corrected GEMM done semantics.
 
 ---
 
@@ -221,6 +263,18 @@ CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
 ```
 
 `CASE_ID=100` has `K=1`, so lane 1 is masked and the cycle count remains unchanged. Cases with `K>=2` show the 2-lane path is active.
+
+### 2-lane + B-cache representative profile (`GEMM_MAC_LANES=2`, `GEMM_ENABLE_B_CACHE=1`)
+
+P4 validation confirmed that B-cache reuse reduces repeated B operand reads for supported tiles. Representative 4x4x4 cases improved from the 2-lane no-cache baseline of approximately 1609-1610 busy cycles to approximately 1146-1147 busy cycles while preserving:
+
+```text
+gemm_perf_mac_count    = M * N * K
+gemm_perf_output_count = M * N
+result compare         = PASS
+```
+
+The exact cycle count still depends on the selected frontend path, clock ratio, and memory arbitration pattern.
 
 ---
 
@@ -345,7 +399,7 @@ gemm_input_stream_mode = 1:
     GEMM C writes  -> scratchpad
 ```
 
-The 2-lane GEMM path has been verified in Direct Stream mode through the 2-lane direct-stream smoke regression subset.
+The 2-lane GEMM path has been verified in Direct Stream mode through the 2-lane direct-stream smoke regression subset. The B-cache path has also been verified in Direct Stream mode through smoke, load-store stress, and CDC-oriented manual P4E runs.
 
 ---
 
@@ -429,11 +483,11 @@ Corner recipe        : 5 -> 101 -> 105 -> 403
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 44 items and is passing:
+The current full UVM regression contains 47 items and is passing:
 
 ```text
-TOTAL : 44
-PASS  : 44
+TOTAL : 47
+PASS  : 47
 FAIL  : 0
 ```
 
@@ -466,6 +520,9 @@ Covered categories:
 - GEMM 2-lane DMA load-store CDC sanity
 - GEMM 2-lane AXI-Stream load-store CDC sanity
 - GEMM 2-lane Direct Stream load-store CDC sanity
+- GEMM 2-lane B-cache DMA load-store stress
+- GEMM 2-lane B-cache AXI-Stream load-store stress
+- GEMM 2-lane B-cache Direct Stream load-store stress
 - back-to-back
 - reset recovery
 - corner recipe
@@ -481,6 +538,16 @@ P3 2-lane stress / CDC regression status:
 2-lane DMA load-store CDC, 10/13               : PASS
 2-lane AXI-Stream load-store CDC, 10/13        : PASS
 2-lane Direct Stream load-store CDC, 10/13     : PASS
+```
+
+P4 B-cache regression status:
+
+```text
+P4C: B-cache compute bypass / perf profile              : PASS
+P4D: B-cache + Direct Stream compatibility              : PASS
+P4E: B-cache stress / CDC manual subset                  : PASS
+P4F: Representative B-cache tests added to full regression: PASS
+Full regression after P4F                                : 47/47 PASS
 ```
 
 ---
@@ -644,6 +711,85 @@ set GEMM_MAC_LANES 2
 ```
 
 
+### Performance profile, 2-lane + B-cache
+
+```tcl
+set UVM_TEST ai_accel_subsys_perf_profile_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 4
+set GEMM_B_CACHE_MAX_N 4
+do run_uvm.tcl
+```
+
+### Direct Stream smoke RUN_ALL, 2-lane + B-cache
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 100
+set RUN_ALL 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 4
+set GEMM_B_CACHE_MAX_N 4
+do run_uvm.tcl
+```
+
+### Representative B-cache load-store stress runs
+
+Use one of the three frontend paths below:
+
+```tcl
+# DMA load A/B -> GEMM with B-cache -> DMA store C
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set STORE_STRESS_JOB_COUNT 8
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+```
+
+```tcl
+# AXI-Stream preload A/B -> GEMM with B-cache -> DMA store C
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set AXIS_STRESS_JOB_COUNT 8
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+```
+
+```tcl
+# Direct Stream preload A/B -> GEMM with B-cache -> DMA store C
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+```
+
+Common B-cache settings for all three:
+
+```tcl
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 4
+set GEMM_B_CACHE_MAX_N 4
+do run_uvm.tcl
+```
+
 ### DMA load RUN_ALL
 
 ```tcl
@@ -771,6 +917,10 @@ At this checkpoint, the subsystem verifies:
 - 2-lane Direct Stream operand-buffer compatibility
 - 2-lane DMA / AXI-Stream / Direct Stream stress coverage
 - 2-lane DMA / AXI-Stream / Direct Stream CDC sanity
+- B-cache preload and compute-bypass correctness for supported K/N tiles
+- B-cache compatibility across DMA, AXI-Stream, and Direct Stream load-store paths
+- B-cache manual CDC subset stability
+- corrected GEMM done semantics after final C write completion
 - unattended full UVM regression flow
 
 ---
@@ -778,7 +928,7 @@ At this checkpoint, the subsystem verifies:
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P3: 2-Lane Stress / CDC Hardening Completed
+Performance GEMM P4: B-cache Operand Reuse Optimization Completed
 
 Completed:
   P0: GEMM performance counter smoke             PASS
@@ -793,9 +943,16 @@ Completed:
   P3C: 2-lane Direct Stream load-store stress    PASS
   P3D: 2-lane CDC sanity                         PASS
   P3E: 2-lane stress / CDC regression subset     PASS
+  P4C: B-cache compute bypass / perf profile     PASS
+  P4D: B-cache Direct Stream compatibility       PASS
+  P4E: B-cache stress / CDC manual subset        PASS
+  P4F: B-cache representative regression added   PASS
 
 Regression:
-  44/44 PASS
+  47/47 PASS
+
+Next:
+  P5: 32-bit packed operand read / scratchpad bandwidth utilization
 ```
 
 ---
@@ -822,8 +979,11 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - configurable clock-ratio regression coverage
 - GEMM performance counter and profile baseline
 - parameterized 1-lane / 2-lane GEMM compute path
+- B-cache operand reuse optimization for supported tiles
+- corrected GEMM done semantics after final C write completion
 - focused 2-lane smoke/profile regression subset
 - 2-lane stress / CDC hardening regression subset
+- representative 2-lane + B-cache full-regression subset
 - full UVM regression automation
 
-This is the current subsystem verification and performance-GEMM baseline.
+This is the current subsystem verification and P4 performance-GEMM baseline. The next planned optimization milestone is P5: 32-bit packed operand read / scratchpad bandwidth utilization.
