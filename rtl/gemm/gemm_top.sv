@@ -63,6 +63,11 @@ module gemm_top #(
         S_BCACHE_WAIT,
         S_BCACHE_NEXT,
 
+        S_BCACHE_PACK_INIT,
+        S_BCACHE_PACK_READ,
+        S_BCACHE_PACK_WAIT,
+        S_BCACHE_PACK_NEXT,
+
         S_READ_A,
         S_WAIT_A,
         S_READ_B,
@@ -152,11 +157,22 @@ module gemm_top #(
     logic [DIM_WIDTH-1:0]           bcache_k_q, bcache_k_d;
     logic [DIM_WIDTH-1:0]           bcache_n_q, bcache_n_d;
 
+    // P5 packed B-cache preload state.
+    // Used only when GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 and base_addr_b is 4-byte aligned.
+    logic [ADDR_WIDTH-1:0]          bpack_addr_q, bpack_addr_d;
+    logic [ADDR_WIDTH-1:0]          bpack_end_addr_q, bpack_end_addr_d;
+
     logic                           b_cache_active_job_q;
     logic                           b_cache_active_job_d;
 
     logic b_cache_dim_supported;
     logic b_cache_active_calc;
+    logic packed_bcache_preload_calc;
+
+    logic [ADDR_WIDTH-1:0] bcache_total_bytes_calc;
+    logic [ADDR_WIDTH-1:0] bpack_last_byte_addr_calc;
+    logic [ADDR_WIDTH-1:0] bpack_start_addr_calc;
+    logic [ADDR_WIDTH-1:0] bpack_end_addr_calc;
 
     always_comb begin
         b_cache_dim_supported =
@@ -167,7 +183,30 @@ module gemm_top #(
 
         b_cache_active_calc =
             GEMM_ENABLE_B_CACHE && b_cache_dim_supported;
+
+        // First P5 policy:
+        // - packed B-cache preload is optional and default-off
+        // - packed preload only supports int8 B elements
+        // - packed preload only activates when base_addr_b is 4-byte aligned
+        // - unaligned B bases automatically fall back to the scalar P4 preload path
+        packed_bcache_preload_calc =
+            b_cache_active_calc &&
+            GEMM_ENABLE_PACKED_BCACHE_PRELOAD &&
+            (B_BYTES == 1) &&
+            (base_addr_b[1:0] == 2'b00);
     end
+
+    assign bcache_total_bytes_calc =
+        int'(dim_k) * int'(dim_n) * B_BYTES;
+
+    assign bpack_start_addr_calc =
+        {base_addr_b[ADDR_WIDTH-1:2], 2'b00};
+
+    assign bpack_last_byte_addr_calc =
+        base_addr_b + bcache_total_bytes_calc - 1'b1;
+
+    assign bpack_end_addr_calc =
+        {bpack_last_byte_addr_calc[ADDR_WIDTH-1:2], 2'b00};
 
     logic [DIM_WIDTH:0]             k_idx_ext;
     logic [DIM_WIDTH:0]             dim_k_ext;
@@ -286,6 +325,8 @@ module gemm_top #(
 
         bcache_k_d            = bcache_k_q;
         bcache_n_d            = bcache_n_q;
+        bpack_addr_d          = bpack_addr_q;
+        bpack_end_addr_d      = bpack_end_addr_q;
         b_cache_active_job_d  = b_cache_active_job_q;
 
         for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin
@@ -312,6 +353,8 @@ module gemm_top #(
 
                     bcache_k_d           = '0;
                     bcache_n_d           = '0;
+                    bpack_addr_d         = '0;
+                    bpack_end_addr_d     = '0;
                     b_cache_active_job_d = b_cache_active_calc;
 
                     // Defensive job-local cache cleanup.
@@ -327,7 +370,12 @@ module gemm_top #(
                     busy_d        = 1'b1;
 
                     if (b_cache_active_calc) begin
-                        state_d = S_BCACHE_INIT;
+                        if (packed_bcache_preload_calc) begin
+                            state_d = S_BCACHE_PACK_INIT;
+                        end
+                        else begin
+                            state_d = S_BCACHE_INIT;
+                        end
                     end
                     else begin
                         state_d = S_READ_A;
@@ -373,6 +421,66 @@ module gemm_top #(
                 else begin
                     bcache_n_d = bcache_n_q + 1'b1;
                     state_d    = S_BCACHE_READ;
+                end
+            end
+
+            // ----------------------------------------------------
+            // P5 packed B-cache preload path
+            //
+            // First implementation policy:
+            //   - active only for 4-byte aligned base_addr_b
+            //   - unaligned base_addr_b falls back to scalar preload
+            //   - unpacks up to four int8 B elements per 32-bit read
+            // ----------------------------------------------------
+            S_BCACHE_PACK_INIT: begin
+                bpack_addr_d     = bpack_start_addr_calc;
+                bpack_end_addr_d = bpack_end_addr_calc;
+                state_d          = S_BCACHE_PACK_READ;
+            end
+
+            S_BCACHE_PACK_READ: begin
+                mem_rd_addr_d = bpack_addr_q;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_BCACHE_PACK_WAIT;
+                end
+            end
+
+            S_BCACHE_PACK_WAIT: begin
+                if (mem_rd_valid) begin
+                    for (int bl = 0; bl < 4; bl++) begin
+                        int unsigned pack_linear_idx;
+                        int unsigned pack_bk;
+                        int unsigned pack_bn;
+
+                        pack_linear_idx = int'(bpack_addr_q - base_addr_b) + bl;
+
+                        if (pack_linear_idx < int'(dim_k) * int'(dim_n)) begin
+                            pack_bk = pack_linear_idx / int'(dim_n);
+                            pack_bn = pack_linear_idx % int'(dim_n);
+
+                            if ((pack_bk < GEMM_B_CACHE_MAX_K) &&
+                                (pack_bn < GEMM_B_CACHE_MAX_N)) begin
+                                b_cache_d[pack_bk][pack_bn] =
+                                    mem_rd_data[(8 * bl) +: B_DATA_WIDTH];
+                            end
+                        end
+                    end
+
+                    state_d = S_BCACHE_PACK_NEXT;
+                end
+            end
+
+            S_BCACHE_PACK_NEXT: begin
+                if (bpack_addr_q == bpack_end_addr_q) begin
+                    bpack_addr_d     = '0;
+                    bpack_end_addr_d = '0;
+                    state_d          = S_READ_A;
+                end
+                else begin
+                    bpack_addr_d = bpack_addr_q + ADDR_WIDTH'(4);
+                    state_d      = S_BCACHE_PACK_READ;
                 end
             end
 
@@ -582,6 +690,8 @@ module gemm_top #(
 
             bcache_k_q           <= '0;
             bcache_n_q           <= '0;
+            bpack_addr_q         <= '0;
+            bpack_end_addr_q     <= '0;
             b_cache_active_job_q <= 1'b0;
 
             for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin
@@ -622,6 +732,8 @@ module gemm_top #(
 
             bcache_k_q           <= bcache_k_d;
             bcache_n_q           <= bcache_n_d;
+            bpack_addr_q         <= bpack_addr_d;
+            bpack_end_addr_q     <= bpack_end_addr_d;
             b_cache_active_job_q <= b_cache_active_job_d;
 
             for (int bk = 0; bk < GEMM_B_CACHE_MAX_K; bk++) begin

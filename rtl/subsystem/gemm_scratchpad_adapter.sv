@@ -84,6 +84,7 @@ module gemm_scratchpad_adapter #(
     logic [BYTE_PER_WORD-1:0]     shifted_wstrb;
 
     logic [7:0]                   extracted_byte;
+    logic [31:0]                  extracted_dword;
 
     assign byte_offset  = req_addr_q[WORD_LSB_W-1:0];
     assign aligned_addr = {req_addr_q[ADDR_WIDTH-1:WORD_LSB_W], {WORD_LSB_W{1'b0}}};
@@ -92,6 +93,18 @@ module gemm_scratchpad_adapter #(
     assign shifted_wstrb = {{(BYTE_PER_WORD-4){1'b0}}, req_wr_strb_q} << byte_offset;
 
     assign extracted_byte = rdata_word_q >> (byte_offset * 8);
+
+    // P5 packed-read compatible local return data.
+    //
+    // Historical scalar GEMM reads only consumed mem_rd_data[7:0].
+    // Returning a shifted 32-bit window preserves that scalar contract:
+    //   mem_rd_data[7:0] = byte at req_addr_q
+    // and also enables packed int8 reads when req_addr_q is 4-byte aligned:
+    //   mem_rd_data[31:0] = bytes at req_addr_q + 0..3
+    //
+    // Current DATA_WIDTH is 64, so P5 aligned 4-byte windows use byte_offset 0 or 4
+    // and do not cross the fetched AXI beat boundary.
+    assign extracted_dword = rdata_word_q >> (byte_offset * 8);
 
     // Adapter can accept a new request only when idle
     assign mem_req_ready = (state_q == S_IDLE);
@@ -195,10 +208,16 @@ module gemm_scratchpad_adapter #(
             end
 
             // ====================================================
-            // Return selected byte in mem_rd_data[7:0]
+            // Return a 32-bit byte window starting at req_addr_q.
+            //
+            // Scalar compatibility:
+            //   existing scalar GEMM reads still consume only [7:0].
+            //
+            // Packed-read compatibility:
+            //   aligned packed reads can consume [31:0] as four int8 bytes.
             // ====================================================
             S_RD_RETURN: begin
-                mem_rd_data_d  = {24'd0, extracted_byte};
+                mem_rd_data_d  = extracted_dword;
                 mem_rd_valid_d = 1'b1;
                 state_d        = S_DONE;
             end
