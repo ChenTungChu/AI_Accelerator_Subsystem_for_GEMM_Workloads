@@ -69,6 +69,8 @@ proc clear_uvm_run_vars {} {
     unset -nocomplain GEMM_B_CACHE_MAX_K
     unset -nocomplain GEMM_B_CACHE_MAX_N
     unset -nocomplain GEMM_ENABLE_PACKED_BCACHE_PRELOAD
+    unset -nocomplain GEMM_ENABLE_A_ROW_CACHE
+    unset -nocomplain GEMM_A_ROW_CACHE_MAX_K
 
     # DMA-load stress knobs
     unset -nocomplain STRESS_JOB_COUNT

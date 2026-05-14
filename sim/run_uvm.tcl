@@ -502,18 +502,13 @@ if {($GEMM_ENABLE_B_CACHE != 0) && ($GEMM_ENABLE_B_CACHE != 1)} {
 # --------------------------------------------------
 # GEMM packed B-cache preload parameter
 #
-# P5 safe parameter patch.
 # Default:
-#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0 keeps the current P4 baseline.
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0 keeps the current baseline.
 #
 # Manual packed B-cache preload run:
 #   set GEMM_ENABLE_B_CACHE 1
 #   set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
 #   do run_uvm.tcl
-#
-# Note:
-#   This patch only propagates the parameter. RTL behavior is unchanged
-#   until the packed preload FSM is implemented in the next P5 step.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_PACKED_BCACHE_PRELOAD]} {
     set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 0
@@ -523,7 +518,42 @@ if {($GEMM_ENABLE_PACKED_BCACHE_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_BCACHE_PRE
     error "Unsupported GEMM_ENABLE_PACKED_BCACHE_PRELOAD='$GEMM_ENABLE_PACKED_BCACHE_PRELOAD'. Supported values: 0, 1"
 }
 
-puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD"
+# --------------------------------------------------
+# GEMM A-row cache parameters
+#
+# P6 safe parameter plumbing.
+# Default:
+#   GEMM_ENABLE_A_ROW_CACHE=0 keeps the current P5 baseline.
+#
+# Manual A-row cache run:
+#   set GEMM_MAC_LANES 2
+#   set GEMM_ENABLE_B_CACHE 1
+#   set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+#   set GEMM_ENABLE_A_ROW_CACHE 1
+#   set GEMM_A_ROW_CACHE_MAX_K 4
+#   do run_uvm.tcl
+#
+# Note:
+#   P6B only propagates the parameters. RTL behavior is unchanged
+#   until the A-row cache FSM/datapath is implemented in P6C.
+# --------------------------------------------------
+if {![info exists GEMM_ENABLE_A_ROW_CACHE]} {
+    set GEMM_ENABLE_A_ROW_CACHE 0
+}
+
+if {($GEMM_ENABLE_A_ROW_CACHE != 0) && ($GEMM_ENABLE_A_ROW_CACHE != 1)} {
+    error "Unsupported GEMM_ENABLE_A_ROW_CACHE='$GEMM_ENABLE_A_ROW_CACHE'. Supported values: 0, 1"
+}
+
+if {![info exists GEMM_A_ROW_CACHE_MAX_K]} {
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+if {$GEMM_A_ROW_CACHE_MAX_K <= 0} {
+    error "Unsupported GEMM_A_ROW_CACHE_MAX_K='$GEMM_A_ROW_CACHE_MAX_K'. Must be > 0"
+}
+
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K"
 
 
 # --------------------------------------------------
@@ -589,9 +619,9 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 }
 
-# Add feature tags to every log name so 1-lane/2-lane, B-cache, and
-# packed-preload runs are easy to distinguish.
-set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}_bcache_${GEMM_ENABLE_B_CACHE}_pbcache_${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}.log"] $LOG_BASENAME]
+# Add feature tags to every log name so 1-lane/2-lane, B-cache,
+# packed-preload, and A-row-cache runs are easy to distinguish.
+set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}_bcache_${GEMM_ENABLE_B_CACHE}_pbcache_${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_arow_${GEMM_ENABLE_A_ROW_CACHE}_arowk_${GEMM_A_ROW_CACHE_MAX_K}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -613,6 +643,8 @@ vsim -L uvm12 \
   -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
   -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
   -gGEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD \
+  -gGEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE \
+  -gGEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K \
   work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \
