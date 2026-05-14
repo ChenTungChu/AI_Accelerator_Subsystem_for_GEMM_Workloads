@@ -12,10 +12,11 @@ P1: performance profile test completed
 P2: 2-lane K-parallel MAC prototype completed
 P3: 2-lane stress / CDC hardening completed
 P4: B-cache operand reuse optimization completed
+P5: packed B-cache preload optimization completed
 
 Full regression:
-  TOTAL : 47
-  PASS  : 47
+  TOTAL : 50
+  PASS  : 50
   FAIL  : 0
 ```
 
@@ -537,7 +538,7 @@ gemm_2lane_direct_stream_load_store_cdc
 Current regression:
 
 ```text
-47/47 PASS
+50/50 PASS
 ```
 
 ---
@@ -1000,3 +1001,53 @@ DMA / AXI-Stream / Direct Stream CDC sanity is verified
 B-cache representative subset is part of full regression
 47/47 PASS
 ```
+
+
+
+## P5 Packed B-Cache Preload Microarchitecture Addendum
+
+P5 does not change the 2-lane MAC arithmetic datapath. It changes how the B-cache is filled before compute.
+
+Packed preload activation:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+base_addr_b[1:0] == 0
+```
+
+Packed preload FSM states added to `gemm_top`:
+
+```text
+S_BCACHE_PACK_INIT
+S_BCACHE_PACK_READ
+S_BCACHE_PACK_WAIT
+S_BCACHE_PACK_NEXT
+```
+
+Packed preload data mapping:
+
+```text
+mem_rd_data[ 7: 0] -> B linear index + 0
+mem_rd_data[15: 8] -> B linear index + 1
+mem_rd_data[23:16] -> B linear index + 2
+mem_rd_data[31:24] -> B linear index + 3
+```
+
+The compute source remains unchanged from P4 once the cache is filled:
+
+```text
+lane0 B operand = b_cache[k + 0][n]
+lane1 B operand = b_cache[k + 1][n] when lane1_valid
+```
+
+The scratchpad adapter now returns a 32-bit byte window on local reads, which enables packed preload while preserving scalar compatibility for existing local reads.
+
+P5 closure:
+
+```text
+P5A/P5B/P5C/P5D/P5E/P5F/P5G PASS
+Final full regression: 50/50 PASS
+```
+

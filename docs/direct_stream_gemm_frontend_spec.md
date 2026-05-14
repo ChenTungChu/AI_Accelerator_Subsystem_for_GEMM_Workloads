@@ -46,11 +46,11 @@ FAIL  : 0
 ```
 
 
-Current project status after P4 B-cache closure:
+Current project status after P5 packed B-cache closure:
 
 ```text
-Performance GEMM P4: B-cache Operand Reuse Optimization Completed
-Full regression: 47/47 PASS
+Performance GEMM P5: Packed B-cache Preload Optimization Completed
+Full regression: 50/50 PASS
 ```
 
 Direct Stream B1 remains compatible with:
@@ -59,6 +59,7 @@ Direct Stream B1 remains compatible with:
 GEMM_MAC_LANES=1 baseline
 GEMM_MAC_LANES=2 2-lane MAC datapath
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 B-cache datapath
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 packed B-cache preload datapath
 ```
 
 
@@ -1144,7 +1145,7 @@ Current subsystem milestone after P4:
 
 ```text
 Performance GEMM P4: B-cache Operand Reuse Optimization Completed
-Regression: 47/47 PASS
+Regression: 50/50 PASS
 ```
 
 ---
@@ -1201,6 +1202,38 @@ Full regression after P4:
 47/47 PASS
 ```
 
+
+## 17B. P5 Packed B-Cache Preload Compatibility
+
+Direct Stream B1 was also validated with the P5 packed B-cache preload datapath.
+
+The important compatibility point is that Direct Stream operand-buffer reads already return packed byte lanes through `op_rd_data[31:0]`, while scratchpad mode needed the adapter update to return a 32-bit byte window. The router continues to pass through whichever source is selected by `gemm_input_mode`.
+
+Validated P5 Direct Stream configuration:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+FORCE_HELPER_MEM_PATH=0
+```
+
+P5 Direct Stream validation completed:
+
+```text
+Direct Stream smoke RUN_ALL + packed B-cache              PASS
+Direct Stream load-store stress + packed B-cache          PASS
+Direct Stream load-store stress CDC + packed B-cache      PASS
+Full regression representative Direct Stream packed item  PASS
+```
+
+Current full regression after P5:
+
+```text
+50/50 PASS
+```
+
+
 ## 18. Useful Single-Test Runs
 
 ### Direct Stream smoke RUN_ALL
@@ -1250,6 +1283,33 @@ For the P4E CDC variant, switch:
 ```tcl
 set CORE_CLK_PERIOD_NS 13
 ```
+
+
+### Direct Stream load-store stress, 2-lane + packed B-cache preload
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+do run_uvm.tcl
+```
+
+For the CDC variant:
+
+```tcl
+set CORE_CLK_PERIOD_NS 13
+do run_uvm.tcl
+```
+
 
 ### Direct Stream error recovery
 
@@ -1326,4 +1386,4 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P4 subsystem checkpoint is `47/47 PASS`.
+B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P5 subsystem checkpoint is `50/50 PASS`.

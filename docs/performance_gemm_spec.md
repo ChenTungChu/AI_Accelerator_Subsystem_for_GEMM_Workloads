@@ -4,7 +4,7 @@
 
 This document defines the performance-oriented GEMM architecture milestone on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the first performance sequence through P4:
+The project has now completed the first performance sequence through P5:
 
 ```text
 P0: GEMM performance counter baseline
@@ -12,17 +12,18 @@ P1: GEMM performance profile baseline
 P2: 2-lane K-parallel MAC datapath prototype
 P3: 2-lane stress / CDC hardening
 P4: B-cache operand reuse optimization
+P5: packed B-cache preload optimization
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 47
-PASS  : 47
+TOTAL : 50
+PASS  : 50
 FAIL  : 0
 ```
 
-The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths. P4 adds an optional B-operand cache for small GEMM shapes and validates it across the DMA, AXI-Stream, and Direct Stream load/store flows.
+The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths. P4 added an optional B-operand cache for small GEMM shapes, and P5 adds optional packed B-cache preload to reduce the cost of filling that cache.
 
 ---
 
@@ -42,7 +43,7 @@ error/recovery flows
 scoreboard-based result compare
 ```
 
-The 47-item regression now also includes:
+The 50-item regression now also includes:
 
 ```text
 GEMM performance counter smoke
@@ -55,6 +56,7 @@ GEMM_MAC_LANES=2 AXI-Stream load-store stress
 GEMM_MAC_LANES=2 Direct Stream load-store stress
 GEMM_MAC_LANES=2 DMA / AXI-Stream / Direct Stream CDC sanity
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 representative DMA / AXI-Stream / Direct Stream load-store stress
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 representative DMA / AXI-Stream / Direct Stream load-store stress
 ```
 
 ---
@@ -493,6 +495,78 @@ dma_clk  = 10ns
 core_clk = 13ns
 ```
 
+
+## 9B. P5 Packed B-Cache Preload Closure
+
+P5 adds an optional packed B-cache preload path on top of the P4 B-cache architecture.
+
+Effective packed-preload mode:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+base_addr_b[1:0] == 0
+```
+
+First implementation policy:
+
+```text
+aligned B base:
+  use packed B-cache preload
+
+unaligned B base:
+  fallback to scalar P4 B-cache preload
+```
+
+The key local-read contract update is:
+
+```text
+old scratchpad adapter return:
+  mem_rd_data[7:0]  = requested byte
+  mem_rd_data[31:8] = zero
+
+new scratchpad adapter return:
+  mem_rd_data[31:0] = 32-bit byte window starting at requested address
+```
+
+Scalar compatibility is preserved because scalar GEMM reads still consume only `mem_rd_data[7:0]`.
+
+Focused P5 profile result:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 182
+105     | 2 | 3 | 4 | 24   | 6       | 415
+5       | 4 | 4 | 4 | 64   | 16      | 1060
+400     | 4 | 4 | 4 | 64   | 16      | 1060
+401     | 4 | 4 | 4 | 64   | 16      | 1060
+402     | 4 | 4 | 4 | 64   | 16      | 1060
+403     | 4 | 4 | 4 | 64   | 16      | 1060
+```
+
+P5 validation completed:
+
+```text
+P5A: packed operand read spec                         PASS
+P5B: safe parameter plumbing, default-off 47/47 PASS   PASS
+P5C: packed B-cache preload RTL + baseline 47/47 PASS  PASS
+P5D: focused perf/profile compare                      PASS
+P5E: Direct Stream compatibility                       PASS
+P5F: stress / CDC manual subset                         PASS
+P5G: representative packed-read regression added        PASS
+```
+
+Final P5 regression:
+
+```text
+TOTAL : 50
+PASS  : 50
+FAIL  : 0
+```
+
+
 ## 10. Risks and Mitigations
 
 ### Risk 1: Counters change timing
@@ -561,9 +635,9 @@ PASS
 Regression moved from 44/44 to 47/47
 ```
 
-### Stage P5: 32-bit Packed Operand Read / Scratchpad Bandwidth Utilization
+### Stage P5: Packed B-Cache Preload Optimization
 
-Recommended next optimization:
+Implemented and verified:
 
 ```text
 use 32-bit local reads to fetch multiple int8 operands
@@ -572,10 +646,22 @@ reduce narrow operand-read request count
 preserve the existing result model and scoreboard checks
 ```
 
-P5 should begin from the clean P4 checkpoint:
+P5 closed with the following checkpoint:
 
 ```text
-2-lane GEMM + B-cache + full regression 47/47 PASS
+2-lane GEMM + B-cache + packed B-cache preload + full regression 50/50 PASS
+```
+
+### Stage P6: Candidate Next Optimization
+
+Recommended next candidates:
+
+```text
+A-row reuse / A-row cache
+packed A compute read
+larger GEMM dimensions
+4-lane K-parallel GEMM
+tile-based scheduling
 ```
 
 ## 12. Current Acceptance Status
@@ -592,19 +678,23 @@ B-Cache Operand Reuse Optimization  : DONE
 B-Cache Direct Stream Compatibility : DONE
 B-Cache Stress / CDC Manual Subset  : DONE
 B-Cache Regression Inclusion        : DONE
+Packed B-Cache Preload Optimization : DONE
+Packed B-Cache Stress / CDC Subset  : DONE
+Packed B-Cache Regression Inclusion : DONE
 
 Regression:
-  47/47 PASS
+  50/50 PASS
 ```
 
 ---
 
 ## 13. Future Direction
 
-After P4, the project can move toward:
+After P5, the project can move toward:
 
 ```text
-32-bit packed operand reads
+A-row reuse / A-row cache
+packed A compute reads
 operand staging buffers
 wider or multi-read operand access
 tile-based GEMM

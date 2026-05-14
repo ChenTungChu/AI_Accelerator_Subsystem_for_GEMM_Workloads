@@ -6,14 +6,15 @@ This document defines the P5 performance milestone for the AI Accelerator Subsys
 
 The project has already completed the correctness-first subsystem baseline, DMA/AXI-Stream/Direct Stream integration, 2-lane GEMM datapath, 2-lane stress/CDC hardening, and the P4 B-cache operand reuse milestone.
 
-Current baseline before P5:
+Current baseline after P5:
 
 ```text
 P4: B-cache operand reuse optimization completed
+P5: packed B-cache preload optimization completed
 
 Full regression:
-  TOTAL : 47
-  PASS  : 47
+  TOTAL : 50
+  PASS  : 50
   FAIL  : 0
 ```
 
@@ -30,6 +31,62 @@ But the GEMM local memory read path still often fetches one int8 operand per mem
 P5 aims to use the existing 32-bit local memory read container more efficiently by fetching multiple packed int8 operands per request, then unpacking the selected bytes locally.
 
 ---
+
+
+## 1A. P5 Closure Summary
+
+P5 is complete.
+
+Implemented behavior:
+
+```text
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0:
+  preserve the P4 scalar B-cache preload path
+
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 and base_addr_b[1:0] == 0:
+  use packed B-cache preload
+
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 and base_addr_b[1:0] != 0:
+  fallback to scalar B-cache preload
+```
+
+The final implementation required two RTL updates:
+
+```text
+gemm_top.sv:
+  packed B-cache preload FSM and unpack logic
+
+gemm_scratchpad_adapter.sv:
+  local read returns a 32-bit byte window in mem_rd_data[31:0]
+```
+
+Validation closure:
+
+```text
+P5A: Spec                                                   PASS
+P5B: Safe parameter patch, default-off 47/47 regression      PASS
+P5C: Packed B-cache preload RTL and baseline 47/47           PASS
+P5D: Focused perf/profile compare                            PASS
+P5E: Direct Stream compatibility                             PASS
+P5F: DMA / AXIS / Direct Stream stress and CDC subset        PASS
+P5G: Representative packed-read full-regression inclusion    PASS
+Final full regression                                        50/50 PASS
+```
+
+Representative performance profile:
+
+```text
+CASE_ID | P4 B-cache | P5 packed B-cache | Change
+100     | 24         | 43                | +19
+101     | 189        | 182               | -7
+105     | 485        | 415               | -70
+5       | 1147       | 1060              | -87
+400     | 1146       | 1060              | -86
+401     | 1147       | 1060              | -87
+402     | 1147       | 1060              | -87
+403     | 1146       | 1060              | -86
+```
+
 
 ## 2. Naming
 
@@ -170,7 +227,7 @@ saved = 12 reads
 
 P5 must:
 
-1. Preserve the current 47/47 full regression baseline by default.
+1. Preserve the completed P5 50/50 full regression baseline by default.
 2. Keep `GEMM_ENABLE_B_CACHE=0` behavior unchanged.
 3. Keep `GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0` behavior unchanged.
 4. Add packed read as an optional feature, default off.
@@ -902,7 +959,7 @@ Acceptance:
 
 ```text
 compile PASS
-47/47 regression PASS
+47/47 regression PASS for the default-off P5B safety gate
 ```
 
 ### 18.3 P5C: Packed B-Cache Preload RTL
@@ -1019,15 +1076,15 @@ no UVM_ERROR / UVM_FATAL
 
 Add a small representative packed-read subset after manual runs pass.
 
-Recommended first regression subset:
+Final full-regression subset:
 
 ```text
-gemm_2lane_packed_bcache_perf_profile
 gemm_2lane_packed_bcache_dma_load_store_stress
+gemm_2lane_packed_bcache_axis_stream_load_store_stress
 gemm_2lane_packed_bcache_direct_stream_load_store_stress
 ```
 
-Do not add all CDC variants immediately unless runtime is acceptable.
+The CDC variants remain covered by the P5F manual subset and can be promoted to nightly regression if runtime is acceptable.
 
 ---
 
@@ -1407,4 +1464,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `47/47 PASS` baseline gives a clean checkpoint for starting this work.
+The current `50/50 PASS` baseline gives a clean checkpoint for selecting the next performance milestone.

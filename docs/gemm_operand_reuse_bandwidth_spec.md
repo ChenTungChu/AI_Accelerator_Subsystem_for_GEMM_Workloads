@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document records the completed P4 GEMM operand-reuse milestone after the 2-lane MAC datapath and 2-lane stress / CDC hardening work.
+This document records the completed P4 GEMM operand-reuse milestone and the completed P5 packed B-cache preload milestone after the 2-lane MAC datapath and 2-lane stress / CDC hardening work.
 
 Current baseline:
 
@@ -10,10 +10,11 @@ Current baseline:
 P2: 2-lane GEMM MAC datapath prototype completed
 P3: 2-lane stress / CDC hardening completed
 P4: B-cache operand reuse optimization completed
+P5: packed B-cache preload optimization completed
 
 Full regression:
-  TOTAL : 47
-  PASS  : 47
+  TOTAL : 50
+  PASS  : 50
   FAIL  : 0
 ```
 
@@ -26,7 +27,7 @@ P2 increased MAC parallelism,
 but the GEMM core still performed many repeated B operand reads.
 ```
 
-The implemented P4 target is a low-risk, optional B-operand cache prototype.
+The implemented P4 target is a low-risk, optional B-operand cache prototype. The implemented P5 target improves B-cache fill bandwidth by adding optional aligned packed B-cache preload.
 
 ---
 
@@ -91,6 +92,68 @@ TOTAL : 47
 PASS  : 47
 FAIL  : 0
 ```
+
+
+## 1B. P5 Packed B-Cache Preload Closure Summary
+
+P5 is complete.
+
+Implemented RTL behavior:
+
+```text
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0:
+    preserve the scalar P4 B-cache preload path
+
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 and base_addr_b[1:0] == 0:
+    issue aligned 32-bit local reads during B-cache preload
+    unpack up to four int8 B operands from mem_rd_data[31:0]
+    fill b_cache[k][n] from packed byte lanes
+
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 and base_addr_b[1:0] != 0:
+    fallback to scalar P4 B-cache preload
+```
+
+Important local-read contract update:
+
+```text
+gemm_scratchpad_adapter now returns a 32-bit byte window in mem_rd_data[31:0].
+Existing scalar reads remain compatible because mem_rd_data[7:0] is still the requested byte.
+```
+
+P5 focused profile:
+
+```text
+CASE_ID | P4 B-cache | P5 packed B-cache | Change
+100     | 24         | 43                | +19
+101     | 189        | 182               | -7
+105     | 485        | 415               | -70
+5       | 1147       | 1060              | -87
+400     | 1146       | 1060              | -86
+401     | 1147       | 1060              | -87
+402     | 1147       | 1060              | -87
+403     | 1146       | 1060              | -86
+```
+
+P5 validation completed:
+
+```text
+P5A: packed operand read spec                         PASS
+P5B: safe parameter plumbing                           PASS
+P5C: packed B-cache preload RTL                        PASS
+P5D: focused perf/profile compare                      PASS
+P5E: Direct Stream compatibility                       PASS
+P5F: DMA / AXIS / Direct Stream stress and CDC subset  PASS
+P5G: Representative packed-read regression added       PASS
+```
+
+Final P5 regression:
+
+```text
+TOTAL : 50
+PASS  : 50
+FAIL  : 0
+```
+
 
 ## 2. Current Baseline
 
@@ -1363,4 +1426,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `47/47 PASS` baseline is the clean checkpoint for the next performance milestone.
+The current `50/50 PASS` baseline is the clean checkpoint for the next performance milestone.
