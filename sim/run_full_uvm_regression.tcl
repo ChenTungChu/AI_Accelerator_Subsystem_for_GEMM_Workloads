@@ -69,8 +69,6 @@ proc clear_uvm_run_vars {} {
     unset -nocomplain GEMM_B_CACHE_MAX_K
     unset -nocomplain GEMM_B_CACHE_MAX_N
     unset -nocomplain GEMM_ENABLE_PACKED_BCACHE_PRELOAD
-    unset -nocomplain GEMM_ENABLE_A_ROW_CACHE
-    unset -nocomplain GEMM_A_ROW_CACHE_MAX_K
 
     # DMA-load stress knobs
     unset -nocomplain STRESS_JOB_COUNT
@@ -559,6 +557,9 @@ run_reg_item "gemm_2lane_direct_stream_smoke" {
 #
 # P5 packed B-cache representative items are added later:
 #   47 + 3 = 50
+#
+# P6 A-row cache focused items are added later:
+#   50 + 2 = 52
 # ============================================================
 run_reg_item "gemm_2lane_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -668,9 +669,11 @@ run_reg_item "gemm_2lane_direct_stream_load_store_cdc" {
 # Expected regression total after adding these 3 P4 items:
 #   44 + 3 = 47
 #
-# P5 packed B-cache representative items are added below, bringing
-# the current full regression total to:
+# P5 packed B-cache representative items are added below:
 #   47 + 3 = 50
+#
+# P6 A-row cache focused items are added later:
+#   50 + 2 = 52
 # ============================================================
 run_reg_item "gemm_2lane_bcache_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -749,6 +752,10 @@ run_reg_item "gemm_2lane_bcache_direct_stream_load_store_stress" {
 #
 # Expected regression total after adding these 3 P5 items:
 #   47 + 3 = 50
+#
+# P6 A-row cache focused items are added below, bringing
+# the current full regression total to:
+#   50 + 2 = 52
 # ============================================================
 run_reg_item "gemm_2lane_packed_bcache_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -808,6 +815,197 @@ run_reg_item "gemm_2lane_packed_bcache_direct_stream_load_store_stress" {
     set GEMM_B_CACHE_MAX_K 4
     set GEMM_B_CACHE_MAX_N 4
     set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+}
+
+
+# ============================================================
+# 2-lane GEMM P6 A-row cache focused regression
+#
+# These items validate GEMM_ENABLE_A_ROW_CACHE=1 together with
+# the already-hardened performance stack:
+#
+#   GEMM_MAC_LANES=2
+#   GEMM_ENABLE_B_CACHE=1
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#
+# P6C/P6D already validated scalar A-row cache manually with:
+#   - enabled correctness smoke
+#   - enabled perf/profile comparison
+#
+# Full regression first keeps the P6 enabled coverage focused:
+#   1. A-row cache perf counter smoke RUN_ALL
+#   2. A-row cache perf profile
+#
+# Stress / CDC representative load-store items should be added
+# later after P6F manual stress/CDC closure.
+#
+# Expected regression total after adding these 2 P6 focused items:
+#   50 + 2 = 52
+# ============================================================
+run_reg_item "gemm_2lane_arow_cache_perf_counter_smoke" {
+    set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 1
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+run_reg_item "gemm_2lane_arow_cache_perf_profile" {
+    set UVM_TEST ai_accel_subsys_perf_profile_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+    set RUN_ALL 0
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+# ============================================================
+# 2-lane GEMM P6F A-row cache Direct Stream stress / CDC
+# representative regression
+#
+# These items validate GEMM_ENABLE_A_ROW_CACHE=1 together with:
+#   - GEMM_MAC_LANES=2
+#   - GEMM_ENABLE_B_CACHE=1
+#   - GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#
+# Covered path:
+#   Direct Stream preload A/B -> GEMM with packed B-cache
+#   and A-row cache -> DMA store C
+#
+# Covered clock ratios:
+#   1. default clock ratio: dma_clk=10ns, core_clk=14ns
+#   2. CDC sanity ratio   : dma_clk=10ns, core_clk=13ns
+#
+# Expected regression total after adding these 2 P6F items:
+#   52 + 2 = 54
+# ============================================================
+
+run_reg_item "gemm_2lane_packed_bcache_arow_direct_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+run_reg_item "gemm_2lane_packed_bcache_arow_direct_stream_load_store_cdc_10_13" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set DS_STRESS_JOB_COUNT 8
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 1
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 13
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+# ============================================================
+# 2-lane GEMM P6 A-row cache DMA / AXI-Stream representative regression
+#
+# These items validate GEMM_ENABLE_A_ROW_CACHE=1 together with:
+#   - GEMM_MAC_LANES=2
+#   - GEMM_ENABLE_B_CACHE=1
+#   - GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#
+# P6 manual sanity already confirmed:
+#   1. DMA load A/B -> packed B-cache preload -> A-row cache GEMM -> DMA store C
+#   2. AXI-Stream preload A/B -> packed B-cache preload -> A-row cache GEMM -> DMA store C
+#
+# Together with the existing Direct Stream P6 regression items, this
+# completes frontend-path coverage for the scalar A-row cache milestone.
+#
+# Expected regression total after adding these 2 P6 items:
+#   54 + 2 = 56
+# ============================================================
+
+run_reg_item "gemm_2lane_packed_bcache_arow_dma_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set STORE_STRESS_JOB_COUNT 8
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 1
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
+}
+
+run_reg_item "gemm_2lane_packed_bcache_arow_axis_stream_load_store_stress" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+
+    set AXIS_STRESS_JOB_COUNT 8
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 1
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 2
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 4
+    set GEMM_B_CACHE_MAX_N 4
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 4
 }
 
 # ============================================================
