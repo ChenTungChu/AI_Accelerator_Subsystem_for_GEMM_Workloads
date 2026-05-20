@@ -553,7 +553,37 @@ if {$GEMM_A_ROW_CACHE_MAX_K <= 0} {
     error "Unsupported GEMM_A_ROW_CACHE_MAX_K='$GEMM_A_ROW_CACHE_MAX_K'. Must be > 0"
 }
 
-puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K"
+# --------------------------------------------------
+# GEMM packed A-row preload parameter
+#
+# P7 safe parameter plumbing.
+# Default:
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0 keeps the current P6 baseline.
+#
+# Manual packed A-row preload plumbing run:
+#   set GEMM_MAC_LANES 2
+#   set GEMM_ENABLE_B_CACHE 1
+#   set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+#   set GEMM_ENABLE_A_ROW_CACHE 1
+#   set GEMM_A_ROW_CACHE_MAX_K 4
+#   set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+#   do run_uvm.tcl
+#
+# Note:
+#   P7B only propagates the parameter. RTL behavior is unchanged
+#   until the packed A-row preload FSM/datapath is implemented later.
+# --------------------------------------------------
+if {![info exists GEMM_ENABLE_PACKED_A_ROW_PRELOAD]} {
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 0
+}
+
+if {($GEMM_ENABLE_PACKED_A_ROW_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_A_ROW_PRELOAD != 1)} {
+    error "Unsupported GEMM_ENABLE_PACKED_A_ROW_PRELOAD='$GEMM_ENABLE_PACKED_A_ROW_PRELOAD'. Supported values: 0, 1"
+}
+
+
+
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD"
 
 
 # --------------------------------------------------
@@ -619,11 +649,59 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 }
 
-# Add feature tags to every log name so 1-lane/2-lane, B-cache,
-# packed-preload, and A-row-cache runs are easy to distinguish.
-set LOG_BASENAME [string map [list ".log" "_lanes_${GEMM_MAC_LANES}_bcache_${GEMM_ENABLE_B_CACHE}_pbcache_${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_arow_${GEMM_ENABLE_A_ROW_CACHE}_arowk_${GEMM_A_ROW_CACHE_MAX_K}.log"] $LOG_BASENAME]
+# --------------------------------------------------
+# Compact transcript log naming
+#
+# Questa on Windows can fail to open transcript files
+# when the resolved path becomes too long. Keep names
+# readable, but shorten common regression tokens.
+# --------------------------------------------------
+set LOG_BASENAME [string map [list \
+    "ai_accel_subsys_" "aas_" \
+    "axis_stream_load_store_stress_test" "axis_ls_stress" \
+    "direct_stream_load_store_stress_test" "ds_ls_stress" \
+    "dma_load_store_stress_test" "dma_ls_stress" \
+    "axis_stream_preload_smoke_test" "axis_pre_smoke" \
+    "axis_stream_preload_error_test" "axis_pre_err" \
+    "direct_stream_smoke_test" "ds_smoke" \
+    "direct_stream_error_test" "ds_err" \
+    "dma_load_smoke_test" "dma_l_smoke" \
+    "dma_load_error_test" "dma_l_err" \
+    "dma_load_stress_test" "dma_l_stress" \
+    "dma_store_smoke_test" "dma_s_smoke" \
+    "dma_store_error_test" "dma_s_err" \
+    "perf_counter_smoke_test" "perf_cnt" \
+    "perf_profile_test" "perf_prof" \
+    "back_to_back_test" "b2b" \
+    "reset_recovery_test" "rst_rec" \
+    "corner_test" "corner" \
+    "midrun_reset_test" "mid_rst" \
+    "smoke_test" "smoke" \
+    "_result_" "_r" \
+    "_host_primary" "_host" \
+    "_helper_fallback" "_helper" \
+    "_jobs_" "_j" \
+    "_seed_" "_s" \
+    "_random_" "_rnd" \
+    "_gap_" "_g" \
+    "_case_" "_c" \
+] $LOG_BASENAME]
+
+# Add compact GEMM feature tags.
+#
+# l  = GEMM_MAC_LANES
+# bc = GEMM_ENABLE_B_CACHE
+# pb = GEMM_ENABLE_PACKED_BCACHE_PRELOAD
+# ar = GEMM_ENABLE_A_ROW_CACHE
+# ak = GEMM_A_ROW_CACHE_MAX_K
+# pa = GEMM_ENABLE_PACKED_A_ROW_PRELOAD
+set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
+
+# Defensive: keep this close to transcript file in case the script is
+# invoked from a clean working directory or logs/ was deleted mid-session.
+file mkdir [file dirname $LOG_FILE]
 
 transcript file $LOG_FILE
 transcript on
@@ -645,6 +723,7 @@ vsim -L uvm12 \
   -gGEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD \
   -gGEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE \
   -gGEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K \
+  -gGEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD \
   work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \

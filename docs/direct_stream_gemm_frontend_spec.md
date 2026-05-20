@@ -46,11 +46,11 @@ FAIL  : 0
 ```
 
 
-Current project status after P5 packed B-cache closure:
+Current project status after P6 A-row cache closure:
 
 ```text
-Performance GEMM P5: Packed B-cache Preload Optimization Completed
-Full regression: 50/50 PASS
+Performance GEMM P6: Scalar A-row Cache Optimization Completed
+Full regression: 56/56 PASS
 ```
 
 Direct Stream B1 remains compatible with:
@@ -60,6 +60,7 @@ GEMM_MAC_LANES=1 baseline
 GEMM_MAC_LANES=2 2-lane MAC datapath
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 B-cache datapath
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 packed B-cache preload datapath
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 + GEMM_ENABLE_A_ROW_CACHE=1 scalar A-row cache datapath
 ```
 
 
@@ -1141,11 +1142,11 @@ v3.4.3 Direct Stream GEMM Frontend B1 Completed
 Regression: 33/33 PASS
 ```
 
-Current subsystem milestone after P4:
+Current subsystem milestone after P6:
 
 ```text
-Performance GEMM P4: B-cache Operand Reuse Optimization Completed
-Regression: 50/50 PASS
+Performance GEMM P6: Scalar A-row Cache Optimization Completed
+Regression: 56/56 PASS
 ```
 
 ---
@@ -1227,10 +1228,58 @@ Direct Stream load-store stress CDC + packed B-cache      PASS
 Full regression representative Direct Stream packed item  PASS
 ```
 
-Current full regression after P5:
+Historical full regression after P5:
 
 ```text
 50/50 PASS
+```
+
+
+
+## 17C. P6 A-Row Cache Compatibility
+
+Direct Stream B1 was also validated with the P6 scalar A-row cache datapath.
+
+Validated P6 Direct Stream configuration:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+FORCE_HELPER_MEM_PATH=0
+```
+
+In Direct Stream mode with A-row cache enabled:
+
+```text
+Direct Stream preload A -> gemm_operand_buffer A
+Direct Stream preload B -> gemm_operand_buffer B
+B-cache / packed B-cache preload reads B through gemm_input_mem_router
+A-row preload reads A through gemm_input_mem_router
+GEMM compute reads A from local a_row_cache
+GEMM compute reads B from local b_cache
+GEMM writes C to scratchpad
+DMA store exports C
+scoreboard compares result
+```
+
+The key compatibility point is that P6 uses the same scalar GEMM local-read interface for A-row preload. Therefore, Direct Stream does not need a new packet format, new operand-buffer protocol, or new stream header.
+
+P6 Direct Stream validation completed:
+
+```text
+Direct Stream smoke RUN_ALL + A-row cache                 PASS
+Direct Stream load-store stress + A-row cache, 10/14      PASS
+Direct Stream load-store stress + A-row cache, 10/13 CDC  PASS
+Representative full-regression A-row Direct Stream items  PASS
+```
+
+Current full regression after P6:
+
+```text
+56/56 PASS
 ```
 
 
@@ -1311,6 +1360,34 @@ do run_uvm.tcl
 ```
 
 
+
+### Direct Stream load-store stress, 2-lane + packed B-cache + A-row cache
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 4
+do run_uvm.tcl
+```
+
+For the CDC variant:
+
+```tcl
+set CORE_CLK_PERIOD_NS 13
+do run_uvm.tcl
+```
+
 ### Direct Stream error recovery
 
 ```tcl
@@ -1386,4 +1463,4 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P5 subsystem checkpoint is `50/50 PASS`.
+B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P6 subsystem checkpoint is `56/56 PASS`.

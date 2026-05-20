@@ -2,35 +2,22 @@
 
 ## 1. Purpose
 
-This document defines the P6 performance milestone for the AI Accelerator Subsystem GEMM datapath.
+This document defines and records the completed P6 scalar A-row cache milestone for the AI Accelerator Subsystem GEMM datapath.
 
-The project has already completed:
+The project has completed:
 
 ```text
 P4: B-cache operand reuse optimization
 P5: packed B-cache preload optimization
+P6: scalar A-row cache optimization
 
-Full regression after P5:
-  TOTAL : 50
-  PASS  : 50
+Full regression after P6:
+  TOTAL : 56
+  PASS  : 56
   FAIL  : 0
 ```
 
-P6 focuses on reducing repeated **A operand reads** during GEMM compute.
-
-P4 and P5 optimized the B side:
-
-```text
-P4:
-  preload B[k][n] once into B-cache
-  reuse B during compute
-
-P5:
-  reduce B-cache fill overhead
-  use aligned 32-bit packed preload for B-cache
-```
-
-After P5, the next major memory-read inefficiency is on the A side.
+P6 reduces repeated **A operand reads** during GEMM compute. P4 and P5 optimized the B side; P6 complements them by caching the current A row and reusing it across all output columns `n`.
 
 For GEMM:
 
@@ -38,7 +25,7 @@ For GEMM:
 C[m][n] = sum_k A[m][k] * B[k][n]
 ```
 
-For a fixed row `m`, the same A row is reused across multiple output columns `n`:
+For a fixed row `m`, the same A row is reused across multiple output columns:
 
 ```text
 A[m][k] is reused for:
@@ -49,12 +36,12 @@ A[m][k] is reused for:
   C[m][N-1]
 ```
 
-P6 introduces an optional A-row cache:
+The implemented P6 behavior is:
 
 ```text
 for each output row m:
-  preload A[m][0 .. K-1] once
-  compute all C[m][n] using cached A row
+  preload A[m][0 .. K-1] once into a_row_cache
+  compute all C[m][n] using cached A row and cached B operands
 ```
 
 This complements the existing B-cache:
@@ -95,11 +82,86 @@ docs/gemm_a_row_cache_spec.md
 
 ---
 
+
+## 2A. P6 Closure Summary
+
+P6 is complete.
+
+Implemented RTL behavior:
+
+```text
+GEMM_ENABLE_A_ROW_CACHE=0:
+    preserve the P5 packed B-cache baseline
+
+GEMM_ENABLE_A_ROW_CACHE=1 and supported dimensions:
+    preload A[m][k] into a local A-row cache once per output row m
+    compute lane0 A from a_row_cache[k]
+    compute lane1 A from a_row_cache[k+1] when lane1_valid
+    source B from the existing B-cache / packed B-cache path
+```
+
+Validated performance-stack configuration:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+```
+
+Final profile:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 152
+105     | 2 | 3 | 4 | 24   | 6       | 275
+5       | 4 | 4 | 4 | 64   | 16      | 627
+400     | 4 | 4 | 4 | 64   | 16      | 627
+401     | 4 | 4 | 4 | 64   | 16      | 627
+402     | 4 | 4 | 4 | 64   | 16      | 627
+403     | 4 | 4 | 4 | 64   | 16      | 627
+```
+
+Validation completed:
+
+```text
+P6A: spec                                              PASS
+P6B: safe parameter plumbing                           PASS
+P6C: scalar A-row cache RTL prototype                  PASS
+P6D: focused perf/profile compare                      PASS
+P6E: Direct Stream compatibility                       PASS
+P6F: DMA / AXIS / Direct Stream stress and CDC subset  PASS
+P6G: representative regression inclusion               PASS
+```
+
+Final regression:
+
+```text
+TOTAL : 56
+PASS  : 56
+FAIL  : 0
+```
+
+Representative A-row-cache regression items:
+
+```text
+gemm_2lane_arow_cache_dma_load_store_stress
+gemm_2lane_arow_cache_axis_stream_load_store_stress
+gemm_2lane_arow_cache_direct_stream_load_store_stress
+gemm_2lane_arow_cache_dma_load_store_cdc
+gemm_2lane_arow_cache_axis_stream_load_store_cdc
+gemm_2lane_arow_cache_direct_stream_load_store_cdc
+```
+
+---
+
 ## 3. Baseline Before P6
 
 ### 3.1 Datapath Baseline
 
-Current performance datapath baseline:
+Baseline before P6:
 
 ```text
 GEMM_MAC_LANES=2
@@ -121,9 +183,9 @@ Current completed P5 behavior:
 6. Assert done only after final C write completion.
 ```
 
-### 3.2 Current A Operand Behavior
+### 3.2 Pre-P6 A Operand Behavior
 
-Current A access is still compute-driven.
+Before P6, A access was compute-driven.
 
 Conceptually, for each output element:
 
@@ -207,7 +269,7 @@ This is the next natural performance optimization because the A operand reuse pa
 
 ## 5. P6 Design Goals
 
-P6 must:
+P6 completed these goals:
 
 1. Preserve the current 50/50 full regression baseline by default.
 2. Add A-row cache as an optional feature, default off.
@@ -228,7 +290,7 @@ P6 must:
 
 ## 6. Non-Goals for First P6 Step
 
-The first P6 implementation does not attempt to:
+The completed first P6 implementation does not attempt to:
 
 - implement packed A-row preload
 - widen local memory interface
@@ -251,13 +313,13 @@ P6 is a local GEMM datapath optimization.
 
 ## 7. Recommended First Target
 
-Recommended first RTL target:
+Implemented first RTL target:
 
 ```text
 P6 first RTL target = scalar A-row cache
 ```
 
-Do not start with packed A reads.
+Packed A reads were intentionally not included in P6.
 
 Reason:
 
@@ -563,7 +625,7 @@ higher first-implementation risk
 
 ### 11.4 Recommended First Policy
 
-Recommended first implementation:
+Implemented first implementation:
 
 ```text
 Policy A: A-row cache requires B-cache.
@@ -885,25 +947,23 @@ with A-row cache:
 saved = 48
 ```
 
-### 16.5 Expected Busy-Cycle Trend
+### 16.5 Observed Busy-Cycle Trend
 
-Compared to P5 packed B-cache baseline:
+Compared to the P5 packed B-cache baseline, P6 observed the following representative profile:
 
 ```text
-CASE_ID=100:
-  little or no improvement
-
-CASE_ID=101:
-  small improvement
-
-CASE_ID=105:
-  moderate improvement
-
-CASE_ID=5 / 400-403:
-  clear improvement
+CASE_ID | P5 packed B-cache | P6 A-row cache | Change
+100     | 43                | 43             | 0
+101     | 182               | 152            | -30
+105     | 415               | 275            | -140
+5       | 1060              | 627            | -433
+400     | 1060              | 627            | -433
+401     | 1060              | 627            | -433
+402     | 1060              | 627            | -433
+403     | 1060              | 627            | -433
 ```
 
-Do not require exact cycle thresholds in the first implementation.
+The 4x4x4 class improved from roughly 1060 busy cycles to 627 busy cycles because A reads were reduced from `M*N*K = 64` to `M*K = 16`. `CASE_ID=100` has no A-row reuse opportunity because `N=1`.
 
 ---
 
@@ -1126,10 +1186,10 @@ gemm_2lane_arow_cache_direct_stream_load_store_stress
 
 Do not add all CDC variants immediately unless runtime is acceptable.
 
-Expected regression total if adding 3 representative items:
+Expected regression total after adding six stress / CDC representative items:
 
 ```text
-50 + 3 = 53
+50 + 6 = 56
 ```
 
 ---
@@ -1447,31 +1507,31 @@ Patch 10:
 
 ## 22. Acceptance Criteria
 
-P6B safe parameter patch is complete when:
+P6B safe parameter patch is complete:
 
 ```text
 GEMM_ENABLE_A_ROW_CACHE exists and defaults to 0.
-Default full regression remains 50/50 PASS.
+Default full regression remained PASS.
 ```
 
-P6C RTL prototype is complete when:
+P6C RTL prototype is complete:
 
 ```text
 GEMM_ENABLE_A_ROW_CACHE=1 focused tests PASS.
 Result compare PASS.
 MAC/output counters PASS.
 No UVM_ERROR / UVM_FATAL.
-Default-off 50/50 regression remains PASS.
+Default-off regression remained PASS.
 ```
 
-P6D profile step is complete when:
+P6D profile step is complete:
 
 ```text
 perf_profile PASS.
-larger cases show reasonable busy-cycle improvement versus P5.
+larger cases improved versus P5 packed B-cache baseline.
 ```
 
-P6F stress closure is complete when:
+P6F stress closure is complete:
 
 ```text
 A-row cache DMA load-store stress PASS.
@@ -1480,11 +1540,11 @@ A-row cache Direct Stream load-store stress PASS.
 Selected CDC sanity PASS.
 ```
 
-P6G regression closure is complete when:
+P6G regression closure is complete:
 
 ```text
-Selected A-row-cache subset is added to run_full_uvm_regression.tcl.
-New full regression PASS.
+Selected A-row-cache stress / CDC subset added to run_full_uvm_regression.tcl.
+New full regression PASS: 56/56.
 ```
 
 ---
@@ -1545,4 +1605,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `50/50 PASS` P5 baseline gives a clean checkpoint for starting this work.
+P6 is now closed with a `56/56 PASS` full-regression baseline. The next logical checkpoint is packed A-row preload or a larger architectural step such as 4-lane MAC / tiling.

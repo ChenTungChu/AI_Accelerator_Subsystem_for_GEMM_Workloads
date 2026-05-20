@@ -13,10 +13,11 @@ P2: 2-lane K-parallel MAC prototype completed
 P3: 2-lane stress / CDC hardening completed
 P4: B-cache operand reuse optimization completed
 P5: packed B-cache preload optimization completed
+P6: scalar A-row cache optimization completed
 
 Full regression:
-  TOTAL : 50
-  PASS  : 50
+  TOTAL : 56
+  PASS  : 56
   FAIL  : 0
 ```
 
@@ -538,7 +539,7 @@ gemm_2lane_direct_stream_load_store_cdc
 Current regression:
 
 ```text
-50/50 PASS
+56/56 PASS
 ```
 
 ---
@@ -805,7 +806,7 @@ Mitigation:
 
 ```text
 default parameter remains 1
-full 47-item regression includes single-lane mainline coverage
+full 56-item regression includes single-lane mainline coverage
 ```
 
 ---
@@ -979,7 +980,7 @@ Direct Stream tiled operand reuse
 
 ## 21. Summary
 
-The 2-lane GEMM milestone and the P4 B-cache operand-reuse milestone are complete.
+The 2-lane GEMM milestone and the P4/P5/P6 operand-bandwidth milestones are complete.
 
 The key rule was:
 
@@ -999,7 +1000,9 @@ DMA / AXI-Stream / Direct Stream stress are verified
 DMA / AXI-Stream / Direct Stream CDC sanity is verified
 2-lane stress / CDC subset is part of full regression
 B-cache representative subset is part of full regression
-47/47 PASS
+packed B-cache representative subset is part of full regression
+A-row cache stress / CDC representative subset is part of full regression
+56/56 PASS
 ```
 
 
@@ -1049,5 +1052,68 @@ P5 closure:
 ```text
 P5A/P5B/P5C/P5D/P5E/P5F/P5G PASS
 Final full regression: 50/50 PASS
+```
+
+
+
+
+## P6 Scalar A-Row Cache Microarchitecture Addendum
+
+P6 does not change the 2-lane MAC arithmetic datapath. It changes how A operands are supplied to the MAC when the completed performance stack is enabled.
+
+Validated activation:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+```
+
+A-row cache behavior:
+
+```text
+for each output row m:
+  preload A[m][0 .. K-1] once into a_row_cache
+  for each output column n:
+    lane0 A operand = a_row_cache[k + 0]
+    lane1 A operand = a_row_cache[k + 1] when lane1_valid
+```
+
+The B operand source remains the P4/P5 B-cache path:
+
+```text
+lane0 B operand = b_cache[k + 0][n]
+lane1 B operand = b_cache[k + 1][n] when lane1_valid
+```
+
+The 2-lane MAC commit rule remains unchanged:
+
+```text
+acc += lane0_product + optional lane1_product
+mac_count increments by the number of valid lanes
+output_count increments after C write completion
+```
+
+P6 focused profile:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 152
+105     | 2 | 3 | 4 | 24   | 6       | 275
+5       | 4 | 4 | 4 | 64   | 16      | 627
+400     | 4 | 4 | 4 | 64   | 16      | 627
+401     | 4 | 4 | 4 | 64   | 16      | 627
+402     | 4 | 4 | 4 | 64   | 16      | 627
+403     | 4 | 4 | 4 | 64   | 16      | 627
+```
+
+P6 closure:
+
+```text
+P6A/P6B/P6C/P6D/P6E/P6F/P6G PASS
+Final full regression: 56/56 PASS
 ```
 

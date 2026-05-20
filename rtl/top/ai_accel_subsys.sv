@@ -27,7 +27,11 @@ module ai_accel_subsys #(
     // P6 safe parameter patch.
     // Default-off so the current P5 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_A_ROW_CACHE = 1'b0,
-    parameter int GEMM_A_ROW_CACHE_MAX_K  = 4
+    parameter int GEMM_A_ROW_CACHE_MAX_K  = 4,
+
+    // P7 safe parameter patch.
+    // Default-off so the current P6 baseline behavior is unchanged.
+    parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -1479,7 +1483,8 @@ module ai_accel_subsys #(
         .GEMM_ENABLE_B_CACHE (GEMM_ENABLE_B_CACHE),
         .GEMM_ENABLE_PACKED_BCACHE_PRELOAD (GEMM_ENABLE_PACKED_BCACHE_PRELOAD),
         .GEMM_ENABLE_A_ROW_CACHE (GEMM_ENABLE_A_ROW_CACHE),
-        .GEMM_A_ROW_CACHE_MAX_K (GEMM_A_ROW_CACHE_MAX_K)
+        .GEMM_A_ROW_CACHE_MAX_K (GEMM_A_ROW_CACHE_MAX_K),
+        .GEMM_ENABLE_PACKED_A_ROW_PRELOAD (GEMM_ENABLE_PACKED_A_ROW_PRELOAD)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),

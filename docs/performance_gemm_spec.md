@@ -4,7 +4,7 @@
 
 This document defines the performance-oriented GEMM architecture milestone on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the first performance sequence through P5:
+The project has now completed the first performance sequence through P6:
 
 ```text
 P0: GEMM performance counter baseline
@@ -13,17 +13,18 @@ P2: 2-lane K-parallel MAC datapath prototype
 P3: 2-lane stress / CDC hardening
 P4: B-cache operand reuse optimization
 P5: packed B-cache preload optimization
+P6: scalar A-row cache optimization
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 50
-PASS  : 50
+TOTAL : 56
+PASS  : 56
 FAIL  : 0
 ```
 
-The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths. P4 added an optional B-operand cache for small GEMM shapes, and P5 adds optional packed B-cache preload to reduce the cost of filling that cache.
+The current performance milestone moves the GEMM core from a correctness-first single-MAC engine toward a measurable, parameterized, multi-lane architecture while preserving all existing subsystem paths. P4 added an optional B-operand cache for small GEMM shapes, P5 adds optional packed B-cache preload to reduce the cost of filling that cache, and P6 adds optional scalar A-row cache to reduce repeated A reads across output columns.
 
 ---
 
@@ -43,7 +44,7 @@ error/recovery flows
 scoreboard-based result compare
 ```
 
-The 50-item regression now also includes:
+The 56-item regression now also includes:
 
 ```text
 GEMM performance counter smoke
@@ -57,6 +58,7 @@ GEMM_MAC_LANES=2 Direct Stream load-store stress
 GEMM_MAC_LANES=2 DMA / AXI-Stream / Direct Stream CDC sanity
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 representative DMA / AXI-Stream / Direct Stream load-store stress
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 representative DMA / AXI-Stream / Direct Stream load-store stress
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 + GEMM_ENABLE_A_ROW_CACHE=1 representative DMA / AXI-Stream / Direct Stream stress and CDC sanity
 ```
 
 ---
@@ -561,11 +563,93 @@ P5G: representative packed-read regression added        PASS
 Final P5 regression:
 
 ```text
-TOTAL : 50
-PASS  : 50
+TOTAL : 56
+PASS  : 56
 FAIL  : 0
 ```
 
+
+
+## 9C. P6 Scalar A-Row Cache Closure
+
+P6 adds an optional scalar A-row cache path on top of the P5 packed B-cache architecture.
+
+Effective validated mode:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+```
+
+Implemented behavior:
+
+```text
+for each output row m:
+  preload A[m][0 .. K-1] once into a_row_cache
+  compute all C[m][n] using cached A row and cached B operands
+```
+
+A-side read model:
+
+```text
+without A-row cache:
+  A reads = M * N * K
+
+with scalar A-row cache:
+  A preload reads = M * K
+
+saved A reads = M * K * (N - 1)
+```
+
+Focused P6 profile result:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 152
+105     | 2 | 3 | 4 | 24   | 6       | 275
+5       | 4 | 4 | 4 | 64   | 16      | 627
+400     | 4 | 4 | 4 | 64   | 16      | 627
+401     | 4 | 4 | 4 | 64   | 16      | 627
+402     | 4 | 4 | 4 | 64   | 16      | 627
+403     | 4 | 4 | 4 | 64   | 16      | 627
+```
+
+P6 validation completed:
+
+```text
+P6A: A-row cache spec                                PASS
+P6B: safe parameter plumbing                         PASS
+P6C: scalar A-row cache RTL prototype                PASS
+P6D: focused perf/profile compare                    PASS
+P6E: Direct Stream compatibility                     PASS
+P6F: stress / CDC subset                             PASS
+P6G: representative A-row-cache regression added     PASS
+```
+
+Final P6 regression:
+
+```text
+TOTAL : 56
+PASS  : 56
+FAIL  : 0
+```
+
+Representative A-row-cache regression items:
+
+```text
+gemm_2lane_arow_cache_dma_load_store_stress
+gemm_2lane_arow_cache_axis_stream_load_store_stress
+gemm_2lane_arow_cache_direct_stream_load_store_stress
+gemm_2lane_arow_cache_dma_load_store_cdc
+gemm_2lane_arow_cache_axis_stream_load_store_cdc
+gemm_2lane_arow_cache_direct_stream_load_store_cdc
+```
+
+---
 
 ## 10. Risks and Mitigations
 
@@ -652,13 +736,30 @@ P5 closed with the following checkpoint:
 2-lane GEMM + B-cache + packed B-cache preload + full regression 50/50 PASS
 ```
 
-### Stage P6: Candidate Next Optimization
+### Stage P6: Scalar A-Row Cache Optimization
+
+Implemented and verified:
+
+```text
+optional scalar A-row cache
+A row preload once per output row m
+A-row reuse across output columns n
+integration with 2-lane + B-cache + packed B-cache performance stack
+DMA / AXI-Stream / Direct Stream stress and CDC validation
+```
+
+P6 closed with the following checkpoint:
+
+```text
+2-lane GEMM + B-cache + packed B-cache preload + A-row cache + full regression 56/56 PASS
+```
+
+### Stage P7: Candidate Next Optimization
 
 Recommended next candidates:
 
 ```text
-A-row reuse / A-row cache
-packed A compute read
+packed A-row preload
 larger GEMM dimensions
 4-lane K-parallel GEMM
 tile-based scheduling
@@ -681,19 +782,22 @@ B-Cache Regression Inclusion        : DONE
 Packed B-Cache Preload Optimization : DONE
 Packed B-Cache Stress / CDC Subset  : DONE
 Packed B-Cache Regression Inclusion : DONE
+Scalar A-Row Cache Optimization   : DONE
+A-Row Cache Stress / CDC Subset    : DONE
+A-Row Cache Regression Inclusion   : DONE
 
 Regression:
-  50/50 PASS
+  56/56 PASS
 ```
 
 ---
 
 ## 13. Future Direction
 
-After P5, the project can move toward:
+After P6, the project can move toward:
 
 ```text
-A-row reuse / A-row cache
+packed A-row preload
 packed A compute reads
 operand staging buffers
 wider or multi-read operand access

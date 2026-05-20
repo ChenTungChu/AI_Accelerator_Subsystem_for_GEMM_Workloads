@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document records the completed P4 GEMM operand-reuse milestone and the completed P5 packed B-cache preload milestone after the 2-lane MAC datapath and 2-lane stress / CDC hardening work.
+This document records the completed P4 GEMM operand-reuse milestone and the completed P5 packed B-cache preload milestone and completed P6 scalar A-row cache milestone after the 2-lane MAC datapath and 2-lane stress / CDC hardening work.
 
 Current baseline:
 
@@ -11,10 +11,11 @@ P2: 2-lane GEMM MAC datapath prototype completed
 P3: 2-lane stress / CDC hardening completed
 P4: B-cache operand reuse optimization completed
 P5: packed B-cache preload optimization completed
+P6: scalar A-row cache optimization completed
 
 Full regression:
-  TOTAL : 50
-  PASS  : 50
+  TOTAL : 56
+  PASS  : 56
   FAIL  : 0
 ```
 
@@ -27,7 +28,7 @@ P2 increased MAC parallelism,
 but the GEMM core still performed many repeated B operand reads.
 ```
 
-The implemented P4 target is a low-risk, optional B-operand cache prototype. The implemented P5 target improves B-cache fill bandwidth by adding optional aligned packed B-cache preload.
+The implemented P4 target is a low-risk, optional B-operand cache prototype. The implemented P5 target improves B-cache fill bandwidth by adding optional aligned packed B-cache preload. The implemented P6 target reduces A-side bandwidth by adding optional scalar A-row reuse.
 
 ---
 
@@ -155,6 +156,81 @@ FAIL  : 0
 ```
 
 
+
+## 1C. P6 Scalar A-Row Cache Closure Summary
+
+P6 is complete.
+
+Implemented RTL behavior:
+
+```text
+GEMM_ENABLE_A_ROW_CACHE=0:
+    preserve the P5 packed B-cache baseline
+
+GEMM_ENABLE_A_ROW_CACHE=1 and supported K:
+    preload A[m][k] once per output row m
+    store the current row in a local A-row cache
+    reuse cached A values across all output columns n
+```
+
+A-row cache is validated as part of the performance stack:
+
+```text
+GEMM_MAC_LANES=2
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+```
+
+P6 focused profile:
+
+```text
+CASE_ID | P5 packed B-cache | P6 A-row cache | Change
+100     | 43                | 43             | 0
+101     | 182               | 152            | -30
+105     | 415               | 275            | -140
+5       | 1060              | 627            | -433
+400     | 1060              | 627            | -433
+401     | 1060              | 627            | -433
+402     | 1060              | 627            | -433
+403     | 1060              | 627            | -433
+```
+
+For the 4x4x4 class:
+
+```text
+without A-row cache:
+  A reads = M * N * K = 64
+
+with A-row cache:
+  A reads = M * K = 16
+
+saved A reads = 48
+```
+
+Validation completed:
+
+```text
+P6A: A-row cache spec                                PASS
+P6B: safe parameter plumbing                         PASS
+P6C: scalar A-row cache RTL prototype                PASS
+P6D: focused perf/profile compare                    PASS
+P6E: Direct Stream compatibility                     PASS
+P6F: DMA / AXIS / Direct Stream stress and CDC subset PASS
+P6G: Representative regression inclusion             PASS
+```
+
+Final P6 regression:
+
+```text
+TOTAL : 56
+PASS  : 56
+FAIL  : 0
+```
+
+---
+
 ## 2. Current Baseline
 
 ### 2.1 Current 2-Lane GEMM Datapath
@@ -201,7 +277,7 @@ CASE_ID | KIND | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
 403     | 2    | 4 | 4 | 4 | 64   | 16      | 1610
 ```
 
-P4 does not lock exact cycle matching in regression. It preserves correctness, reports profile changes, and protects representative B-cache flows in full regression.
+P4/P5/P6 do not lock exact cycle matching in regression. They preserve correctness, report profile changes, and protect representative optimized flows in full regression.
 
 ---
 
@@ -358,7 +434,7 @@ requires careful row transition handling
 B reads remain repeated
 ```
 
-Potential P4 follow-up.
+Completed as P6 using scalar preload first.
 
 ### 6.3 Approach C: Combined A Row Cache + B Cache
 
@@ -381,7 +457,7 @@ Limitations:
 more FSM and verification complexity
 ```
 
-Potential P4 or P5 follow-up after B-cache is stable.
+Completed as the P6 validated performance stack: 2-lane + B-cache + packed B-cache preload + scalar A-row cache.
 
 ### 6.4 Approach D: 32-bit Packed Operand Reads
 
@@ -1391,24 +1467,31 @@ tile-based scheduling
 4-lane MAC
 ```
 
-Recommended next optimization after B cache:
+Completed follow-up optimizations after B cache:
 
 ```text
-32-bit packed B-cache preload
+P5: 32-bit packed B-cache preload
+P6: scalar A-row cache
+```
+
+Recommended next optimization:
+
+```text
+packed A-row preload
 ```
 
 Reason:
 
 ```text
-B cache preload currently still reads one int8 value per memory request.
-A packed preload can reduce preload request count by extracting 4 B elements from one 32-bit read when aligned.
+P6 scalar A-row cache still fills one A byte per read.
+A packed preload can reduce A-row fill request count by extracting multiple int8 A elements from one 32-bit read when aligned.
 ```
 
 ---
 
 ## 24. Summary
 
-P4 improves GEMM performance by reducing repeated operand reads rather than immediately adding more MAC lanes.
+P4/P5/P6 improve GEMM performance by reducing repeated or inefficient operand reads rather than only adding more MAC lanes.
 
 The safest first optimization is:
 
@@ -1426,4 +1509,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `50/50 PASS` baseline is the clean checkpoint for the next performance milestone.
+The current `56/56 PASS` baseline is the clean checkpoint for the next performance milestone.

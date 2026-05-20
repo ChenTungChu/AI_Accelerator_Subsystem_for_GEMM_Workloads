@@ -31,71 +31,101 @@ set REG_TOTAL 0
 set REG_PASS  0
 set REG_FAIL  0
 
+# Keep item-level results so a failed full regression immediately
+# reports which item(s) failed and where their logs are.
+set REG_PASS_ITEMS {}
+set REG_FAIL_ITEMS {}
+
+# Optional debug knob:
+#   Default behavior is to run the entire regression and report all
+#   failed items at the end.
+#
+#   To stop immediately on the first failed item:
+#     set STOP_ON_FIRST_FAIL 1
+#     do run_full_uvm_regression.tcl
+if {![info exists STOP_ON_FIRST_FAIL]} {
+    set STOP_ON_FIRST_FAIL 0
+}
+
+if {($STOP_ON_FIRST_FAIL != 0) && ($STOP_ON_FIRST_FAIL != 1)} {
+    error "\[REGRESSION\] Unsupported STOP_ON_FIRST_FAIL='$STOP_ON_FIRST_FAIL'. Supported values: 0, 1"
+}
+
 # ------------------------------------------------------------
 # Clear sticky Questa Tcl variables before each run
+#
+# IMPORTANT:
+#   This proc is called from inside run_reg_item.
+#   Therefore plain "unset VAR" would only target proc-local
+#   variables and would not reliably clear top-level Questa Tcl
+#   variables left by the previous regression item.
+#
+#   Use "unset ::VAR" to clear the global variables that run_uvm.tcl
+#   reads.
 # ------------------------------------------------------------
 proc clear_uvm_run_vars {} {
-    unset -nocomplain UVM_TEST
-    unset -nocomplain TESTNAME
-    unset -nocomplain CASE_ID
+    foreach v {
+        UVM_TEST
+        TESTNAME
+        CASE_ID
 
-    unset -nocomplain ENABLE_RESULT_CHECK
-    unset -nocomplain FORCE_HELPER_MEM_PATH
-    unset -nocomplain RUN_ALL
-    unset -nocomplain EXTRA_PLUSARGS
+        ENABLE_RESULT_CHECK
+        FORCE_HELPER_MEM_PATH
+        RUN_ALL
+        EXTRA_PLUSARGS
+        LOG_FILE
 
-    unset -nocomplain USE_HOST_AGENT_CLEAR_C
-    unset -nocomplain USE_HOST_AGENT_READBACK_C
-    unset -nocomplain USE_HOST_AGENT_PRELOAD_AB
+        USE_HOST_AGENT_CLEAR_C
+        USE_HOST_AGENT_READBACK_C
+        USE_HOST_AGENT_PRELOAD_AB
 
-    unset -nocomplain JOB_COUNT
-    unset -nocomplain JOB0_CASE_ID
-    unset -nocomplain JOB1_CASE_ID
-    unset -nocomplain JOB2_CASE_ID
-    unset -nocomplain JOB3_CASE_ID
+        JOB_COUNT
+        JOB0_CASE_ID
+        JOB1_CASE_ID
+        JOB2_CASE_ID
+        JOB3_CASE_ID
 
-    unset -nocomplain PRE_RESET_CASE_ID
-    unset -nocomplain POST_RESET_CASE_ID
-    unset -nocomplain RESET_HOLD_CYCLES
-    unset -nocomplain POST_RESET_SETTLE_CYCLES
+        PRE_RESET_CASE_ID
+        POST_RESET_CASE_ID
+        RESET_HOLD_CYCLES
+        POST_RESET_SETTLE_CYCLES
 
-    # Clock-ratio knobs
-    unset -nocomplain DMA_CLK_PERIOD_NS
-    unset -nocomplain CORE_CLK_PERIOD_NS
+        DMA_CLK_PERIOD_NS
+        CORE_CLK_PERIOD_NS
 
-    # GEMM datapath feature knobs
-    unset -nocomplain GEMM_MAC_LANES
-    unset -nocomplain GEMM_ENABLE_B_CACHE
-    unset -nocomplain GEMM_B_CACHE_MAX_K
-    unset -nocomplain GEMM_B_CACHE_MAX_N
-    unset -nocomplain GEMM_ENABLE_PACKED_BCACHE_PRELOAD
+        GEMM_MAC_LANES
+        GEMM_ENABLE_B_CACHE
+        GEMM_B_CACHE_MAX_K
+        GEMM_B_CACHE_MAX_N
+        GEMM_ENABLE_PACKED_BCACHE_PRELOAD
+        GEMM_ENABLE_A_ROW_CACHE
+        GEMM_A_ROW_CACHE_MAX_K
+        GEMM_ENABLE_PACKED_A_ROW_PRELOAD
 
-    # DMA-load stress knobs
-    unset -nocomplain STRESS_JOB_COUNT
-    unset -nocomplain STRESS_SEED
-    unset -nocomplain STRESS_RANDOM
-    unset -nocomplain STRESS_GAP_CYCLES
+        STRESS_JOB_COUNT
+        STRESS_SEED
+        STRESS_RANDOM
+        STRESS_GAP_CYCLES
 
-    # DMA load-store / store stress knobs
-    unset -nocomplain STORE_STRESS_JOB_COUNT
-    unset -nocomplain STORE_STRESS_SEED
-    unset -nocomplain STORE_STRESS_RANDOM
-    unset -nocomplain STORE_STRESS_GAP_CYCLES
+        STORE_STRESS_JOB_COUNT
+        STORE_STRESS_SEED
+        STORE_STRESS_RANDOM
+        STORE_STRESS_GAP_CYCLES
 
-    # AXI-Stream stress knobs
-    unset -nocomplain AXIS_STRESS_JOB_COUNT
-    unset -nocomplain AXIS_STRESS_SEED
-    unset -nocomplain AXIS_STRESS_RANDOM
-    unset -nocomplain AXIS_STRESS_GAP_CYCLES
+        AXIS_STRESS_JOB_COUNT
+        AXIS_STRESS_SEED
+        AXIS_STRESS_RANDOM
+        AXIS_STRESS_GAP_CYCLES
 
-    # Direct Stream stress knobs
-    unset -nocomplain DS_STRESS_JOB_COUNT
-    unset -nocomplain DS_STRESS_SEED
-    unset -nocomplain DS_STRESS_RANDOM
-    unset -nocomplain DS_STRESS_GAP_CYCLES
+        DS_STRESS_JOB_COUNT
+        DS_STRESS_SEED
+        DS_STRESS_RANDOM
+        DS_STRESS_GAP_CYCLES
 
-    # Misc directed/debug knobs
-    unset -nocomplain RUN_START_WHILE_BUSY
+        RUN_START_WHILE_BUSY
+    } {
+        unset -nocomplain ::$v
+    }
 }
 
 # ------------------------------------------------------------
@@ -123,15 +153,60 @@ proc check_uvm_log {log_file} {
 }
 
 # ------------------------------------------------------------
+# Utility: return current LOG_FILE or a placeholder
+# ------------------------------------------------------------
+proc get_current_log_file {} {
+    if {[info exists ::LOG_FILE]} {
+        return $::LOG_FILE
+    }
+    return "<LOG_FILE not set>"
+}
+
+# ------------------------------------------------------------
+# Utility: record one failed item
+# ------------------------------------------------------------
+proc record_reg_fail {idx name log_file} {
+    global REG_FAIL_ITEMS
+    lappend REG_FAIL_ITEMS [list $idx $name $log_file]
+}
+
+# ------------------------------------------------------------
+# Utility: record one passed item
+# ------------------------------------------------------------
+proc record_reg_pass {idx name log_file} {
+    global REG_PASS_ITEMS
+    lappend REG_PASS_ITEMS [list $idx $name $log_file]
+}
+
+# ------------------------------------------------------------
+# Utility: optional fail-fast behavior
+# ------------------------------------------------------------
+proc maybe_stop_on_first_fail {idx name log_file} {
+    global STOP_ON_FIRST_FAIL
+
+    if {$STOP_ON_FIRST_FAIL} {
+        puts "\n============================================================"
+        puts "\[REGRESSION\] STOP_ON_FIRST_FAIL"
+        puts "============================================================"
+        puts "First failed item:"
+        puts [format "  #%-4s %s" $idx $name]
+        puts "        log: $log_file"
+        puts "============================================================"
+        error "\[REGRESSION\] STOP_ON_FIRST_FAIL: item #$idx '$name' failed"
+    }
+}
+
+# ------------------------------------------------------------
 # Run one item
 # ------------------------------------------------------------
 proc run_reg_item {name setup_body} {
-    global REG_TOTAL REG_PASS REG_FAIL LOG_FILE
+    global REG_TOTAL REG_PASS REG_FAIL
 
     incr REG_TOTAL
+    set item_idx $REG_TOTAL
 
     puts "\n============================================================"
-    puts "\[REGRESSION\] START #$REG_TOTAL: $name"
+    puts "\[REGRESSION\] START #$item_idx: $name"
     puts "============================================================"
 
     clear_uvm_run_vars
@@ -143,20 +218,30 @@ proc run_reg_item {name setup_body} {
     uplevel 1 $setup_body
 
     set run_status [catch {do run_uvm.tcl} run_msg]
+    set item_log [get_current_log_file]
 
     if {$run_status != 0} {
         puts "\[REGRESSION\]\[FAIL\] Tcl/run error in: $name"
         puts $run_msg
+
+        record_reg_fail $item_idx $name $item_log
         incr REG_FAIL
+
+        maybe_stop_on_first_fail $item_idx $name $item_log
         return
     }
 
-    if {[info exists LOG_FILE] && [check_uvm_log $LOG_FILE]} {
+    if {[check_uvm_log $item_log]} {
         puts "\[REGRESSION\]\[PASS\] $name"
+        record_reg_pass $item_idx $name $item_log
         incr REG_PASS
     } else {
         puts "\[REGRESSION\]\[FAIL\] $name"
+
+        record_reg_fail $item_idx $name $item_log
         incr REG_FAIL
+
+        maybe_stop_on_first_fail $item_idx $name $item_log
     }
 }
 
@@ -217,6 +302,7 @@ run_reg_item "smoke CASE_ID=403" {
 run_reg_item "dma_load_smoke RUN_ALL" {
     set UVM_TEST ai_accel_subsys_dma_load_smoke_test
     set CASE_ID 100
+    set ENABLE_RESULT_CHECK 1
     set RUN_ALL 1
 }
 
@@ -1019,6 +1105,20 @@ puts "TOTAL : $REG_TOTAL"
 puts "PASS  : $REG_PASS"
 puts "FAIL  : $REG_FAIL"
 puts "============================================================"
+
+if {[llength $REG_FAIL_ITEMS] != 0} {
+    puts "\n============================================================"
+    puts "\[REGRESSION\] FAILED ITEMS"
+    puts "============================================================"
+
+    foreach item $REG_FAIL_ITEMS {
+        lassign $item idx item_name item_log
+        puts [format "#%-4s %s" $idx $item_name]
+        puts "      log: $item_log"
+    }
+
+    puts "============================================================"
+}
 
 if {$REG_FAIL != 0} {
     error "\[REGRESSION\] FAILED: $REG_FAIL item(s) failed"
