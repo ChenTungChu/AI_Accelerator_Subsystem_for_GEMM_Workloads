@@ -1,6 +1,7 @@
 # Personal or test files
 personal_notes.md
 specification_draft.md
+run_p8d_perf_compare.tcl
 
 # Local files
 local_uvm_12.tcl

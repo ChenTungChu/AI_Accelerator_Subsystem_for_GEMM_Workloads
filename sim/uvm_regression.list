@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 44
-#   PASS  : 44
+#   TOTAL : 59
+#   PASS  : 59
 #   FAIL  : 0
 #
 # Major coverage:
@@ -28,12 +28,12 @@
 #   - 2-lane GEMM performance counter smoke
 #   - 2-lane GEMM performance profile
 #   - 2-lane Direct Stream compatibility smoke
-#   - 2-lane DMA load-store stress
-#   - 2-lane AXI-Stream load-store stress
-#   - 2-lane Direct Stream load-store stress
-#   - 2-lane DMA load-store CDC sanity
-#   - 2-lane AXI-Stream load-store CDC sanity
-#   - 2-lane Direct Stream load-store CDC sanity
+#   - 2-lane DMA / AXI-Stream / Direct Stream stress
+#   - 2-lane DMA / AXI-Stream / Direct Stream CDC sanity
+#   - 2-lane B-cache representative regression
+#   - 2-lane packed B-cache representative regression
+#   - 2-lane packed B-cache + A-row cache stress / CDC representative regression
+#   - 2-lane packed B-cache + A-row cache + packed A-row representative regression
 #   - back-to-back jobs
 #   - reset recovery
 #   - corner recipe
@@ -45,15 +45,10 @@
 # ------------------------------------------------------------
 # Smoke test (primary host path)
 # ------------------------------------------------------------
-# fixed baseline
-ai_accel_subsys_smoke_test CASE_ID 5 +ENABLE_RESULT_CHECK=1
-
-# variable-dimension
+ai_accel_subsys_smoke_test CASE_ID 5   +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 101 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 105 +ENABLE_RESULT_CHECK=1
-
-# configurable-base
 ai_accel_subsys_smoke_test CASE_ID 400 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 401 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_smoke_test CASE_ID 402 +ENABLE_RESULT_CHECK=1
@@ -61,398 +56,119 @@ ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
 
 
 # ------------------------------------------------------------
-# DMA load smoke test (primary DMA-load path)
-#
-# Coverage:
-#   DMA source memory
-#     -> dma_load_engine
-#     -> scratchpad_port0_owner_mux
-#     -> BRAM Port0
-#     -> GEMM
-#     -> host AXI0 readback C
-#     -> local expected compare / scoreboard
-#
-# RUN_ALL recipe:
-#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# DMA load smoke / error / stress / CDC
 # ------------------------------------------------------------
 ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# DMA load error / recovery test
-#
-# Coverage:
-#   - zero load_beats
-#   - unaligned source address
-#   - unaligned destination address
-#   - source AXI RRESP error injection
-#   - Port0 host recovery after DMA load error
-#   - valid DMA load + GEMM recovery after errors
-# ------------------------------------------------------------
 ai_accel_subsys_dma_load_error_test +ENABLE_RESULT_CHECK=0
-
-
-# ------------------------------------------------------------
-# DMA load stress test
-#
-# Coverage:
-#   - repeated DMA load -> GEMM -> host readback flow
-#   - random case selection
-#   - scoreboard result pairing across multiple jobs
-#   - no stale result/control pairing
-# ------------------------------------------------------------
 ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10
-
-
-# ------------------------------------------------------------
-# DMA load CDC clock-ratio sanity
-#
-# Coverage:
-#   - same DMA load stress flow
-#   - non-default dma_clk/core_clk ratio
-#   - validates current control/status CDC cleanup under
-#     alternate clock period relationship
-# ------------------------------------------------------------
 ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
 
 
 # ------------------------------------------------------------
-# DMA store / S2MM smoke test
-#
-# Coverage:
-#   DMA source memory
-#     -> DMA load A/B into scratchpad
-#     -> GEMM
-#     -> C written into scratchpad
-#     -> dma_store_engine
-#     -> destination AXI-MM memory model
-#     -> destination memory compare / scoreboard
-#
-# RUN_ALL recipe:
-#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# DMA store / S2MM smoke / error / load-store stress
 # ------------------------------------------------------------
-ai_accel_subsys_dma_store_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# DMA store / S2MM error / recovery test
-#
-# Coverage:
-#   - zero store_byte_count
-#   - unaligned scratchpad source address
-#   - unaligned destination address
-#   - destination AXI BRESP error injection
-#   - Port0 host recovery after DMA store error
-#   - valid S2MM recovery store after errors
-#
-# Note:
-#   start_while_busy is verified manually/optionally with:
-#     +RUN_START_WHILE_BUSY=1
-#   It is not included in the default full regression.
-# ------------------------------------------------------------
+ai_accel_subsys_dma_store_smoke_test +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_dma_store_error_test +ENABLE_RESULT_CHECK=0
-
-
-# ------------------------------------------------------------
-# DMA load + store stress test
-#
-# Coverage:
-#   - repeated full DMA path:
-#       DMA load A/B
-#         -> GEMM
-#         -> DMA store C
-#         -> destination memory compare
-#         -> scoreboard result pairing
-#   - random case selection
-#   - repeated Port0 owner switching:
-#       HOST -> DMA_LOAD -> GEMM/core access -> DMA_STORE -> HOST
-#   - stale destination memory prevention
-#   - ctrl/result pairing across multiple S2MM jobs
-#
-# Full-regression version:
-#   8 jobs
-#
-# Manual/nightly version already verified:
-#   STORE_STRESS_JOB_COUNT=20
-# ------------------------------------------------------------
 ai_accel_subsys_dma_load_store_stress_test +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10
 
 
 # ------------------------------------------------------------
-# AXI-Stream preload smoke test
-#
-# Coverage:
-#   AXI source memory
-#     -> axis_src_axi_ar/r responder
-#     -> axi_mm2s_dma
-#     -> axis_async_fifo
-#     -> axi_stream_loader
-#     -> axis_scratchpad_write_adapter
-#     -> scratchpad_port1_owner_mux
-#     -> BRAM Port1
-#     -> GEMM
-#     -> DMA store C
-#     -> destination memory compare / scoreboard
-#
-# RUN_ALL recipe:
-#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
+# AXI-Stream preload / load-store / CDC
 # ------------------------------------------------------------
 ai_accel_subsys_axis_stream_preload_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# AXI-Stream preload error / recovery test
-#
-# Coverage:
-#   - zero axis_load_beats
-#   - unaligned AXI-Stream source address
-#   - unaligned scratchpad destination address
-#   - AXI-Stream source RRESP error injection
-#   - valid AXI-Stream preload recovery after errors
-#   - valid GEMM + DMA store recovery after errors
-# ------------------------------------------------------------
 ai_accel_subsys_axis_stream_preload_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# AXI-Stream load-store stress test
-#
-# Coverage:
-#   - repeated full AXI-Stream frontend path:
-#       AXI-Stream preload A/B
-#         -> GEMM
-#         -> DMA store C
-#         -> destination memory compare
-#         -> scoreboard result pairing
-#   - random case selection
-#   - repeated Port1 owner switching:
-#       HOST/GEMM -> AXIS_PRELOAD -> GEMM -> DMA_STORE
-#   - stale destination memory prevention
-#
-# Full-regression version:
-#   8 jobs
-#
-# Manual/nightly version already verified:
-#   AXIS_STRESS_JOB_COUNT=20
-# ------------------------------------------------------------
 ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10
-
-
-# ------------------------------------------------------------
-# AXI-Stream load-store CDC clock-ratio sanity
-#
-# Coverage:
-#   - same AXI-Stream load-store stress flow
-#   - non-default dma_clk/core_clk ratio
-#   - validates MM2S -> axis_async_fifo -> stream loader CDC
-# ------------------------------------------------------------
 ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
 
 
 # ------------------------------------------------------------
-# Direct Stream GEMM frontend smoke test
-#
-# Coverage:
-#   Direct Stream source memory
-#     -> ds_src_axi_ar/r responder
-#     -> axi_mm2s_dma
-#     -> axis_async_fifo
-#     -> axi_stream_loader
-#     -> gemm_operand_buffer_write_adapter
-#     -> gemm_operand_buffer A/B
-#     -> gemm_input_mem_router
-#     -> GEMM reads A/B from operand buffer
-#     -> scratchpad C
-#     -> DMA store C
-#     -> destination memory compare / scoreboard
-#
-# RUN_ALL recipe:
-#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
-# ------------------------------------------------------------
-ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# Direct Stream GEMM frontend error / recovery test
-#
-# Coverage:
-#   - zero ds_load_beats
-#   - unaligned Direct Stream source address
-#   - unaligned Direct Stream destination/base address
-#   - invalid ds_operand_sel X-state check
-#   - Direct Stream source RRESP error injection
-#   - valid Direct Stream preload recovery after errors
-#   - valid GEMM + DMA store recovery after errors
+# Direct Stream smoke / error / load-store / CDC
 # ------------------------------------------------------------
 ai_accel_subsys_direct_stream_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# Direct Stream load-store stress test
-#
-# Coverage:
-#   - repeated full Direct Stream frontend path:
-#       Direct Stream preload A/B
-#         -> GEMM reads A/B from operand buffer
-#         -> DMA store C
-#         -> destination memory compare
-#         -> scoreboard result pairing
-#   - random case selection
-#   - repeated operand buffer clear/load/read flow
-#   - stale destination memory prevention
-#
-# Full-regression version:
-#   8 jobs
-#
-# Manual/nightly target:
-#   DS_STRESS_JOB_COUNT=20
-# ------------------------------------------------------------
+ai_accel_subsys_direct_stream_smoke_test +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
 ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10
-
-
-# ------------------------------------------------------------
-# Direct Stream load-store CDC clock-ratio sanity
-#
-# Coverage:
-#   - same Direct Stream load-store stress flow
-#   - non-default dma_clk/core_clk ratio
-#   - validates MM2S -> axis_async_fifo -> stream loader
-#     -> operand buffer write path CDC behavior
-# ------------------------------------------------------------
 ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
 
 
-
 # ------------------------------------------------------------
-# Performance GEMM counter smoke test
-#
-# Coverage:
-#   - passive GEMM performance counters
-#   - mac_count == M*N*K
-#   - output_count == M*N
-#   - busy_cycles > 0
-#   - RUN_ALL profile cases:
-#       100 -> 101 -> 105 -> 5
+# Performance counter/profile baseline
 # ------------------------------------------------------------
 ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# Performance GEMM profile test
-#
-# Coverage:
-#   - single-lane GEMM profile baseline
-#   - 8-case profile summary
-#   - host-primary path
-#   - scoreboard result compare and ctrl/result pairing
-#
-# RUN_ALL/profile recipe:
-#   100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
-# ------------------------------------------------------------
 ai_accel_subsys_perf_profile_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 
 
 # ------------------------------------------------------------
-# 2-lane GEMM subset regression
-#
-# Note:
-#   GEMM_MAC_LANES is a simulator/run-script parameter, not a DUT plusarg.
-#   The run flow maps GEMM_MAC_LANES=2 to the top-level parameter override.
-#
-# Coverage:
-#   - optional GEMM_MAC_LANES=2 datapath
-#   - K=1 lane1 mask behavior
-#   - K>=2 lane1 active behavior
-#   - logical MAC/output counter correctness
-#   - host-primary performance profile
-#   - Direct Stream operand-buffer compatibility
-# ------------------------------------------------------------
-
-# 2-lane counter smoke
-ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-# 2-lane profile
-ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-# 2-lane Direct Stream compatibility smoke
-ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-
-# ------------------------------------------------------------
-# 2-lane GEMM P3 stress / CDC hardening regression
-#
-# Note:
-#   These items validate GEMM_MAC_LANES=2 across the three major
-#   load/store paths:
-#
-#     1. DMA load A/B -> GEMM -> DMA store C
-#     2. AXI-Stream preload A/B -> GEMM -> DMA store C
-#     3. Direct Stream preload A/B -> GEMM -> DMA store C
-#
-#   Each path is covered in:
-#     - default clock ratio: dma_clk=10ns, core_clk=14ns
-#     - CDC sanity ratio   : dma_clk=10ns, core_clk=13ns
-# ------------------------------------------------------------
-
-# 2-lane DMA load-store stress, default clock ratio
-ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-# 2-lane AXI-Stream load-store stress, default clock ratio
-ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-# 2-lane Direct Stream load-store stress, default clock ratio
-ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-# 2-lane DMA load-store CDC sanity, 10ns/13ns
-ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
-
-# 2-lane AXI-Stream load-store CDC sanity, 10ns/13ns
-ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
-
-# 2-lane Direct Stream load-store CDC sanity, 10ns/13ns
-ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
-
-
-# ------------------------------------------------------------
-# Back-to-back test (primary host path)
-# ------------------------------------------------------------
-ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
-ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=5   +JOB1_CASE_ID=0
-ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=3 +JOB0_CASE_ID=5   +JOB1_CASE_ID=101 +JOB2_CASE_ID=400
-
-
-# ------------------------------------------------------------
-# Reset recovery test (primary host path)
-# ------------------------------------------------------------
-ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
-ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=400
-
-
-# ------------------------------------------------------------
-# Corner test (primary host path)
-# ------------------------------------------------------------
-# class default mixed-corner recipe:
-#   5 -> 101 -> 105 -> 403
-ai_accel_subsys_corner_test +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# Mid-run reset / abort recovery test (primary host path)
-# ------------------------------------------------------------
-# default recipe:
-#   abort job    = CASE_ID 5
-#   recovery job = CASE_ID 101
-#   reset fires after acc_busy, before acc_done
-ai_accel_subsys_midrun_reset_test +ENABLE_RESULT_CHECK=1 +ABORT_CASE_ID=5 +RECOVERY_CASE_ID=101 +RESET_TRIGGER_CYCLES_AFTER_BUSY=8 +RESET_HOLD_CYCLES=5 +POST_RESET_SETTLE_CYCLES=5
-
-
-# ------------------------------------------------------------
 # Helper fallback sanity
-#   Keep this block small on purpose.
-#   Goal: confirm helper fallback still works and does not
-#   break scoreboard / ctrl-result pairing.
 # ------------------------------------------------------------
 ai_accel_subsys_smoke_test CASE_ID 101 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
+
+
+# ------------------------------------------------------------
+# 2-lane GEMM subset regression
+# ------------------------------------------------------------
+ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +RUN_ALL=1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# 2-lane GEMM P3 stress / CDC hardening regression
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+
+# ------------------------------------------------------------
+# P4 B-cache representative regression
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# P5 packed B-cache representative regression
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# P6 scalar A-row cache representative regression
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+
+
+# ------------------------------------------------------------
+# P7 packed A-row preload representative regression
+#
+# P7F manually covered both default clock and CDC variants.
+# Full regression keeps only the default-clock representative set.
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# Back-to-back / reset / corner / mid-run reset
+# ------------------------------------------------------------
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=5   +JOB1_CASE_ID=0
+ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=3 +JOB0_CASE_ID=5   +JOB1_CASE_ID=101 +JOB2_CASE_ID=400
+ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
+ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=400
+ai_accel_subsys_corner_test +ENABLE_RESULT_CHECK=1
+ai_accel_subsys_midrun_reset_test +ENABLE_RESULT_CHECK=1 +ABORT_CASE_ID=5 +RECOVERY_CASE_ID=101 +RESET_TRIGGER_CYCLES_AFTER_BUSY=8 +RESET_HOLD_CYCLES=5 +POST_RESET_SETTLE_CYCLES=5

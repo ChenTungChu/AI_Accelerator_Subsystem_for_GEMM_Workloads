@@ -404,13 +404,24 @@ lappend CLOCK_ARG_LIST +CORE_CLK_PERIOD_NS=$CORE_CLK_PERIOD_NS
 # Manual 2-lane run:
 #   set GEMM_MAC_LANES 2
 #   do run_uvm.tcl
+#
+# P8B 4-lane plumbing-only run:
+#   set GEMM_MAC_LANES 4
+#   do run_uvm.tcl
+#
+# Note:
+#   In P8B, GEMM_MAC_LANES=4 is accepted by the run flow and
+#   propagated into the DUT, but gemm_top maps it to the existing
+#   effective 2-lane datapath until real 4-lane RTL is implemented.
 # --------------------------------------------------
 if {![info exists GEMM_MAC_LANES]} {
     set GEMM_MAC_LANES 1
 }
 
-if {($GEMM_MAC_LANES != 1) && ($GEMM_MAC_LANES != 2)} {
-    error "Unsupported GEMM_MAC_LANES='$GEMM_MAC_LANES'. Supported values: 1, 2"
+if {($GEMM_MAC_LANES != 1) &&
+    ($GEMM_MAC_LANES != 2) &&
+    ($GEMM_MAC_LANES != 4)} {
+    error "Unsupported GEMM_MAC_LANES='$GEMM_MAC_LANES'. Supported values: 1, 2, 4"
 }
 
 # --------------------------------------------------

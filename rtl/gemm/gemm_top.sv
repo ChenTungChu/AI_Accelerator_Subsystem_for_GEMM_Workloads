@@ -108,11 +108,27 @@ module gemm_top #(
     localparam int B_BYTES = (B_DATA_WIDTH + 7) / 8;
     localparam int C_BYTES = (ACC_WIDTH    + 7) / 8;
 
+    // P8C true 4-lane MAC policy:
+    //   - GEMM_MAC_LANES=1 uses the existing single-lane datapath.
+    //   - GEMM_MAC_LANES=2 uses the existing 2-lane datapath.
+    //   - GEMM_MAC_LANES=4 enables the cache-backed true 4-lane datapath.
+    //
+    // The first P8C implementation keeps the true 4-lane datapath cache-backed:
+    // if GEMM_MAC_LANES=4 is requested but the current job is not using both
+    // A-row cache and B-cache, the runtime lane selector falls back to the
+    // already-validated 2-lane/scalar path for correctness.
+    localparam int GEMM_MAC_LANES_EFFECTIVE =
+        (GEMM_MAC_LANES == 4) ? 4 :
+        (GEMM_MAC_LANES == 2) ? 2 :
+                                1;
+
 `ifndef SYNTHESIS
     initial begin
-        if ((GEMM_MAC_LANES != 1) && (GEMM_MAC_LANES != 2)) begin
+        if ((GEMM_MAC_LANES != 1) &&
+            (GEMM_MAC_LANES != 2) &&
+            (GEMM_MAC_LANES != 4)) begin
             $fatal(1,
-                "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1 and 2.",
+                "Unsupported GEMM_MAC_LANES=%0d. Supported values are 1, 2, and 4.",
                 GEMM_MAC_LANES
             );
         end
@@ -142,8 +158,9 @@ module gemm_top #(
 
 `ifndef SYNTHESIS
     initial begin
-        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d",
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_MAC_LANES_EFFECTIVE=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d",
                  GEMM_MAC_LANES,
+                 GEMM_MAC_LANES_EFFECTIVE,
                  GEMM_ENABLE_B_CACHE,
                  GEMM_B_CACHE_MAX_K,
                  GEMM_B_CACHE_MAX_N,
@@ -151,6 +168,10 @@ module gemm_top #(
                  GEMM_ENABLE_A_ROW_CACHE,
                  GEMM_A_ROW_CACHE_MAX_K,
                  GEMM_ENABLE_PACKED_A_ROW_PRELOAD);
+
+        if (GEMM_MAC_LANES == 4) begin
+            $display("# [GEMM_TOP_CFG] NOTE: GEMM_MAC_LANES=4 enables the P8C cache-backed true 4-lane MAC path when A-row cache and B-cache are active.");
+        end
     end
 `endif
 
@@ -166,6 +187,14 @@ module gemm_top #(
     logic signed [A_DATA_WIDTH-1:0] a1_val_q, a1_val_d;
     logic signed [B_DATA_WIDTH-1:0] b1_val_q, b1_val_d;
     logic                           lane1_valid_q, lane1_valid_d;
+
+    logic signed [A_DATA_WIDTH-1:0] a2_val_q, a2_val_d;
+    logic signed [B_DATA_WIDTH-1:0] b2_val_q, b2_val_d;
+    logic                           lane2_valid_q, lane2_valid_d;
+
+    logic signed [A_DATA_WIDTH-1:0] a3_val_q, a3_val_d;
+    logic signed [B_DATA_WIDTH-1:0] b3_val_q, b3_val_d;
+    logic                           lane3_valid_q, lane3_valid_d;
 
     logic signed [ACC_WIDTH-1:0]    acc_q, acc_d;
 
@@ -292,36 +321,88 @@ module gemm_top #(
     logic [DIM_WIDTH:0]             dim_k_ext;
     logic [DIM_WIDTH:0]             k_idx_plus1_ext;
     logic [DIM_WIDTH:0]             k_idx_plus2_ext;
+    logic [DIM_WIDTH:0]             k_idx_plus3_ext;
+    logic [DIM_WIDTH:0]             k_idx_plus4_ext;
 
     logic [DIM_WIDTH-1:0]           k_idx_plus1;
+    logic [DIM_WIDTH-1:0]           k_idx_plus2;
+    logic [DIM_WIDTH-1:0]           k_idx_plus3;
+
+    logic [2:0]                     active_mac_lanes_calc;
     logic                           lane1_valid_calc;
+    logic                           lane2_valid_calc;
+    logic                           lane3_valid_calc;
     logic                           lane2_last_k_group;
+    logic                           lane4_last_k_group;
 
     assign k_idx_ext       = {1'b0, k_idx_q};
     assign dim_k_ext       = {1'b0, dim_k};
     assign k_idx_plus1_ext = k_idx_ext + 1;
     assign k_idx_plus2_ext = k_idx_ext + 2;
+    assign k_idx_plus3_ext = k_idx_ext + 3;
+    assign k_idx_plus4_ext = k_idx_ext + 4;
     assign k_idx_plus1     = k_idx_plus1_ext[DIM_WIDTH-1:0];
+    assign k_idx_plus2     = k_idx_plus2_ext[DIM_WIDTH-1:0];
+    assign k_idx_plus3     = k_idx_plus3_ext[DIM_WIDTH-1:0];
+
+    // P8C runtime lane selection.
+    // True 4-lane compute is cache-backed in this first implementation.
+    always_comb begin
+        if ((GEMM_MAC_LANES_EFFECTIVE == 4) &&
+            a_row_cache_active_job_q &&
+            b_cache_active_job_q) begin
+            active_mac_lanes_calc = 3'd4;
+        end
+        else if (GEMM_MAC_LANES_EFFECTIVE >= 2) begin
+            active_mac_lanes_calc = 3'd2;
+        end
+        else begin
+            active_mac_lanes_calc = 3'd1;
+        end
+    end
 
     assign lane1_valid_calc =
-        (GEMM_MAC_LANES == 2) &&
+        (active_mac_lanes_calc >= 3'd2) &&
         (k_idx_plus1_ext < dim_k_ext);
+
+    assign lane2_valid_calc =
+        (active_mac_lanes_calc >= 3'd4) &&
+        (k_idx_plus2_ext < dim_k_ext);
+
+    assign lane3_valid_calc =
+        (active_mac_lanes_calc >= 3'd4) &&
+        (k_idx_plus3_ext < dim_k_ext);
 
     assign lane2_last_k_group =
         (k_idx_plus2_ext >= dim_k_ext);
 
+    assign lane4_last_k_group =
+        (k_idx_plus4_ext >= dim_k_ext);
+
     logic signed [ACC_WIDTH-1:0]    lane0_product;
     logic signed [ACC_WIDTH-1:0]    lane1_product;
+    logic signed [ACC_WIDTH-1:0]    lane2_product;
+    logic signed [ACC_WIDTH-1:0]    lane3_product;
     logic signed [ACC_WIDTH-1:0]    mac_sum;
 
     assign lane0_product = $signed(a_val_q)  * $signed(b_val_q);
     assign lane1_product = $signed(a1_val_q) * $signed(b1_val_q);
+    assign lane2_product = $signed(a2_val_q) * $signed(b2_val_q);
+    assign lane3_product = $signed(a3_val_q) * $signed(b3_val_q);
 
     always_comb begin
         mac_sum = lane0_product;
 
-        if ((GEMM_MAC_LANES == 2) && lane1_valid_q) begin
-            mac_sum = lane0_product + lane1_product;
+        if (lane1_valid_q) begin
+            mac_sum = mac_sum + lane1_product;
+        end
+
+        if (lane2_valid_q) begin
+            mac_sum = mac_sum + lane2_product;
+        end
+
+        if (lane3_valid_q) begin
+            mac_sum = mac_sum + lane3_product;
         end
     end
 
@@ -335,7 +416,10 @@ module gemm_top #(
 
     assign mac_commit_count =
         mac_commit
-            ? (((GEMM_MAC_LANES == 2) && lane1_valid_q) ? 32'd2 : 32'd1)
+            ? (32'd1 +
+               (lane1_valid_q ? 32'd1 : 32'd0) +
+               (lane2_valid_q ? 32'd1 : 32'd0) +
+               (lane3_valid_q ? 32'd1 : 32'd0))
             : 32'd0;
 
     // Count one output only when the C write has completed.
@@ -410,6 +494,12 @@ module gemm_top #(
         a1_val_d      = a1_val_q;
         b1_val_d      = b1_val_q;
         lane1_valid_d = lane1_valid_q;
+        a2_val_d      = a2_val_q;
+        b2_val_d      = b2_val_q;
+        lane2_valid_d = lane2_valid_q;
+        a3_val_d      = a3_val_q;
+        b3_val_d      = b3_val_q;
+        lane3_valid_d = lane3_valid_q;
 
         acc_d         = acc_q;
 
@@ -459,6 +549,12 @@ module gemm_top #(
                     a1_val_d      = '0;
                     b1_val_d      = '0;
                     lane1_valid_d = 1'b0;
+                    a2_val_d      = '0;
+                    b2_val_d      = '0;
+                    lane2_valid_d = 1'b0;
+                    a3_val_d      = '0;
+                    b3_val_d      = '0;
+                    lane3_valid_d = 1'b0;
 
                     arow_k_d            = '0;
                     arow_pack_k_d       = '0;
@@ -722,7 +818,7 @@ module gemm_top #(
                     a_val_d  = a_row_cache_q[int'(k_idx_q)];
                     b_val_d  = b_cache_q[int'(k_idx_q)][int'(n_idx_q)];
 
-                    if ((GEMM_MAC_LANES == 2) && lane1_valid_calc) begin
+                    if (lane1_valid_calc) begin
                         lane1_valid_d = 1'b1;
                         a1_val_d      = a_row_cache_q[int'(k_idx_plus1)];
                         b1_val_d      = b_cache_q[int'(k_idx_plus1)][int'(n_idx_q)];
@@ -733,9 +829,38 @@ module gemm_top #(
                         b1_val_d      = '0;
                     end
 
+                    if (lane2_valid_calc) begin
+                        lane2_valid_d = 1'b1;
+                        a2_val_d      = a_row_cache_q[int'(k_idx_plus2)];
+                        b2_val_d      = b_cache_q[int'(k_idx_plus2)][int'(n_idx_q)];
+                    end
+                    else begin
+                        lane2_valid_d = 1'b0;
+                        a2_val_d      = '0;
+                        b2_val_d      = '0;
+                    end
+
+                    if (lane3_valid_calc) begin
+                        lane3_valid_d = 1'b1;
+                        a3_val_d      = a_row_cache_q[int'(k_idx_plus3)];
+                        b3_val_d      = b_cache_q[int'(k_idx_plus3)][int'(n_idx_q)];
+                    end
+                    else begin
+                        lane3_valid_d = 1'b0;
+                        a3_val_d      = '0;
+                        b3_val_d      = '0;
+                    end
+
                     state_d = S_MAC;
                 end
                 else begin
+                    lane2_valid_d = 1'b0;
+                    a2_val_d      = '0;
+                    b2_val_d      = '0;
+                    lane3_valid_d = 1'b0;
+                    a3_val_d      = '0;
+                    b3_val_d      = '0;
+
                     mem_rd_addr_d = a_addr_calc;
 
                     if (mem_req_ready) begin
@@ -747,12 +872,18 @@ module gemm_top #(
 
             S_WAIT_A: begin
                 if (mem_rd_valid) begin
-                    a_val_d = mem_rd_data[A_DATA_WIDTH-1:0];
+                    a_val_d       = mem_rd_data[A_DATA_WIDTH-1:0];
+                    lane2_valid_d = 1'b0;
+                    a2_val_d      = '0;
+                    b2_val_d      = '0;
+                    lane3_valid_d = 1'b0;
+                    a3_val_d      = '0;
+                    b3_val_d      = '0;
 
                     if (b_cache_active_job_q) begin
                         b_val_d = b_cache_q[int'(k_idx_q)][int'(n_idx_q)];
 
-                        if ((GEMM_MAC_LANES == 2) && lane1_valid_calc) begin
+                        if (lane1_valid_calc) begin
                             lane1_valid_d = 1'b1;
                             state_d       = S_READ_A1;
                         end
@@ -778,9 +909,15 @@ module gemm_top #(
 
             S_WAIT_B: begin
                 if (mem_rd_valid) begin
-                    b_val_d = mem_rd_data[B_DATA_WIDTH-1:0];
+                    b_val_d       = mem_rd_data[B_DATA_WIDTH-1:0];
+                    lane2_valid_d = 1'b0;
+                    a2_val_d      = '0;
+                    b2_val_d      = '0;
+                    lane3_valid_d = 1'b0;
+                    a3_val_d      = '0;
+                    b3_val_d      = '0;
 
-                    if ((GEMM_MAC_LANES == 2) && lane1_valid_calc) begin
+                    if (lane1_valid_calc) begin
                         lane1_valid_d = 1'b1;
                         state_d       = S_READ_A1;
                     end
@@ -833,12 +970,21 @@ module gemm_top #(
             S_MAC: begin
                 acc_d = acc_q + mac_sum;
 
-                if (GEMM_MAC_LANES == 2) begin
+                if (active_mac_lanes_calc >= 3'd4) begin
+                    if (lane4_last_k_group) begin
+                        state_d = S_WRITE_C;
+                    end
+                    else begin
+                        k_idx_d = k_idx_q + DIM_WIDTH'(4);
+                        state_d = S_READ_A;
+                    end
+                end
+                else if (active_mac_lanes_calc >= 3'd2) begin
                     if (lane2_last_k_group) begin
                         state_d = S_WRITE_C;
                     end
                     else begin
-                        k_idx_d = k_idx_q + 2;
+                        k_idx_d = k_idx_q + DIM_WIDTH'(2);
                         state_d = S_READ_A;
                     end
                 end
@@ -876,6 +1022,12 @@ module gemm_top #(
                 a1_val_d      = '0;
                 b1_val_d      = '0;
                 lane1_valid_d = 1'b0;
+                a2_val_d      = '0;
+                b2_val_d      = '0;
+                lane2_valid_d = 1'b0;
+                a3_val_d      = '0;
+                b3_val_d      = '0;
+                lane3_valid_d = 1'b0;
 
                 if (n_idx_q == (dim_n - 1)) begin
                     n_idx_d = '0;
@@ -914,6 +1066,8 @@ module gemm_top #(
                 busy_d               = 1'b0;
                 done_d               = 1'b0;
                 lane1_valid_d            = 1'b0;
+                lane2_valid_d            = 1'b0;
+                lane3_valid_d            = 1'b0;
                 b_cache_active_job_d     = 1'b0;
                 a_row_cache_active_job_d = 1'b0;
                 packed_a_row_preload_active_job_d = 1'b0;
@@ -934,6 +1088,12 @@ module gemm_top #(
             a1_val_q     <= '0;
             b1_val_q     <= '0;
             lane1_valid_q<= 1'b0;
+            a2_val_q     <= '0;
+            b2_val_q     <= '0;
+            lane2_valid_q<= 1'b0;
+            a3_val_q     <= '0;
+            b3_val_q     <= '0;
+            lane3_valid_q<= 1'b0;
 
             acc_q        <= '0;
 
@@ -984,6 +1144,12 @@ module gemm_top #(
             a1_val_q     <= a1_val_d;
             b1_val_q     <= b1_val_d;
             lane1_valid_q<= lane1_valid_d;
+            a2_val_q     <= a2_val_d;
+            b2_val_q     <= b2_val_d;
+            lane2_valid_q<= lane2_valid_d;
+            a3_val_q     <= a3_val_d;
+            b3_val_q     <= b3_val_d;
+            lane3_valid_q<= lane3_valid_d;
 
             acc_q        <= acc_d;
 

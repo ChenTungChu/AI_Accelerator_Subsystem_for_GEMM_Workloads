@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and performance-oriented GEMM datapath upgrades. The performance path now includes a parameterized 2-lane K-parallel MAC datapath, a B-operand cache / compute-bypass optimization, a packed B-cache preload optimization, and a scalar A-row cache optimization.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and performance-oriented GEMM datapath upgrades. The performance path now includes a parameterized 2-lane K-parallel MAC datapath, a B-operand cache / compute-bypass optimization, a packed B-cache preload optimization, a scalar A-row cache optimization, and a packed A-row preload optimization.
 
 Current milestone:
 
 ```text
-Performance GEMM P6: Scalar A-row Cache Optimization Completed
+Performance GEMM P7: Packed A-row Preload Optimization Completed
 
 Regression:
-  TOTAL : 56
-  PASS  : 56
+  TOTAL : 59
+  PASS  : 59
   FAIL  : 0
 ```
 
@@ -37,6 +37,7 @@ GEMM_MAC_LANES=2 stress / CDC hardening subset regression
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 representative regression
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 representative regression
 GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 + GEMM_ENABLE_A_ROW_CACHE=1 stress / CDC representative regression
+GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 + GEMM_ENABLE_A_ROW_CACHE=1 + GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1 representative regression
 ```
 
 Direct Stream B1 remains supported:
@@ -63,6 +64,8 @@ Performance GEMM P4 adds B-operand cache support for the 2-lane GEMM path. When 
 Performance GEMM P5 adds optional packed B-cache preload. When `GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1`, B-cache preload reads aligned 32-bit local memory windows and unpacks four int8 B operands per read when `base_addr_b` is 4-byte aligned. Unaligned B bases fall back to the scalar P4 B-cache preload path. P5 also updates the scratchpad adapter local-read return contract so `mem_rd_data[31:0]` can carry a 32-bit byte window while preserving scalar compatibility through `mem_rd_data[7:0]`.
 
 Performance GEMM P6 adds optional scalar A-row cache support. When `GEMM_ENABLE_A_ROW_CACHE=1` and the configured row fits within `GEMM_A_ROW_CACHE_MAX_K`, GEMM preloads the current A row once per output row `m` and reuses it across all output columns `n`. The first P6 implementation is intentionally scalar and requires the B-cache performance stack, so the validated mode is `GEMM_MAC_LANES=2 + GEMM_ENABLE_B_CACHE=1 + GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1 + GEMM_ENABLE_A_ROW_CACHE=1`.
+
+Performance GEMM P7 adds optional packed A-row preload support. When `GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1` and the configured A row is aligned and supported, GEMM fills the A-row cache using aligned 32-bit local reads and unpacks four int8 A operands per read. Unsupported cases fall back to the scalar P6 A-row preload path. P7 preserves the compute path and only optimizes the A-row cache fill mechanism.
 ---
 
 ## Main RTL Blocks
@@ -97,6 +100,7 @@ parameter int GEMM_B_CACHE_MAX_N                   = 4
 parameter bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD    = 1'b0
 parameter bit GEMM_ENABLE_A_ROW_CACHE               = 1'b0
 parameter int GEMM_A_ROW_CACHE_MAX_K                = 4
+parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD      = 1'b0
 ```
 
 Supported lane settings:
@@ -127,7 +131,14 @@ GEMM_ENABLE_A_ROW_CACHE=0 : original compute-driven A operand read path
 GEMM_ENABLE_A_ROW_CACHE=1 : preload one A row per m and reuse it across n when K fits GEMM_A_ROW_CACHE_MAX_K
 ```
 
-The default remains `GEMM_MAC_LANES=1`, `GEMM_ENABLE_B_CACHE=0`, `GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0`, and `GEMM_ENABLE_A_ROW_CACHE=0` so existing regression behavior is preserved unless the run script explicitly overrides these parameters.
+Supported packed A-row preload settings:
+
+```text
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0 : original scalar A-row preload path
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1 : use aligned 32-bit packed A-row preload when A base is 4-byte aligned and K is a supported multiple of 4
+```
+
+The default remains `GEMM_MAC_LANES=1`, `GEMM_ENABLE_B_CACHE=0`, `GEMM_ENABLE_PACKED_BCACHE_PRELOAD=0`, `GEMM_ENABLE_A_ROW_CACHE=0`, and `GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0` so existing regression behavior is preserved unless the run script explicitly overrides these parameters.
 
 ---
 
@@ -250,7 +261,34 @@ GEMM_ENABLE_A_ROW_CACHE=1
 GEMM_A_ROW_CACHE_MAX_K=4
 ```
 
-This reduces A-side reads for supported dimensions from `M*N*K` to `M*K`. For 4x4x4 cases, A reads are reduced from 64 to 16 before compute reuse. The first implementation intentionally does not perform packed A-row preload; that remains a future optimization candidate.
+This reduces A-side reads for supported dimensions from `M*N*K` to `M*K`. For 4x4x4 cases, A reads are reduced from 64 to 16 before compute reuse.
+
+### Packed A-row preload optimization
+
+When both `GEMM_ENABLE_A_ROW_CACHE=1` and `GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1`, the A-row cache fill path can fetch four int8 A operands per local 32-bit read:
+
+```text
+scalar P6 A-row preload:
+  one local read per A element in the active row
+
+packed P7 A-row preload:
+  one aligned local read per four A elements
+  unpack mem_rd_data[7:0], [15:8], [23:16], [31:24]
+```
+
+The first P7 implementation uses a conservative activation policy:
+
+```text
+packed A-row preload active only when:
+  A-row cache is active
+  A operands are int8
+  base_addr_a[1:0] == 2'b00
+  dim_k[1:0] == 2'b00
+  dim_k fits GEMM_A_ROW_CACHE_MAX_K
+otherwise fallback to scalar A-row preload
+```
+
+For the current K=4 performance cases, this reduces A-row cache fill reads from `M*K` to `M*(K/4)`. For 4x4x4 cases, A-row fill reads are reduced from 16 to 4 while preserving the P6 compute semantics.
 
 ### GEMM completion semantics
 
@@ -384,6 +422,25 @@ CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
 
 Compared with the P5 packed B-cache baseline, the 4x4x4 class improved from roughly 1060 busy cycles to roughly 627 busy cycles. `CASE_ID=100` is intentionally not improved because `N=1`, so there is no A-row reuse opportunity.
 
+
+### 2-lane + packed B-cache + A-row cache + packed A-row preload representative profile (`GEMM_MAC_LANES=2`, `GEMM_ENABLE_B_CACHE=1`, `GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1`, `GEMM_ENABLE_A_ROW_CACHE=1`, `GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1`)
+
+P7 validation confirmed that packed A-row preload reduces the remaining A-row cache fill overhead for supported aligned K=4 rows. Representative profile results:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 152
+105     | 2 | 3 | 4 | 24   | 6       | 275
+5       | 4 | 4 | 4 | 64   | 16      | 500
+400     | 4 | 4 | 4 | 64   | 16      | 500
+401     | 4 | 4 | 4 | 64   | 16      | 500
+402     | 4 | 4 | 4 | 64   | 16      | 500
+403     | 4 | 4 | 4 | 64   | 16      | 500
+```
+
+Compared with the P6 scalar A-row preload baseline, the 4x4x4 class improved from roughly 627 busy cycles to roughly 500 busy cycles. `CASE_ID=100` and `CASE_ID=101` fall back to the scalar A-row preload path under the first conservative P7 policy because their K values are not multiples of 4.
+
 ## Verification Architecture
 
 The UVM environment includes:
@@ -505,7 +562,7 @@ gemm_input_stream_mode = 1:
     GEMM C writes  -> scratchpad
 ```
 
-The 2-lane GEMM path has been verified in Direct Stream mode through the 2-lane direct-stream smoke regression subset. The B-cache, packed B-cache, and A-row cache paths have also been verified in Direct Stream mode through smoke, load-store stress, and CDC-oriented runs.
+The 2-lane GEMM path has been verified in Direct Stream mode through the 2-lane direct-stream smoke regression subset. The B-cache, packed B-cache, A-row cache, and packed A-row preload paths have also been verified in Direct Stream mode through smoke, load-store stress, and CDC-oriented runs.
 
 ---
 
@@ -589,11 +646,11 @@ Corner recipe        : 5 -> 101 -> 105 -> 403
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 56 items and is passing:
+The current full UVM regression contains 59 items and is passing:
 
 ```text
-TOTAL : 56
-PASS  : 56
+TOTAL : 59
+PASS  : 59
 FAIL  : 0
 ```
 
@@ -638,6 +695,9 @@ Covered categories:
 - GEMM 2-lane packed B-cache + A-row-cache DMA load-store CDC sanity
 - GEMM 2-lane packed B-cache + A-row-cache AXI-Stream load-store CDC sanity
 - GEMM 2-lane packed B-cache + A-row-cache Direct Stream load-store CDC sanity
+- GEMM 2-lane packed B-cache + A-row-cache + packed A-row DMA load-store stress
+- GEMM 2-lane packed B-cache + A-row-cache + packed A-row AXI-Stream load-store stress
+- GEMM 2-lane packed B-cache + A-row-cache + packed A-row Direct Stream load-store stress
 - back-to-back
 - reset recovery
 - corner recipe
@@ -690,6 +750,19 @@ P6E: Direct Stream compatibility                       : PASS
 P6F: stress / CDC subset                               : PASS
 P6G: representative A-row-cache regression added       : PASS
 Full regression after P6G                              : 56/56 PASS
+```
+
+P7 packed A-row preload regression status:
+
+```text
+P7A: packed_a_row_preload_spec.md                     : PASS
+P7B: safe parameter plumbing, default-off              : PASS
+P7C: packed A-row preload RTL                          : PASS
+P7D: focused perf/profile compare                      : PASS
+P7E: Direct Stream compatibility                       : PASS
+P7F: stress / CDC manual subset                        : PASS
+P7G: representative packed A-row regression added      : PASS
+Full regression after P7G                              : 59/59 PASS
 ```
 
 
@@ -1016,6 +1089,54 @@ set CORE_CLK_PERIOD_NS 13
 do run_uvm.tcl
 ```
 
+
+### Representative packed A-row preload load-store stress runs
+
+```tcl
+# DMA load A/B -> packed B-cache + A-row cache + packed A-row preload -> GEMM -> DMA store C
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set STORE_STRESS_JOB_COUNT 8
+set STORE_STRESS_SEED 20260502
+set STORE_STRESS_RANDOM 1
+set STORE_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_MAC_LANES 2
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 4
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+do run_uvm.tcl
+```
+
+For AXI-Stream or Direct Stream, switch only the test and stress knob group:
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set AXIS_STRESS_JOB_COUNT 8
+set AXIS_STRESS_SEED 20260502
+set AXIS_STRESS_RANDOM 1
+set AXIS_STRESS_GAP_CYCLES 10
+```
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set DS_STRESS_JOB_COUNT 8
+set DS_STRESS_SEED 20260502
+set DS_STRESS_RANDOM 1
+set DS_STRESS_GAP_CYCLES 10
+```
+
+For CDC sanity, switch:
+
+```tcl
+set CORE_CLK_PERIOD_NS 13
+do run_uvm.tcl
+```
+
 ### DMA load RUN_ALL
 
 ```tcl
@@ -1152,6 +1273,9 @@ At this checkpoint, the subsystem verifies:
 - scalar A-row cache correctness for supported K dimensions
 - A-row cache compatibility across DMA, AXI-Stream, and Direct Stream load-store paths
 - A-row cache CDC sanity across DMA, AXI-Stream, and Direct Stream load-store paths
+- packed A-row preload correctness for aligned A bases and supported K=4 rows
+- packed A-row preload compatibility across DMA, AXI-Stream, and Direct Stream load-store paths
+- packed A-row preload stress / CDC manual subset stability
 - corrected GEMM done semantics after final C write completion
 - unattended full UVM regression flow
 
@@ -1160,7 +1284,7 @@ At this checkpoint, the subsystem verifies:
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P6: Scalar A-row Cache Optimization Completed
+Performance GEMM P7: Packed A-row Preload Optimization Completed
 
 Completed:
   P0: GEMM performance counter smoke                  PASS
@@ -1193,12 +1317,19 @@ Completed:
   P6E: Direct Stream compatibility                    PASS
   P6F: A-row cache stress / CDC subset                PASS
   P6G: A-row cache representative regression added    PASS
+  P7A: packed A-row preload spec                       PASS
+  P7B: safe parameter plumbing                         PASS
+  P7C: packed A-row preload RTL                        PASS
+  P7D: focused perf/profile compare                    PASS
+  P7E: Direct Stream compatibility                     PASS
+  P7F: packed A-row stress / CDC manual subset         PASS
+  P7G: packed A-row representative regression added    PASS
 
 Regression:
-  56/56 PASS
+  59/59 PASS
 
 Next:
-  P7 candidate: packed A-row preload / larger GEMM / 4-lane MAC / tile-based scheduling
+  P8 candidate: 4-lane MAC feasibility study / larger GEMM / tile-based scheduling
 ```
 
 ---
@@ -1234,6 +1365,8 @@ This repository currently contains a working GEMM-oriented AI accelerator subsys
 - representative 2-lane + packed B-cache full-regression subset
 - scalar A-row cache optimization
 - representative 2-lane + packed B-cache + A-row-cache stress / CDC full-regression subset
+- packed A-row preload optimization
+- representative 2-lane + packed B-cache + A-row-cache + packed A-row full-regression subset
 - full UVM regression automation
 
-This is the current subsystem verification and P6 performance-GEMM baseline. The next planned optimization milestone should be selected from packed A-row preload, larger GEMM dimensions, 4-lane MAC, or tile-based scheduling.
+This is the current subsystem verification and P7 performance-GEMM baseline. The next planned optimization milestone should be selected from larger GEMM dimensions, 4-lane MAC feasibility, or tile-based scheduling.

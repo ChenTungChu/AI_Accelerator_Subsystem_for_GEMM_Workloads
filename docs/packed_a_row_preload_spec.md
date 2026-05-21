@@ -52,7 +52,43 @@ P6 scalar A-row cache:
 
 P7 does **not** introduce a new GEMM algorithm. It only optimizes how the A-row cache is filled.
 
+## 1.1 P7 Closure Status
+
+P7 has now been implemented and closed.
+
+```text
+P7A: packed A-row preload spec                         PASS
+P7B: safe parameter plumbing, default off              PASS
+P7C: packed A-row preload RTL                          PASS
+P7D: focused perf/profile compare                      PASS
+P7E: Direct Stream compatibility                       PASS
+P7F: stress / CDC manual subset                        PASS
+P7G: representative packed A-row regression inclusion  PASS
+
+Full regression after P7G:
+  TOTAL : 59
+  PASS  : 59
+  FAIL  : 0
+```
+
+Representative packed A-row profile closure:
+
+```text
+CASE_ID | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
+100     | 1 | 1 | 1 | 1    | 1       | 43
+101     | 2 | 2 | 2 | 8    | 4       | 152
+105     | 2 | 3 | 4 | 24   | 6       | 275
+5       | 4 | 4 | 4 | 64   | 16      | 500
+400     | 4 | 4 | 4 | 64   | 16      | 500
+401     | 4 | 4 | 4 | 64   | 16      | 500
+402     | 4 | 4 | 4 | 64   | 16      | 500
+403     | 4 | 4 | 4 | 64   | 16      | 500
+```
+
+Compared with the P6 scalar A-row preload baseline, the 4x4x4 class improved from roughly 627 busy cycles to roughly 500 busy cycles while preserving result correctness, MAC/output counters, and zero UVM errors/fatals.
+
 ---
+
 
 ## 2. Recommended File Name
 
@@ -960,16 +996,11 @@ core_clk=14ns
 CDC sanity:
 
 ```text
-Direct Stream load-store stress
-dma_clk=10ns
-core_clk=13ns
-```
-
-Optional additional CDC:
-
-```text
 DMA load-store stress CDC
 AXI-Stream load-store stress CDC
+Direct Stream load-store stress CDC
+dma_clk=10ns
+core_clk=13ns
 ```
 
 Acceptance:
@@ -979,6 +1010,17 @@ selected stress jobs PASS
 scoreboard compare PASS
 control/result pairing PASS
 no UVM_ERROR / UVM_FATAL
+```
+
+Closure result:
+
+```text
+DMA load-store stress default       PASS
+AXI-Stream load-store default       PASS
+Direct Stream load-store default    PASS
+DMA load-store stress CDC 10/13     PASS
+AXI-Stream load-store CDC 10/13     PASS
+Direct Stream load-store CDC 10/13  PASS
 ```
 
 ### 18.7 P7G: Regression Inclusion
@@ -1419,7 +1461,7 @@ Selected packed A-row representative items are added to run_full_uvm_regression.
 New full regression PASS.
 ```
 
-Recommended minimal closure target:
+Achieved closure target:
 
 ```text
 TOTAL : 59
@@ -1487,4 +1529,4 @@ stress/CDC third
 regression inclusion last
 ```
 
-The current `56/56 PASS` P6 baseline gives a clean checkpoint for starting P7.
+P7 has closed cleanly with a `59/59 PASS` full regression baseline.
