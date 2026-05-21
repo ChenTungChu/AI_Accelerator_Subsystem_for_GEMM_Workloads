@@ -82,6 +82,11 @@ module gemm_top #(
         S_AROW_WAIT,
         S_AROW_NEXT,
 
+        S_AROW_PACK_INIT,
+        S_AROW_PACK_READ,
+        S_AROW_PACK_WAIT,
+        S_AROW_PACK_NEXT,
+
         S_READ_A,
         S_WAIT_A,
         S_READ_B,
@@ -185,6 +190,11 @@ module gemm_top #(
 
     logic [DIM_WIDTH-1:0]           arow_k_q, arow_k_d;
 
+    // P7 packed A-row preload state.
+    // Used only when GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1 and
+    // conservative alignment/dimension requirements are met.
+    logic [DIM_WIDTH-1:0]           arow_pack_k_q, arow_pack_k_d;
+
     logic [DIM_WIDTH-1:0]           bcache_k_q, bcache_k_d;
     logic [DIM_WIDTH-1:0]           bcache_n_q, bcache_n_d;
 
@@ -199,12 +209,16 @@ module gemm_top #(
     logic                           a_row_cache_active_job_q;
     logic                           a_row_cache_active_job_d;
 
+    logic                           packed_a_row_preload_active_job_q;
+    logic                           packed_a_row_preload_active_job_d;
+
     logic b_cache_dim_supported;
     logic b_cache_active_calc;
     logic packed_bcache_preload_calc;
 
     logic a_row_cache_dim_supported;
     logic a_row_cache_active_calc;
+    logic packed_a_row_preload_calc;
 
     logic [ADDR_WIDTH-1:0] bcache_total_bytes_calc;
     logic [ADDR_WIDTH-1:0] bpack_last_byte_addr_calc;
@@ -246,6 +260,20 @@ module gemm_top #(
             b_cache_active_calc &&
             a_row_cache_dim_supported &&
             (A_BYTES == 1);
+
+        // First P7 policy:
+        // - packed A-row preload is optional and default-off
+        // - packed A-row preload requires A-row cache to be active
+        // - packed A-row preload only supports int8 A elements
+        // - packed A-row preload requires base_addr_a to be 4-byte aligned
+        // - packed A-row preload requires dim_k to be a multiple of 4
+        // - unsupported cases automatically fall back to the P6 scalar A-row preload path
+        packed_a_row_preload_calc =
+            a_row_cache_active_calc &&
+            GEMM_ENABLE_PACKED_A_ROW_PRELOAD &&
+            (A_BYTES == 1) &&
+            (base_addr_a[1:0] == 2'b00) &&
+            (dim_k[1:0] == 2'b00);
     end
 
     assign bcache_total_bytes_calc =
@@ -316,6 +344,7 @@ module gemm_top #(
 
     logic [ADDR_WIDTH-1:0] a_addr_calc;
     logic [ADDR_WIDTH-1:0] arow_addr_calc;
+    logic [ADDR_WIDTH-1:0] arow_pack_addr_calc;
     logic [ADDR_WIDTH-1:0] b_addr_calc;
     logic [ADDR_WIDTH-1:0] a1_addr_calc;
     logic [ADDR_WIDTH-1:0] b1_addr_calc;
@@ -325,12 +354,18 @@ module gemm_top #(
     logic                  bcache_last_n;
     logic                  bcache_last_elem;
     logic                  arow_last_k;
+    logic                  arow_pack_last_k;
+
+    logic [DIM_WIDTH:0]    arow_pack_k_plus4_ext;
 
     assign a_addr_calc =
         base_addr_a + ((m_idx_q * dim_k) + k_idx_q) * A_BYTES;
 
     assign arow_addr_calc =
         base_addr_a + ((m_idx_q * dim_k) + arow_k_q) * A_BYTES;
+
+    assign arow_pack_addr_calc =
+        base_addr_a + ((m_idx_q * dim_k) + arow_pack_k_q) * A_BYTES;
 
     assign b_addr_calc =
         base_addr_b + ((k_idx_q * dim_n) + n_idx_q) * B_BYTES;
@@ -353,6 +388,12 @@ module gemm_top #(
 
     assign arow_last_k =
         (arow_k_q == (dim_k - 1'b1));
+
+    assign arow_pack_k_plus4_ext =
+        {1'b0, arow_pack_k_q} + (DIM_WIDTH + 1)'(4);
+
+    assign arow_pack_last_k =
+        (arow_pack_k_plus4_ext >= {1'b0, dim_k});
 
     assign c_addr_calc =
         base_addr_c + ((m_idx_q * dim_n) + n_idx_q) * C_BYTES;
@@ -384,12 +425,14 @@ module gemm_top #(
         mem_wr_strb_d = 4'b0000;
 
         arow_k_d             = arow_k_q;
+        arow_pack_k_d        = arow_pack_k_q;
         bcache_k_d            = bcache_k_q;
         bcache_n_d            = bcache_n_q;
         bpack_addr_d          = bpack_addr_q;
         bpack_end_addr_d      = bpack_end_addr_q;
         b_cache_active_job_d  = b_cache_active_job_q;
         a_row_cache_active_job_d = a_row_cache_active_job_q;
+        packed_a_row_preload_active_job_d = packed_a_row_preload_active_job_q;
 
         for (int ak = 0; ak < GEMM_A_ROW_CACHE_MAX_K; ak++) begin
             a_row_cache_d[ak] = a_row_cache_q[ak];
@@ -418,12 +461,14 @@ module gemm_top #(
                     lane1_valid_d = 1'b0;
 
                     arow_k_d            = '0;
+                    arow_pack_k_d       = '0;
                     bcache_k_d           = '0;
                     bcache_n_d           = '0;
                     bpack_addr_d         = '0;
                     bpack_end_addr_d     = '0;
                     b_cache_active_job_d = b_cache_active_calc;
                     a_row_cache_active_job_d = a_row_cache_active_calc;
+                    packed_a_row_preload_active_job_d = packed_a_row_preload_calc;
 
                     // Defensive job-local cache cleanup.
                     // Current preload should overwrite all used entries, but clearing
@@ -575,10 +620,27 @@ module gemm_top #(
             //   - active only when B-cache is also active
             //   - scalar int8 A-row preload only
             //   - one cache fill per output row m
+            //
+            // P7 packed A-row preload path
+            //
+            // First implementation policy:
+            //   - active only when A-row cache is active
+            //   - requires GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+            //   - requires int8 A elements
+            //   - requires base_addr_a to be 4-byte aligned
+            //   - requires dim_k to be a multiple of 4
+            //   - unsupported cases fall back to the scalar P6 preload path
             // ----------------------------------------------------
             S_AROW_INIT: begin
-                arow_k_d = '0;
-                state_d  = S_AROW_READ;
+                arow_k_d      = '0;
+                arow_pack_k_d = '0;
+
+                if (packed_a_row_preload_active_job_q) begin
+                    state_d = S_AROW_PACK_INIT;
+                end
+                else begin
+                    state_d = S_AROW_READ;
+                end
             end
 
             S_AROW_READ: begin
@@ -609,6 +671,49 @@ module gemm_top #(
                 else begin
                     arow_k_d = arow_k_q + 1'b1;
                     state_d  = S_AROW_READ;
+                end
+            end
+
+            S_AROW_PACK_INIT: begin
+                arow_pack_k_d = '0;
+                state_d       = S_AROW_PACK_READ;
+            end
+
+            S_AROW_PACK_READ: begin
+                mem_rd_addr_d = arow_pack_addr_calc;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_AROW_PACK_WAIT;
+                end
+            end
+
+            S_AROW_PACK_WAIT: begin
+                if (mem_rd_valid) begin
+                    for (int al = 0; al < 4; al++) begin
+                        int unsigned arow_pack_idx;
+
+                        arow_pack_idx = int'(arow_pack_k_q) + al;
+
+                        if ((arow_pack_idx < int'(dim_k)) &&
+                            (arow_pack_idx < GEMM_A_ROW_CACHE_MAX_K)) begin
+                            a_row_cache_d[arow_pack_idx] =
+                                mem_rd_data[(8 * al) +: A_DATA_WIDTH];
+                        end
+                    end
+
+                    state_d = S_AROW_PACK_NEXT;
+                end
+            end
+
+            S_AROW_PACK_NEXT: begin
+                if (arow_pack_last_k) begin
+                    arow_pack_k_d = '0;
+                    state_d       = S_READ_A;
+                end
+                else begin
+                    arow_pack_k_d = arow_pack_k_q + DIM_WIDTH'(4);
+                    state_d       = S_AROW_PACK_READ;
                 end
             end
 
@@ -811,6 +916,7 @@ module gemm_top #(
                 lane1_valid_d            = 1'b0;
                 b_cache_active_job_d     = 1'b0;
                 a_row_cache_active_job_d = 1'b0;
+                packed_a_row_preload_active_job_d = 1'b0;
             end
         endcase
     end
@@ -843,12 +949,14 @@ module gemm_top #(
             mem_wr_strb  <= '0;
 
             arow_k_q            <= '0;
+            arow_pack_k_q       <= '0;
             bcache_k_q           <= '0;
             bcache_n_q           <= '0;
             bpack_addr_q         <= '0;
             bpack_end_addr_q     <= '0;
             b_cache_active_job_q <= 1'b0;
             a_row_cache_active_job_q <= 1'b0;
+            packed_a_row_preload_active_job_q <= 1'b0;
 
             for (int ak = 0; ak < GEMM_A_ROW_CACHE_MAX_K; ak++) begin
                 a_row_cache_q[ak] <= '0;
@@ -891,12 +999,14 @@ module gemm_top #(
             mem_wr_strb  <= mem_wr_strb_d;
 
             arow_k_q            <= arow_k_d;
+            arow_pack_k_q       <= arow_pack_k_d;
             bcache_k_q           <= bcache_k_d;
             bcache_n_q           <= bcache_n_d;
             bpack_addr_q         <= bpack_addr_d;
             bpack_end_addr_q     <= bpack_end_addr_d;
             b_cache_active_job_q <= b_cache_active_job_d;
             a_row_cache_active_job_q <= a_row_cache_active_job_d;
+            packed_a_row_preload_active_job_q <= packed_a_row_preload_active_job_d;
 
             for (int ak = 0; ak < GEMM_A_ROW_CACHE_MAX_K; ak++) begin
                 a_row_cache_q[ak] <= a_row_cache_d[ak];
