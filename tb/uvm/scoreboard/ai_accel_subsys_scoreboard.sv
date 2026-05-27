@@ -407,6 +407,19 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             103: expect_dims_item(item, 1, 4, 4, "var103");
             104: expect_dims_item(item, 4, 1, 4, "var104");
             105: expect_dims_item(item, 2, 3, 4, "var105");
+
+            // P9F larger-dimension cases for cache-dimension scaling.
+            //
+            // These cases intentionally exercise dimensions beyond the original
+            // <=4 variable-dimension set, while still using the default base map.
+            //
+            //   190: M=1, N=8, K=8  -> fills B-cache K/N=8 with one A row
+            //   191: M=2, N=8, K=8  -> two A rows with B-cache reuse
+            //   192: M=3, N=5, K=7  -> non-power-of-two / non-multiple-of-4 tail case
+            190: expect_dims_item(item, 1, 8, 8, "var190");
+            191: expect_dims_item(item, 2, 8, 8, "var191");
+            192: expect_dims_item(item, 3, 5, 7, "var192");
+
             default: begin
                 `uvm_error("SB/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))

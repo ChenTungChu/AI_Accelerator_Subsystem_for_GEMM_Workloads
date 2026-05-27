@@ -29,6 +29,17 @@ class ai_accel_subsys_dma_load_store_stress_test
     int unsigned store_stress_random;
     int unsigned store_stress_gap_cycles;
 
+    // Optional forced-case mode for focused P9G/P9H larger-dimension path checks.
+    //
+    // run_uvm.tcl may pass a default +CASE_ID=0 even for stress tests that
+    // do not intentionally request a focused case.  CASE_ID=0 is therefore
+    // treated as "not forced" for this stress wrapper.
+    //
+    // When +CASE_ID=<nonzero id> is provided, pick_case() bypasses the
+    // built-in stress pool and every job runs the selected CASE_ID.
+    bit          force_case_id_valid;
+    int unsigned forced_case_id;
+
     localparam int unsigned DEFAULT_STORE_STRESS_JOB_COUNT = 20;
     localparam int unsigned DEFAULT_STORE_STRESS_SEED      = 32'h2026_0502;
     localparam int unsigned DEFAULT_STORE_STRESS_RANDOM    = 1;
@@ -60,6 +71,9 @@ class ai_accel_subsys_dma_load_store_stress_test
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
 
+        force_case_id_valid = 1'b0;
+        forced_case_id      = 0;
+
         if (!$value$plusargs("STORE_STRESS_JOB_COUNT=%0d", store_stress_job_count)) begin
             store_stress_job_count = DEFAULT_STORE_STRESS_JOB_COUNT;
         end
@@ -76,19 +90,35 @@ class ai_accel_subsys_dma_load_store_stress_test
             store_stress_gap_cycles = DEFAULT_STORE_STRESS_GAP;
         end
 
+        if ($value$plusargs("CASE_ID=%0d", forced_case_id)) begin
+            // CASE_ID=0 is a run_uvm.tcl default placeholder for stress tests.
+            // It must not enable forced-case mode, otherwise default/random
+            // stress regression items try to run unsupported CASE_ID=0.
+            force_case_id_valid = (forced_case_id != 0);
+        end
+
         if (store_stress_job_count == 0) begin
             `uvm_fatal("DMA_LOAD_STORE_STRESS",
                 "STORE_STRESS_JOB_COUNT must be non-zero")
         end
 
         `uvm_info("DMA_LOAD_STORE_STRESS",
-            $sformatf("Configured load-store stress knobs: job_count=%0d seed=0x%08h random=%0d gap_cycles=%0d enable_result_check=%0d",
+            $sformatf("Configured load-store stress knobs: job_count=%0d seed=0x%08h random=%0d gap_cycles=%0d enable_result_check=%0d forced_case=%0d forced_case_id=%0d",
                 store_stress_job_count,
                 store_stress_seed,
                 store_stress_random,
                 store_stress_gap_cycles,
-                enable_result_check),
+                enable_result_check,
+                force_case_id_valid,
+                forced_case_id),
             UVM_MEDIUM)
+
+        if (force_case_id_valid) begin
+            `uvm_info("DMA_LOAD_STORE_STRESS",
+                $sformatf("Forced CASE_ID mode enabled: all DMA load-store stress jobs will run CASE_ID=%0d",
+                    forced_case_id),
+                UVM_MEDIUM)
+        end
     endfunction
 
     // ------------------------------------------------------------
@@ -111,6 +141,10 @@ class ai_accel_subsys_dma_load_store_stress_test
         int unsigned idx;
         int unsigned rnd;
     begin
+        if (force_case_id_valid) begin
+            return forced_case_id;
+        end
+
         if (store_stress_random != 0) begin
             rnd = next_rand(rand_state);
             idx = rnd % 8;
@@ -144,6 +178,13 @@ class ai_accel_subsys_dma_load_store_stress_test
         `uvm_info("DMA_LOAD_STORE_STRESS",
             $sformatf("Supported load-store stress case pool: {%s}", s),
             UVM_MEDIUM)
+
+        if (force_case_id_valid) begin
+            `uvm_info("DMA_LOAD_STORE_STRESS",
+                $sformatf("Built-in pool selection is bypassed by forced CASE_ID=%0d",
+                    forced_case_id),
+                UVM_MEDIUM)
+        end
     end
     endtask
 

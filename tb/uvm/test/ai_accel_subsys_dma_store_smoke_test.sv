@@ -1,5 +1,4 @@
 // File: tb/uvm/test/ai_accel_subsys_dma_store_smoke_test.sv
-
 `ifndef AI_ACCEL_SUBSYS_DMA_STORE_SMOKE_TEST_SV
 `define AI_ACCEL_SUBSYS_DMA_STORE_SMOKE_TEST_SV
 
@@ -7,19 +6,14 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
     `uvm_component_utils(ai_accel_subsys_dma_store_smoke_test)
 
-    // ------------------------------------------------------------
-    // Local parameters
-    // ------------------------------------------------------------
     localparam int ADDR_WIDTH = 32;
     localparam int DATA_WIDTH = 64;
     localparam int ID_WIDTH   = 4;
-
     localparam int DIM_WIDTH  = 8;
 
     localparam int DMA_SRC_MEM_BYTES = 4096;
     localparam int DMA_DST_MEM_BYTES = 4096;
-
-    localparam int BYTES_PER_BEAT = DATA_WIDTH / 8;
+    localparam int BYTES_PER_BEAT    = DATA_WIDTH / 8;
 
     localparam logic [1:0] AXI_RESP_OKAY  = 2'b00;
     localparam logic [1:0] AXI_BURST_INCR = 2'b01;
@@ -38,20 +32,11 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         .HAS_BURST  (1)
     ) axi0_vif_t;
 
-    // ------------------------------------------------------------
-    // Components
-    // ------------------------------------------------------------
     ai_accel_subsys_env env;
 
-    // ------------------------------------------------------------
-    // Virtual interfaces
-    // ------------------------------------------------------------
     ctrl_vif_t vif;
     axi0_vif_t axi0_vif;
 
-    // ------------------------------------------------------------
-    // Test configuration
-    // ------------------------------------------------------------
     int unsigned case_id;
     int unsigned run_all;
 
@@ -63,7 +48,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
     logic [ADDR_WIDTH-1:0] dma_src_a;
     logic [ADDR_WIDTH-1:0] dma_src_b;
-
     logic [ADDR_WIDTH-1:0] dma_store_dst_base;
 
     int unsigned dim_m_i;
@@ -75,21 +59,15 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     int unsigned c_words;
     int unsigned c_bytes;
 
-    logic [7:0]  a_payload [0:63];
-    logic [7:0]  b_payload [0:63];
+    logic [7:0]  a_payload  [0:63];
+    logic [7:0]  b_payload  [0:63];
     logic [31:0] expected_c [0:63];
 
-    // ------------------------------------------------------------
-    // Constructor
-    // ------------------------------------------------------------
     function new(string name = "ai_accel_subsys_dma_store_smoke_test",
                  uvm_component parent = null);
         super.new(name, parent);
     endfunction
 
-    // ------------------------------------------------------------
-    // Infer test kind from case id
-    // ------------------------------------------------------------
     function automatic ai_accel_subsys_seq_item::test_kind_e infer_test_kind(
         input int unsigned cid
     );
@@ -109,9 +87,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         end
     endfunction
 
-    // ------------------------------------------------------------
-    // Build test name from case id / test kind
-    // ------------------------------------------------------------
     function automatic string build_test_name(
         input int unsigned cid,
         input ai_accel_subsys_seq_item::test_kind_e kind
@@ -131,9 +106,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         endcase
     endfunction
 
-    // ------------------------------------------------------------
-    // Parse result-check enable
-    // ------------------------------------------------------------
     function void parse_result_check_enable();
         int unsigned tmp;
     begin
@@ -149,9 +121,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endfunction
 
-    // ------------------------------------------------------------
-    // Build phase
-    // ------------------------------------------------------------
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
 
@@ -173,16 +142,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
         parse_result_check_enable();
 
-        // --------------------------------------------------------
-        // Build env so DMA-store smoke can use the same monitor /
-        // result_bridge / scoreboard flow as the existing tests.
-        //
-        // Host agent remains PASSIVE because this test directly drives
-        // axi0_vif with local AXI tasks for C clear only.
-        //
-        // Host traffic checker is disabled because local AXI tasks are
-        // not routed through host sequences/context.
-        // --------------------------------------------------------
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
             this, "env", "vif", vif);
 
@@ -204,9 +163,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         env = ai_accel_subsys_env::type_id::create("env", this);
     endfunction
 
-    // ------------------------------------------------------------
-    // Utility
-    // ------------------------------------------------------------
     function automatic int unsigned ceil_div(
         input int unsigned value,
         input int unsigned divisor
@@ -252,33 +208,22 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Configure supported cases
-    // ------------------------------------------------------------
     task automatic configure_case(input int unsigned cid);
         int unsigned i;
     begin
         clear_payload_arrays();
 
-        // Default DMA source locations.
-        // Source memory is independent from scratchpad address map.
         dma_src_a = 32'h0000_0000;
         dma_src_b = 32'h0000_0100;
 
-        // Default scratchpad layout.
         base_a = 32'h0000_0000;
         base_b = 32'h0000_0100;
         base_c = 32'h0000_0200;
 
-        // Default destination memory base for S2MM result store.
         dma_store_dst_base = 32'h0000_0000;
 
         case (cid)
             100: begin
-                // 1x1x1:
-                // A = [3]
-                // B = [5]
-                // C = [15]
                 dim_m_i = 1;
                 dim_n_i = 1;
                 dim_k_i = 1;
@@ -292,16 +237,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             end
 
             101: begin
-                // 2x2x2:
-                //
-                // A = [ 1 2
-                //       3 4 ]
-                //
-                // B = [ 5 6
-                //       7 8 ]
-                //
-                // C = [ 19 22
-                //       43 50 ]
                 dim_m_i = 2;
                 dim_n_i = 2;
                 dim_k_i = 2;
@@ -322,10 +257,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             end
 
             105: begin
-                // 2x3x4:
-                // A shape: MxK = 2x4, 8 bytes
-                // B shape: KxN = 4x3, 12 bytes
-                // C shape: MxN = 2x3, 6 words
                 dim_m_i = 2;
                 dim_n_i = 3;
                 dim_k_i = 4;
@@ -343,11 +274,67 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                 end
             end
 
+            190: begin
+                // P9G large-dimension path case: M=1, N=8, K=8.
+                // This fills an 8x8 B tile while keeping C output small.
+                dim_m_i = 1;
+                dim_n_i = 8;
+                dim_k_i = 8;
+
+                a_bytes = 8;
+                b_bytes = 64;
+                c_words = 8;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (i % 8) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
+            191: begin
+                // P9G large-dimension path case: M=2, N=8, K=8.
+                // This validates two A rows and B-cache reuse at N/K=8.
+                dim_m_i = 2;
+                dim_n_i = 8;
+                dim_k_i = 8;
+
+                a_bytes = 16;
+                b_bytes = 64;
+                c_words = 16;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 5) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
+            192: begin
+                // P9G large/tail-dimension path case: M=3, N=5, K=7.
+                // N and K are intentionally not multiples of four.
+                dim_m_i = 3;
+                dim_n_i = 5;
+                dim_k_i = 7;
+
+                a_bytes = 21;
+                b_bytes = 35;
+                c_words = 15;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 2) % 9) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 7) + 1;
+                end
+            end
+
             5, 400, 401, 402, 403: begin
-                // 4x4x4:
-                // A shape: MxK = 4x4, 16 bytes
-                // B shape: KxN = 4x4, 16 bytes
-                // C shape: MxN = 4x4, 16 words
                 dim_m_i = 4;
                 dim_n_i = 4;
                 dim_k_i = 4;
@@ -382,7 +369,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                     end
 
                     default: begin
-                        // unreachable because outer case already filters
                     end
                 endcase
 
@@ -397,7 +383,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
             default: begin
                 `uvm_fatal("DMA_STORE_SMOKE",
-                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 400, 401, 402, 403", cid))
+                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 400, 401, 402, 403", cid))
             end
         endcase
 
@@ -427,12 +413,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Compute expected C = A x B
-    // A: MxK row-major, int8
-    // B: KxN row-major, int8
-    // C: MxN row-major, int32
-    // ------------------------------------------------------------
     task automatic compute_expected_c();
         int unsigned r;
         int unsigned c;
@@ -465,9 +445,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Publish result vectors to scoreboard through result_bridge
-    // ------------------------------------------------------------
     task automatic publish_result_to_scoreboard(
         input int unsigned cid,
         input int signed   expected_dyn[],
@@ -517,9 +494,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Monitor runtime context control
-    // ------------------------------------------------------------
     task automatic set_monitor_case_context(input int unsigned cid);
         ai_accel_subsys_seq_item::test_kind_e kind;
     begin
@@ -545,9 +519,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Wait for reset release
-    // ------------------------------------------------------------
     task automatic wait_for_reset_release();
         `uvm_info("DMA_STORE_SMOKE", "Waiting for reset release", UVM_MEDIUM)
 
@@ -561,9 +532,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         `uvm_info("DMA_STORE_SMOKE", "Reset released", UVM_MEDIUM)
     endtask
 
-    // ------------------------------------------------------------
-    // Initialize ctrl_if outputs
-    // ------------------------------------------------------------
     task automatic init_ctrl_outputs();
         @(vif.cb_drv);
 
@@ -595,9 +563,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         vif.dma_dst_set_bresp_error(1'b0, -1);
     endtask
 
-    // ------------------------------------------------------------
-    // Initialize raw AXI0 host interface outputs
-    // ------------------------------------------------------------
     task automatic init_axi0_outputs();
         @(posedge axi0_vif.clk);
 
@@ -625,9 +590,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         axi0_vif.rready  <= 1'b0;
     endtask
 
-    // ------------------------------------------------------------
-    // AXI0 single-beat write
-    // ------------------------------------------------------------
     task automatic axi0_write64(
         input logic [ADDR_WIDTH-1:0]   addr,
         input logic [DATA_WIDTH-1:0]   data,
@@ -702,9 +664,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         axi0_vif.awaddr  <= '0;
     endtask
 
-    // ------------------------------------------------------------
-    // Host clear C region
-    // ------------------------------------------------------------
     task automatic clear_c_region();
         int unsigned total_c_bytes;
         int unsigned beat_count;
@@ -726,9 +685,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Clear DMA destination memory
-    // ------------------------------------------------------------
     task automatic clear_dma_destination_memory();
     begin
         `uvm_info("DMA_STORE_SMOKE",
@@ -740,9 +696,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Fill DMA source memory through ctrl_if helper tasks
-    // ------------------------------------------------------------
     task automatic preload_dma_source_memory();
         int unsigned i;
     begin
@@ -763,9 +716,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Launch one DMA load job
-    // ------------------------------------------------------------
     task automatic run_dma_load(
         input string                  tag,
         input logic [ADDR_WIDTH-1:0]  src_addr,
@@ -830,9 +780,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             UVM_MEDIUM)
     endtask
 
-    // ------------------------------------------------------------
-    // Configure and start GEMM
-    // ------------------------------------------------------------
     task automatic run_gemm(input int unsigned cid);
         int unsigned timeout;
         bit done_seen;
@@ -879,9 +826,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         `uvm_info("DMA_STORE_SMOKE", "GEMM completed", UVM_MEDIUM)
     endtask
 
-    // ------------------------------------------------------------
-    // Launch DMA store job
-    // ------------------------------------------------------------
     task automatic run_dma_store_c();
         int unsigned timeout;
         bit done_seen;
@@ -938,9 +882,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             UVM_MEDIUM)
     endtask
 
-    // ------------------------------------------------------------
-    // Read destination memory and compare C
-    // ------------------------------------------------------------
     task automatic read_dst_and_compare_c(
         output int signed actual_dyn[]
     );
@@ -983,9 +924,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Run one configured case
-    // ------------------------------------------------------------
     task automatic run_one_case(input int unsigned cid);
         int signed expected_dyn[];
         int signed actual_dyn[];
@@ -1018,9 +956,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
-    // ------------------------------------------------------------
-    // Main run phase
-    // ------------------------------------------------------------
     task run_phase(uvm_phase phase);
         phase.raise_objection(this);
 

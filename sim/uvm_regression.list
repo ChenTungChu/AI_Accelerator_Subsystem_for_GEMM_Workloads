@@ -2,8 +2,8 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current baseline:
-#   TOTAL : 59
-#   PASS  : 59
+#   TOTAL : 65
+#   PASS  : 65
 #   FAIL  : 0
 #
 # Major coverage:
@@ -34,11 +34,18 @@
 #   - 2-lane packed B-cache representative regression
 #   - 2-lane packed B-cache + A-row cache stress / CDC representative regression
 #   - 2-lane packed B-cache + A-row cache + packed A-row representative regression
+#   - 4-lane full-cache representative regression
+#   - P9 scaled-cache large-dimension representative regression
 #   - back-to-back jobs
 #   - reset recovery
 #   - corner recipe
 #   - mid-run reset / abort recovery
 #   - helper fallback sanity
+#
+# P9 representative additions:
+#   - gemm_4lane_scaled_fullcache_dma_load_store_case190
+#   - gemm_4lane_scaled_fullcache_axis_stream_load_store_case191
+#   - gemm_4lane_scaled_fullcache_direct_stream_load_store_case192
 # ============================================================
 
 
@@ -153,13 +160,30 @@ ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABL
 
 # ------------------------------------------------------------
 # P7 packed A-row preload representative regression
-#
-# P7F manually covered both default clock and CDC variants.
-# Full regression keeps only the default-clock representative set.
 # ------------------------------------------------------------
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# P8 cache-backed 4-lane MAC representative regression
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# ------------------------------------------------------------
+# P9 scaled-cache larger-dimension representative regression
+#
+# These are directed single-case items. CASE_ID=0 is treated as
+# non-forced mode by the stress tests, while CASE_ID != 0 forces
+# the selected large CASE_ID for every job in that item.
+# ------------------------------------------------------------
+ai_accel_subsys_dma_load_store_stress_test CASE_ID 190 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 191 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 192 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 
 
 # ------------------------------------------------------------

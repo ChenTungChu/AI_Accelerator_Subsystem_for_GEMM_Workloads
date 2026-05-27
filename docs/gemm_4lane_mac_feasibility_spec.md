@@ -1,10 +1,46 @@
 # GEMM 4-Lane MAC Feasibility Spec
 
+## 0. P8 Closure Status
+
+P8 has now been implemented and closed.
+
+Final validated configuration:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=4
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+```
+
+Closure result:
+
+```text
+P8A: feasibility spec                         PASS
+P8B: safe parameter validation / plumbing      PASS
+P8C: cache-backed true 4-lane MAC RTL          PASS
+P8D: focused perf/profile compare              PASS
+P8E: Direct Stream compatibility               PASS
+P8F: stress / CDC manual subset                PASS
+P8G: representative regression inclusion       PASS
+
+Full regression after P8G:
+  TOTAL : 62
+  PASS  : 62
+  FAIL  : 0
+```
+
+Representative 4x4x4 profile improved from the P7 2-lane packed A-row baseline of approximately 500 busy cycles to approximately 472 busy cycles with the cache-backed 4-lane path.
+
+---
+
 ## 1. Purpose
 
-This document defines the **P8 feasibility milestone** for extending the AI Accelerator Subsystem GEMM compute datapath from the current 1-lane / 2-lane MAC model toward a possible **4-lane MAC** mode.
+This document defines the **P8 feasibility and closure record** for extending the AI Accelerator Subsystem GEMM compute datapath from the current 1-lane / 2-lane MAC model to a cache-backed **4-lane MAC** mode.
 
-The project has already completed the memory-side and operand-reuse milestones:
+The project had already completed the memory-side and operand-reuse milestones before P8:
 
 ```text
 P4: B-cache operand reuse optimization
@@ -13,22 +49,15 @@ P6: scalar A-row cache optimization
 P7: packed A-row preload optimization
 ```
 
-Current P7 closure status:
+P8 is the first milestone that revisits compute-side parallelism after the operand delivery path has been improved.
 
-```text
-Full regression after P7:
-  TOTAL : 59
-  PASS  : 59
-  FAIL  : 0
-```
+The original goal of P8A was not to immediately modify RTL. The goal was to decide whether a 4-lane MAC mode was architecturally reasonable, what constraints were required, and how it should be verified without destabilizing the P7 baseline.
 
-P8 is the first milestone that revisits the **compute-side parallelism** after the operand delivery path has been improved.
-
-The goal of P8A is not to immediately modify RTL. The goal is to decide whether a 4-lane MAC mode is architecturally reasonable, what constraints are required, and how it should be verified without destabilizing the existing P7 baseline.
+P8 has now completed that feasibility, implementation, profile, stress, CDC, and regression-inclusion flow.
 
 ---
 
-## 2. Recommended File Name
+## 2. File Name
 
 Recommended file name:
 
@@ -39,29 +68,15 @@ docs/gemm_4lane_mac_feasibility_spec.md
 Reason:
 
 ```text
-P8A is a feasibility and architecture-planning step.
-The document should not imply that 4-lane RTL is already implemented.
-```
-
-Alternative acceptable names:
-
-```text
-docs/gemm_4lane_mac_spec.md
-docs/gemm_mac_lanes_4_spec.md
-docs/gemm_compute_parallelism_spec.md
-```
-
-Recommended name for this project:
-
-```text
-docs/gemm_4lane_mac_feasibility_spec.md
+P8 began as a feasibility and architecture-planning step.
+The file now also records P8 closure.
 ```
 
 ---
 
 ## 3. Baseline Before P8
 
-The current optimized P7 stack is:
+The optimized P7 stack was:
 
 ```text
 GEMM_MAC_LANES=2
@@ -86,13 +101,13 @@ CASE_ID | KIND | M | N | K | MACS | OUTPUTS | GEMM_BUSY_CYCLES
 403     | 2    | 4 | 4 | 4 | 64   | 16      | 500
 ```
 
-The P7 stack has already reduced memory-side bottlenecks enough that a compute-side expansion can now be evaluated more meaningfully.
+The P7 stack reduced memory-side bottlenecks enough that compute-side expansion became meaningful to evaluate.
 
 ---
 
 ## 4. Problem Statement
 
-The current P7 compute datapath supports a 2-lane K-parallel MAC mode.
+The P7 compute datapath supported a 2-lane K-parallel MAC mode.
 
 For each output element:
 
@@ -107,13 +122,13 @@ K step width = 2
 compute groups per output = ceil(K / 2)
 ```
 
-For the current K=4 performance cases:
+For K=4:
 
 ```text
 2-lane compute groups per output = ceil(4 / 2) = 2
 ```
 
-A 4-lane MAC mode would target:
+A 4-lane MAC mode targets:
 
 ```text
 K step width = 4
@@ -126,7 +141,7 @@ For K=4:
 4-lane compute groups per output = ceil(4 / 4) = 1
 ```
 
-Therefore, for K=4 cases, a 4-lane MAC can theoretically reduce compute groups per output from 2 to 1.
+Therefore, for K=4 cases, a 4-lane MAC can reduce compute groups per output from 2 to 1.
 
 However, a wider MAC only helps if the operand delivery path can supply:
 
@@ -137,7 +152,7 @@ B[k+0][n], B[k+1][n], B[k+2][n], B[k+3][n]
 
 in the same compute step.
 
-That is why P8 should depend on the already-completed cache stack:
+That is why P8 depends on the completed cache stack:
 
 ```text
 B-cache
@@ -150,20 +165,19 @@ packed A-row preload
 
 ## 5. P8 Design Goals
 
-P8 should:
+P8 goals:
 
-1. Preserve the current P7 full regression baseline by default.
+1. Preserve the existing default regression behavior.
 2. Keep `GEMM_MAC_LANES=4` optional and non-default.
 3. Avoid changing the GEMM algorithm.
 4. Avoid changing A/B/C memory layout.
 5. Avoid changing DMA / AXI-Stream / Direct Stream protocols.
-6. Reuse the existing B-cache and A-row cache storage.
+6. Reuse existing B-cache and A-row cache storage.
 7. Keep MAC/output counters semantically unchanged.
 8. Support correct lane masking for K tails.
 9. Keep 1-lane and 2-lane behavior unchanged.
 10. Keep full regression growth controlled by adding only representative 4-lane items.
-11. Focus first implementation on correctness and feasibility, not exact cycle thresholds.
-12. Treat 4-lane mode as cache-backed in the first implementation.
+11. Treat 4-lane mode as cache-backed in the first implementation.
 
 ---
 
@@ -186,54 +200,40 @@ P8 does not attempt to:
 - add multi-column B streaming
 - make 4-lane mode the default
 - require exact performance thresholds in regression
-- replace the existing 2-lane mode
+- replace the existing 1-lane or 2-lane modes
 
-P8 is a compute datapath feasibility step.
+P8 is a compute datapath parallelism milestone.
 
 ---
 
 ## 7. Parameterization Strategy
 
-### 7.1 Existing Parameter
-
-The project already uses:
+The project uses:
 
 ```systemverilog
-parameter int GEMM_MAC_LANES = 1
+parameter int GEMM_MAC_LANES = 1;
 ```
 
-The existing 2-lane work already validated:
-
-```text
-GEMM_MAC_LANES=2
-```
-
-P8 should extend the supported values to:
+Supported values after P8:
 
 ```text
 GEMM_MAC_LANES = 1, 2, or 4
 ```
 
-### 7.2 Default Policy
-
-Do not change the default.
-
-Recommended default remains:
+Default policy:
 
 ```systemverilog
-parameter int GEMM_MAC_LANES = 1
+parameter int GEMM_MAC_LANES = 1;
 ```
 
 Reason:
 
 ```text
 Existing default-off regression behavior must remain stable.
-4-lane mode should be opt-in only.
+4-lane mode is opt-in only.
 ```
 
-### 7.3 Suggested Compile-Time Guard
-
-Add a defensive elaboration-time check in simulation-oriented RTL:
+Recommended defensive validation:
 
 ```systemverilog
 initial begin
@@ -246,15 +246,13 @@ initial begin
 end
 ```
 
-If the project avoids `initial $fatal` in RTL, this can instead be handled by generate-time assertions or testbench checks.
-
 ---
 
 ## 8. Effective Enable Policy
 
-### 8.1 First Implementation Policy
+### 8.1 Cache-Backed 4-Lane Policy
 
-For the first P8 implementation, 4-lane compute should be considered active only when the job can use the cache-backed operand path:
+The first P8 implementation makes true 4-lane compute active only when the job can use the cache-backed operand path:
 
 ```text
 four_lane_compute_active =
@@ -265,7 +263,7 @@ four_lane_compute_active =
     dim_k <= GEMM_B_CACHE_MAX_K
 ```
 
-Recommended stricter first implementation for performance validation:
+Validated strict performance configuration:
 
 ```text
 GEMM_MAC_LANES=4
@@ -273,8 +271,9 @@ GEMM_ENABLE_B_CACHE=1
 GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
 GEMM_ENABLE_A_ROW_CACHE=1
 GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
-GEMM_A_ROW_CACHE_MAX_K >= 4
-GEMM_B_CACHE_MAX_K >= 4
+GEMM_A_ROW_CACHE_MAX_K=4
+GEMM_B_CACHE_MAX_K=4
+GEMM_B_CACHE_MAX_N=4
 ```
 
 Reason:
@@ -283,73 +282,16 @@ Reason:
 The one-read-at-a-time local memory interface cannot naturally feed four A/B operands
 directly from scratchpad every compute step.
 
-The P7 cache stack can.
+The completed P7 cache stack can.
 ```
 
 ### 8.2 Fallback Policy
 
-There are two possible fallback policies.
+If `GEMM_MAC_LANES=4` is requested but cache-backed 4-lane conditions are not met, the implementation may fall back to the existing 2-lane or scalar-safe path for correctness.
 
-#### Option A: Strict 4-Lane Mode
+This keeps unsupported cases from failing while making the validated performance path explicit.
 
-If `GEMM_MAC_LANES=4` is requested but cache-backed 4-lane conditions are not met, fail fast in simulation.
-
-Pros:
-
-```text
-prevents misleading performance results
-makes configuration mistakes visible
-```
-
-Cons:
-
-```text
-less flexible for mixed regression cases
-requires tests to avoid unsupported combinations
-```
-
-#### Option B: Effective-Lane Fallback
-
-If `GEMM_MAC_LANES=4` is requested but cache-backed 4-lane conditions are not met, use the existing 2-lane or scalar path.
-
-Pros:
-
-```text
-preserves correctness
-keeps unsupported cases from failing
-easier for mixed CASE_ID regression
-```
-
-Cons:
-
-```text
-performance interpretation becomes less obvious
-GEMM_MAC_LANES=4 does not always mean 4-lane compute was used
-```
-
-Recommended first P8 policy:
-
-```text
-Use effective-lane fallback for correctness,
-but expose clear config/log messages so waveform and logs show whether
-4-lane compute was actually active.
-```
-
-Suggested display:
-
-```text
-[GEMM_TOP_CFG]
-  GEMM_MAC_LANES=4
-  GEMM_4LANE_EFFECTIVE_POLICY=cache_backed
-```
-
-Optional future counter:
-
-```text
-gemm_perf_4lane_active_output_count
-```
-
-Do not add this counter in the first patch unless debug requires it.
+The logs should show the requested and effective lane configuration clearly enough to distinguish true 4-lane execution from fallback behavior.
 
 ---
 
@@ -370,42 +312,35 @@ Examples:
 
 ```text
 K=1:
-  first compute group:
-    lane0 valid
-    lane1 invalid
-    lane2 invalid
-    lane3 invalid
+  lane0 valid
+  lane1 invalid
+  lane2 invalid
+  lane3 invalid
 
 K=2:
-  first compute group:
-    lane0 valid
-    lane1 valid
-    lane2 invalid
-    lane3 invalid
+  lane0 valid
+  lane1 valid
+  lane2 invalid
+  lane3 invalid
 
 K=3:
-  first compute group:
-    lane0 valid
-    lane1 valid
-    lane2 valid
-    lane3 invalid
+  lane0 valid
+  lane1 valid
+  lane2 valid
+  lane3 invalid
 
 K=4:
-  first compute group:
-    lane0 valid
-    lane1 valid
-    lane2 valid
-    lane3 valid
+  lane0 valid
+  lane1 valid
+  lane2 valid
+  lane3 valid
 
 K=5:
-  first compute group:
-    lane0..3 valid
-  second compute group:
-    lane0 valid
-    lane1..3 invalid
+  group0: lane0..3 valid
+  group1: lane0 valid, lane1..3 invalid
 ```
 
-For the current P8 first target, most meaningful coverage is K=4 because current cache max values are 4.
+For the current P8 target, the most meaningful profile cases are K=4 because the configured cache max values are 4.
 
 ---
 
@@ -422,10 +357,10 @@ A lane2 = a_row_cache[k_idx + 2]
 A lane3 = a_row_cache[k_idx + 3]
 ```
 
-Each lane must be guarded:
+Each lane is guarded:
 
 ```text
-only read/use a_row_cache[k_idx + lane] if lane is valid
+only read/use a_row_cache[k_idx + lane] when lane is valid
 ```
 
 ### 10.2 B Operand Source
@@ -439,10 +374,10 @@ B lane2 = b_cache[k_idx + 2][n_idx]
 B lane3 = b_cache[k_idx + 3][n_idx]
 ```
 
-Each lane must be guarded:
+Each lane is guarded:
 
 ```text
-only read/use b_cache[k_idx + lane][n_idx] if lane is valid
+only read/use b_cache[k_idx + lane][n_idx] when lane is valid
 ```
 
 ### 10.3 Accumulation
@@ -471,19 +406,19 @@ Then:
 acc_next = acc_q + mac_sum
 ```
 
-The final result remains:
+The mathematical result remains:
 
 ```text
 C[m][n] = sum over K of A[m][k] * B[k][n]
 ```
 
-No scoreboard reference model change should be required because the math result does not change.
+No scoreboard reference model change is required because the mathematical result does not change.
 
 ---
 
 ## 11. Signedness and Width Requirements
 
-P8 must preserve existing signed int8 behavior.
+P8 preserves existing signed int8 behavior.
 
 Recommended signed product model:
 
@@ -503,37 +438,13 @@ Important rule:
 Do not let unsigned packed array indexing or part-selects silently convert operands.
 ```
 
-The P8 patch should follow the same signedness conventions already proven by:
-
-```text
-P6 scalar A-row cache
-P7 packed A-row preload
-P4/P5 B-cache paths
-```
-
 ---
 
 ## 12. FSM Integration Model
 
-### 12.1 Current P7 High-Level Flow
-
-Current P7 flow:
-
-```text
-S_IDLE
-  -> optional B-cache preload
-  -> for each output row m:
-       optional packed A-row preload
-       compute all n using A-row cache + B-cache
-  -> write C
-  -> done
-```
-
-### 12.2 P8 Flow
-
 P8 should not add new high-level scheduling states if avoidable.
 
-Recommended P8 flow:
+Recommended high-level flow:
 
 ```text
 same P7 FSM
@@ -543,23 +454,7 @@ same C writeback
 only modify compute step to support 4-lane K stride
 ```
 
-### 12.3 K Step Update
-
-For 2-lane mode:
-
-```text
-k_idx_next = k_idx + 2
-done when k_idx + 2 >= dim_k
-```
-
-For 4-lane mode:
-
-```text
-k_idx_next = k_idx + 4
-done when k_idx + 4 >= dim_k
-```
-
-General form:
+K step update:
 
 ```text
 active_lanes = effective lane count
@@ -567,7 +462,7 @@ k_idx_next = k_idx + active_lanes
 done when k_idx + active_lanes >= dim_k
 ```
 
-For simplicity, first RTL patch may keep explicit branches:
+For simplicity, explicit branches are acceptable:
 
 ```text
 if four_lane_active:
@@ -578,13 +473,11 @@ else:
     step = 1
 ```
 
-This is easier to review and debug than a fully generic lane loop.
-
 ---
 
 ## 13. Expected Performance Model
 
-### 13.1 Compute Groups Per Output
+Compute groups per output:
 
 ```text
 compute_groups_per_output = ceil(K / active_lanes)
@@ -598,12 +491,6 @@ For K=4:
 4-lane: ceil(4 / 4) = 1 group
 ```
 
-### 13.2 Total Compute Groups
-
-```text
-total_compute_groups = M * N * ceil(K / active_lanes)
-```
-
 For 4x4x4:
 
 ```text
@@ -613,63 +500,27 @@ K = 4
 
 2-lane compute groups = 4 * 4 * 2 = 32
 4-lane compute groups = 4 * 4 * 1 = 16
-
-Saved compute groups = 16
 ```
 
-### 13.3 Expected Busy-Cycle Trend
+The P7 4x4x4 class baseline was approximately 500 busy cycles. P8 4-lane reduced the same class to approximately 472 busy cycles.
 
-For P7 4x4x4 class:
-
-```text
-P7 2-lane packed A-row baseline:
-  GEMM_BUSY_CYCLES = 500
-```
-
-P8 4-lane expected trend:
-
-```text
-4x4x4 class should improve versus 500 busy cycles,
-but exact threshold should not be used in first implementation.
-```
-
-Reason:
-
-```text
-GEMM_BUSY_CYCLES includes preload, compute, C writeback, and FSM overhead.
-Even if compute groups are reduced, non-compute overhead remains.
-```
-
-For K=1/K=2 cases:
-
-```text
-K=1:
-  4-lane has no real compute parallelism benefit over 1-lane for a single product
-
-K=2:
-  4-lane has no real benefit over 2-lane for two products
-
-K=4:
-  4-lane can reduce compute groups relative to 2-lane
-```
-
-Therefore, P8 performance expectations should focus on K=4 cases.
+The speedup is limited because `gemm_perf_busy_cycles` includes preload, compute, C writeback, and FSM overhead. Compute grouping is reduced, but non-compute overhead remains.
 
 ---
 
 ## 14. Performance Counter Requirements
 
-Existing counters must retain their meaning:
+Existing counters retain their meaning:
 
 ```text
 gemm_perf_busy_cycles:
   counts the full GEMM busy window
 
 gemm_perf_mac_count:
-  still equals M * N * K
+  equals M * N * K
 
 gemm_perf_output_count:
-  still equals M * N
+  equals M * N
 ```
 
 For 4-lane mode:
@@ -687,35 +538,22 @@ Example:
   expected output count = 4 * 4 = 16
 ```
 
-A correct 4-lane implementation must still report:
+A correct 4-lane implementation still reports:
 
 ```text
 mac_count    = 64
 output_count = 16
 ```
 
-Optional future counters:
-
-```text
-gemm_perf_compute_group_count
-gemm_perf_4lane_group_count
-gemm_perf_lane0_valid_count
-gemm_perf_lane1_valid_count
-gemm_perf_lane2_valid_count
-gemm_perf_lane3_valid_count
-```
-
-Do not add these in the first P8 patch unless debug requires them.
-
 ---
 
 ## 15. Direct Stream Compatibility
 
-Direct Stream mode should not require protocol changes.
+Direct Stream mode does not require protocol changes.
 
 P8 changes the compute grouping after operands have already been staged into cache-backed local storage.
 
-Required Direct Stream validation:
+Validated Direct Stream coverage:
 
 ```text
 Direct Stream smoke RUN_ALL with GEMM_MAC_LANES=4
@@ -735,7 +573,7 @@ Direct Stream smoke may report higher control latency due to frontend integratio
 
 ## 16. DMA / AXI-Stream Compatibility
 
-P8 should not require changes to:
+P8 does not require changes to:
 
 ```text
 dma_load_engine
@@ -748,7 +586,7 @@ result bridge protocol
 host traffic checker
 ```
 
-Required validation paths:
+Validated paths:
 
 ```text
 host-primary path
@@ -759,180 +597,143 @@ Direct Stream preload A/B -> GEMM -> DMA store C
 
 ---
 
-## 17. Verification Plan
+## 17. Verification Plan and Closure
 
-### 17.1 P8A: Feasibility Spec
+### P8A: Feasibility Spec
 
-Complete when:
+Status:
 
 ```text
-docs/gemm_4lane_mac_feasibility_spec.md exists
-lane mask policy is defined
-effective enable / fallback policy is defined
-performance model is defined
-verification plan is defined
+PASS
 ```
 
-### 17.2 P8B: Safe Parameter Validation
+Completion:
 
-Because `GEMM_MAC_LANES` already exists, P8B should confirm that:
+```text
+docs/gemm_4lane_mac_feasibility_spec.md created
+lane mask policy defined
+effective enable / fallback policy defined
+performance model defined
+verification plan defined
+```
+
+### P8B: Safe Parameter Validation
+
+Status:
+
+```text
+PASS
+```
+
+Completion:
 
 ```text
 GEMM_MAC_LANES=4 can be passed through run scripts and top-level parameters.
-Default full regression remains 59/59 PASS.
+Default full regression remained 59/59 PASS before true 4-lane RTL.
 ```
 
-If 4-lane is not yet functionally implemented, P8B can still add:
+### P8C: 4-Lane Compute RTL Prototype
+
+Status:
 
 ```text
-supported-value checks
-config display updates
-safe default-off behavior
+PASS
 ```
 
-Acceptance:
+Completion:
 
 ```text
-compile PASS
-default full regression remains 59/59 PASS
+4-lane lane-valid logic added
+4-lane A/B cache operand selection added
+4-product signed multiply / signed sum added
+K index increment by 4 supported
+fallback behavior preserved for unsupported paths
+focused perf counter smoke PASS
 ```
 
-### 17.3 P8C: 4-Lane Compute RTL Prototype
+### P8D: Focused Performance Profile
 
-Add:
+Status:
 
 ```text
-4-lane lane-valid logic
-4-lane A/B cache operand selection
-4-product signed multiply
-4-product signed sum
-K index increment by 4
-final-K detection for 4-lane mode
-fallback to existing 2-lane / scalar behavior
+PASS
 ```
 
-Acceptance:
+Profile summary:
 
 ```text
-focused perf_counter_smoke RUN_ALL PASS
-MAC/output counters PASS
-result compare PASS
-no UVM_ERROR / UVM_FATAL
+CASE_ID | M | N | K | MACS | OUTPUTS | 1-LANE BUSY | 2-LANE BUSY | 4-LANE BUSY
+100     | 1 | 1 | 1 | 1    | 1       | 43          | 43          | 43
+101     | 2 | 2 | 2 | 8    | 4       | 160         | 152         | 152
+105     | 2 | 3 | 4 | 24   | 6       | 305         | 275         | 265
+5       | 4 | 4 | 4 | 64   | 16      | 577         | 500         | 472
+400     | 4 | 4 | 4 | 64   | 16      | 575         | 500         | 472
+401     | 4 | 4 | 4 | 64   | 16      | 575         | 500         | 472
+402     | 4 | 4 | 4 | 64   | 16      | 575         | 500         | 472
+403     | 4 | 4 | 4 | 64   | 16      | 575         | 500         | 472
 ```
 
-### 17.4 P8D: Focused Performance Profile
+### P8E: Direct Stream Compatibility
 
-Run:
+Status:
 
 ```text
-ai_accel_subsys_perf_profile_test
+PASS
 ```
 
-with 4-lane mode enabled and the P7 cache stack enabled.
-
-Acceptance:
+Validated:
 
 ```text
-result compare PASS
-mac_count/output_count PASS
-profile summary printed
-K=4 cases improve versus P7 500-cycle class
-K=1/K=2 cases remain correct
-no exact cycle threshold required
-no UVM_ERROR / UVM_FATAL
-```
-
-### 17.5 P8E: Direct Stream Compatibility
-
-Run:
-
-```text
-ai_accel_subsys_direct_stream_smoke_test RUN_ALL
-```
-
-with 4-lane mode enabled.
-
-Acceptance:
-
-```text
-8 cases PASS
-scoreboard compare PASS
-control/result pairing PASS
-no UVM_ERROR / UVM_FATAL
-```
-
-### 17.6 P8F: Stress / CDC Manual Subset
-
-Run the three major load-store paths:
-
-```text
-DMA load-store stress
-AXI-Stream load-store stress
+Direct Stream smoke RUN_ALL
 Direct Stream load-store stress
+GEMM_MAC_LANES=4
+full cache/preload stack enabled
+UVM_ERROR=0
+UVM_FATAL=0
 ```
 
-Default clock:
+### P8F: Stress / CDC Manual Subset
+
+Status:
 
 ```text
-dma_clk=10ns
-core_clk=14ns
+PASS
 ```
 
-CDC sanity:
+Validated:
 
 ```text
-dma_clk=10ns
-core_clk=13ns
+DMA load-store stress default clock
+DMA load-store stress CDC 10/13
+AXI-Stream load-store stress default clock
+AXI-Stream load-store stress CDC 10/13
+Direct Stream load-store stress default clock
+Direct Stream load-store stress CDC 10/13
 ```
 
-Acceptance:
+### P8G: Regression Inclusion
+
+Status:
 
 ```text
-selected stress jobs PASS
-scoreboard compare PASS
-control/result pairing PASS
-no UVM_ERROR / UVM_FATAL
+PASS
 ```
 
-### 17.7 P8G: Regression Inclusion
-
-Recommended minimal final P8 regression inclusion:
+Representative full-regression items added:
 
 ```text
-gemm_4lane_dma_load_store_stress
-gemm_4lane_axis_stream_load_store_stress
-gemm_4lane_direct_stream_load_store_stress
+gemm_4lane_fullcache_dma_load_store_stress
+gemm_4lane_fullcache_axis_stream_load_store_stress
+gemm_4lane_fullcache_direct_stream_load_store_stress
 ```
 
-Expected minimal regression total:
+Regression closure:
 
 ```text
-current P7 total = 59
-P8 representative items = +3
-
-59 + 3 = 62
+TOTAL : 62
+PASS  : 62
+FAIL  : 0
 ```
-
-Optional additional focused regression items:
-
-```text
-gemm_4lane_perf_counter_smoke
-gemm_4lane_perf_profile
-```
-
-If these are also added:
-
-```text
-59 + 3 + 2 = 64
-```
-
-Recommended first closure target:
-
-```text
-62/62 PASS
-```
-
-because it keeps full regression growth controlled while covering the three primary frontend paths.
 
 ---
 
@@ -985,136 +786,28 @@ set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
 do run_uvm.tcl
 ```
 
-### 18.3 4-Lane Direct Stream Smoke
+### 18.3 4-Lane Load-Store Stress
 
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_smoke_test
-set ENABLE_RESULT_CHECK 1
-set CASE_ID 100
-set RUN_ALL 1
+Use the same feature stack with one of:
 
-set FORCE_HELPER_MEM_PATH 0
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 14
-
-set GEMM_MAC_LANES 4
-set GEMM_ENABLE_B_CACHE 1
-set GEMM_B_CACHE_MAX_K 4
-set GEMM_B_CACHE_MAX_N 4
-set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
-set GEMM_ENABLE_A_ROW_CACHE 1
-set GEMM_A_ROW_CACHE_MAX_K 4
-set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
-
-do run_uvm.tcl
+```text
+ai_accel_subsys_dma_load_store_stress_test
+ai_accel_subsys_axis_stream_load_store_stress_test
+ai_accel_subsys_direct_stream_load_store_stress_test
 ```
 
-### 18.4 4-Lane DMA Load-Store Stress
+Default clock:
 
 ```tcl
-set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-
-set STORE_STRESS_JOB_COUNT 8
-set STORE_STRESS_SEED 20260502
-set STORE_STRESS_RANDOM 1
-set STORE_STRESS_GAP_CYCLES 10
-
-set FORCE_HELPER_MEM_PATH 0
 set DMA_CLK_PERIOD_NS 10
 set CORE_CLK_PERIOD_NS 14
-
-set GEMM_MAC_LANES 4
-set GEMM_ENABLE_B_CACHE 1
-set GEMM_B_CACHE_MAX_K 4
-set GEMM_B_CACHE_MAX_N 4
-set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
-set GEMM_ENABLE_A_ROW_CACHE 1
-set GEMM_A_ROW_CACHE_MAX_K 4
-set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
-
-do run_uvm.tcl
 ```
 
-### 18.5 4-Lane AXI-Stream Load-Store Stress
+CDC sanity:
 
 ```tcl
-set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-
-set AXIS_STRESS_JOB_COUNT 8
-set AXIS_STRESS_SEED 20260502
-set AXIS_STRESS_RANDOM 1
-set AXIS_STRESS_GAP_CYCLES 10
-
-set FORCE_HELPER_MEM_PATH 0
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 14
-
-set GEMM_MAC_LANES 4
-set GEMM_ENABLE_B_CACHE 1
-set GEMM_B_CACHE_MAX_K 4
-set GEMM_B_CACHE_MAX_N 4
-set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
-set GEMM_ENABLE_A_ROW_CACHE 1
-set GEMM_A_ROW_CACHE_MAX_K 4
-set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
-
-do run_uvm.tcl
-```
-
-### 18.6 4-Lane Direct Stream Load-Store Stress
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-
-set DS_STRESS_JOB_COUNT 8
-set DS_STRESS_SEED 20260502
-set DS_STRESS_RANDOM 1
-set DS_STRESS_GAP_CYCLES 10
-
-set FORCE_HELPER_MEM_PATH 0
-set DMA_CLK_PERIOD_NS 10
-set CORE_CLK_PERIOD_NS 14
-
-set GEMM_MAC_LANES 4
-set GEMM_ENABLE_B_CACHE 1
-set GEMM_B_CACHE_MAX_K 4
-set GEMM_B_CACHE_MAX_N 4
-set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
-set GEMM_ENABLE_A_ROW_CACHE 1
-set GEMM_A_ROW_CACHE_MAX_K 4
-set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
-
-do run_uvm.tcl
-```
-
-### 18.7 4-Lane CDC Sanity Example
-
-```tcl
-set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
-set ENABLE_RESULT_CHECK 1
-
-set DS_STRESS_JOB_COUNT 8
-set DS_STRESS_SEED 20260502
-set DS_STRESS_RANDOM 1
-set DS_STRESS_GAP_CYCLES 10
-
-set FORCE_HELPER_MEM_PATH 0
 set DMA_CLK_PERIOD_NS 10
 set CORE_CLK_PERIOD_NS 13
-
-set GEMM_MAC_LANES 4
-set GEMM_ENABLE_B_CACHE 1
-set GEMM_B_CACHE_MAX_K 4
-set GEMM_B_CACHE_MAX_N 4
-set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
-set GEMM_ENABLE_A_ROW_CACHE 1
-set GEMM_A_ROW_CACHE_MAX_K 4
-set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
-
-do run_uvm.tcl
 ```
 
 ---
@@ -1195,7 +888,7 @@ Mitigation:
 
 ```text
 reuse existing 2-lane B-cache indexing convention
-wave inspect CASE_ID=105 and 4x4x4
+verify CASE_ID=105 and 4x4x4 cases
 ```
 
 ### Risk 6: Unsupported Config Confusion
@@ -1209,8 +902,7 @@ GEMM_MAC_LANES=4 is set but effective path silently behaves like 2-lane
 Mitigation:
 
 ```text
-print config policy
-optionally add debug counters or one-time log
+print requested/effective lane configuration
 document fallback behavior
 ```
 
@@ -1227,7 +919,7 @@ Mitigation:
 ```text
 do not require exact cycle threshold
 compare profile trend
-consider optional compute-group counter if needed
+use 4x4x4 class as the primary trend signal
 ```
 
 ### Risk 8: Regression Growth
@@ -1247,150 +939,23 @@ add only three representative default-clock items to full regression
 
 ---
 
-## 20. Recommended Implementation Order
+## 20. Summary
 
-Recommended P8 patch sequence:
+P8 is now closed as a cache-backed compute parallelism milestone.
 
-```text
-P8A:
-  Create docs/gemm_4lane_mac_feasibility_spec.md.
-
-P8B:
-  Validate GEMM_MAC_LANES=4 plumbing.
-  Add supported-value checks if needed.
-  Keep behavior default-off.
-  Run full regression 59/59.
-
-P8C:
-  Add 4-lane compute helpers:
-    lane valid bits
-    lane operand selection
-    signed products
-    mac_sum
-    k-step=4 update
-  Keep 1-lane and 2-lane paths unchanged.
-
-P8D:
-  Run focused perf_counter_smoke and perf_profile.
-
-P8E:
-  Run Direct Stream smoke RUN_ALL.
-
-P8F:
-  Run DMA / AXI-Stream / Direct Stream stress default clock.
-  Run selected CDC sanity.
-
-P8G:
-  Add representative 4-lane items to full regression.
-  Close at recommended target 62/62 PASS.
-```
-
----
-
-## 21. Acceptance Criteria
-
-P8A feasibility planning is complete when:
+The key result is:
 
 ```text
-4-lane lane mask policy is defined.
-Cache-backed source model is defined.
-Performance model is defined.
-Verification plan is defined.
+P7 improved operand delivery enough that a 4-lane MAC became useful.
+P8 implemented that cache-backed 4-lane path without changing protocols or memory layout.
 ```
 
-P8B safe plumbing is complete when:
-
-```text
-GEMM_MAC_LANES=4 can be passed safely.
-Default full regression remains 59/59 PASS.
-```
-
-P8C RTL prototype is complete when:
-
-```text
-4-lane focused smoke PASS.
-K=1/K=2/K=4 cases PASS.
-MAC/output counters remain correct.
-No UVM_ERROR / UVM_FATAL.
-```
-
-P8D profile step is complete when:
-
-```text
-perf_profile PASS.
-K=4 cases show reasonable improvement versus P7.
-No exact cycle threshold required.
-```
-
-P8F stress closure is complete when:
-
-```text
-4-lane DMA load-store stress PASS.
-4-lane AXI-Stream load-store stress PASS.
-4-lane Direct Stream load-store stress PASS.
-selected CDC sanity PASS.
-```
-
-P8G regression closure is complete when:
-
-```text
-Selected 4-lane representative items are added to run_full_uvm_regression.tcl.
-New full regression PASS.
-```
-
-Recommended minimal closure target:
-
-```text
-TOTAL : 62
-PASS  : 62
-FAIL  : 0
-```
-
----
-
-## 22. Future Work After P8
-
-After 4-lane MAC is evaluated, possible next directions:
-
-```text
-increase GEMM_A_ROW_CACHE_MAX_K beyond 4
-increase GEMM_B_CACHE_MAX_K / GEMM_B_CACHE_MAX_N
-support larger M/N/K test cases
-add compute-group performance counters
-add true tile-level scheduling
-cache multiple A rows per tile
-cache multiple B columns per tile
-evaluate 8-lane MAC feasibility
-evaluate systolic-array style datapath
-evaluate memory bandwidth bottlenecks after 4-lane
-```
-
-A likely next milestone after P8:
-
-```text
-P9: larger GEMM dimension support / cache-size scaling
-```
-
-But this should only be decided after the P8 profile shows whether 4-lane compute provides meaningful improvement.
-
----
-
-## 23. Summary
-
-P8 should be treated as a feasibility-driven compute parallelism milestone.
-
-The key idea is:
-
-```text
-P7 improved operand delivery enough that a 4-lane MAC is now worth evaluating.
-```
-
-The safest first P8 implementation is:
+Final P8 validated behavior:
 
 ```text
 optional GEMM_MAC_LANES=4
 default off
-cache-backed only
+cache-backed only for true 4-lane operation
 reuse A-row cache and B-cache
 preserve 1-lane / 2-lane behavior
 preserve scoreboard model
@@ -1401,8 +966,14 @@ stress/CDC third
 regression inclusion last
 ```
 
-Recommended P8 closure target:
+P8 closure:
 
 ```text
 62/62 full regression PASS
+```
+
+Recommended next milestone candidate:
+
+```text
+P9: larger GEMM dimension support / cache-size scaling
 ```

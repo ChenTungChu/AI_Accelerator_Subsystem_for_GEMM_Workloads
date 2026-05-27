@@ -226,6 +226,15 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             103: begin dim_m = 1; dim_n = 4; dim_k = 4; end
             104: begin dim_m = 4; dim_n = 1; dim_k = 4; end
             105: begin dim_m = 2; dim_n = 3; dim_k = 4; end
+
+            // P9F larger-dimension variable cases.
+            // They intentionally remain in the existing 100~199
+            // variable-dimension CASE_ID range, so smoke_test
+            // infer_test_kind() does not need a new CASE_ID class.
+            190: begin dim_m = 1; dim_n = 8; dim_k = 8; end
+            191: begin dim_m = 2; dim_n = 8; dim_k = 8; end
+            192: begin dim_m = 3; dim_n = 5; dim_k = 7; end
+
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
 

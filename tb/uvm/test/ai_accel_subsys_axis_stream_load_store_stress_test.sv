@@ -16,6 +16,17 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
     int unsigned axis_stress_random;
     int unsigned axis_stress_gap_cycles;
 
+    // Optional forced-case mode for focused P9G/P9H larger-dimension path checks.
+    //
+    // run_uvm.tcl may pass a default +CASE_ID=0 even for stress tests that
+    // do not intentionally request a focused case.  CASE_ID=0 is therefore
+    // treated as "not forced" for this stress wrapper.
+    //
+    // When +CASE_ID=<nonzero id> is provided, select_case_for_job() bypasses
+    // the built-in stress pool and every job runs the selected CASE_ID.
+    bit          force_case_id_valid;
+    int unsigned forced_case_id;
+
     int unsigned rng_state;
 
     // Supported stress case pool.
@@ -46,10 +57,20 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
         axis_stress_random     = 1;
         axis_stress_gap_cycles = 10;
 
+        force_case_id_valid    = 1'b0;
+        forced_case_id         = 0;
+
         void'($value$plusargs("AXIS_STRESS_JOB_COUNT=%0d", axis_stress_job_count));
         void'($value$plusargs("AXIS_STRESS_SEED=%0d",      axis_stress_seed));
         void'($value$plusargs("AXIS_STRESS_RANDOM=%0d",    axis_stress_random));
         void'($value$plusargs("AXIS_STRESS_GAP_CYCLES=%0d", axis_stress_gap_cycles));
+
+        if ($value$plusargs("CASE_ID=%0d", forced_case_id)) begin
+            // CASE_ID=0 is a run_uvm.tcl default placeholder for stress tests.
+            // It must not enable forced-case mode, otherwise default/random
+            // stress regression items try to run unsupported CASE_ID=0.
+            force_case_id_valid = (forced_case_id != 0);
+        end
 
         if (axis_stress_job_count == 0) begin
             `uvm_fatal("AXIS_LS_STRESS",
@@ -68,12 +89,21 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
         rng_state = axis_stress_seed;
 
         `uvm_info("AXIS_LS_STRESS",
-            $sformatf("Configured AXIS load-store stress: jobs=%0d seed=%0d random=%0d gap_cycles=%0d",
+            $sformatf("Configured AXIS load-store stress: jobs=%0d seed=%0d random=%0d gap_cycles=%0d forced_case=%0d forced_case_id=%0d",
                 axis_stress_job_count,
                 axis_stress_seed,
                 axis_stress_random,
-                axis_stress_gap_cycles),
+                axis_stress_gap_cycles,
+                force_case_id_valid,
+                forced_case_id),
             UVM_MEDIUM)
+
+        if (force_case_id_valid) begin
+            `uvm_info("AXIS_LS_STRESS",
+                $sformatf("Forced CASE_ID mode enabled: all AXIS load-store stress jobs will run CASE_ID=%0d",
+                    forced_case_id),
+                UVM_MEDIUM)
+        end
     endfunction
 
     // ------------------------------------------------------------
@@ -95,6 +125,10 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
         int unsigned rand_value;
         int unsigned case_idx;
     begin
+        if (force_case_id_valid) begin
+            return forced_case_id;
+        end
+
         if (axis_stress_random != 0) begin
             rand_value = next_rand();
             case_idx   = rand_value % AXIS_STRESS_CASE_COUNT;

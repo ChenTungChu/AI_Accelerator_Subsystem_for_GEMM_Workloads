@@ -1094,6 +1094,7 @@ run_reg_item "gemm_2lane_packed_bcache_arow_axis_stream_load_store_stress" {
     set GEMM_A_ROW_CACHE_MAX_K 4
 }
 
+
 # ============================================================
 # 2-lane GEMM P7 packed A-row preload representative regression
 #
@@ -1288,6 +1289,112 @@ run_reg_item "gemm_4lane_fullcache_direct_stream_load_store_stress" {
 
     set GEMM_ENABLE_A_ROW_CACHE 1
     set GEMM_A_ROW_CACHE_MAX_K 4
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+}
+
+# ============================================================
+# 4-lane GEMM P9 scaled-cache larger-dimension representative regression
+#
+# These items validate the P9 scaled cache configuration:
+#
+#   GEMM_MAC_LANES=4
+#   GEMM_ENABLE_B_CACHE=1
+#   GEMM_B_CACHE_MAX_K=8
+#   GEMM_B_CACHE_MAX_N=8
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#   GEMM_ENABLE_A_ROW_CACHE=1
+#   GEMM_A_ROW_CACHE_MAX_K=8
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+#
+# P9G manually closed the large-dimension path compatibility sanity
+# across DMA, AXI-Stream, and Direct Stream load/store paths.
+# Full regression keeps only one forced large CASE_ID per path so the
+# default stress pools do not become heavier.
+#
+# Covered focused cases:
+#   1. DMA load/store path        : CASE_ID=190, dim=(1,8,8)
+#   2. AXI-Stream load/store path : CASE_ID=191, dim=(2,8,8)
+#   3. Direct Stream load/store   : CASE_ID=192, dim=(3,5,7)
+#
+# Expected regression total after adding these 3 P9 items:
+#   62 + 3 = 65
+# ============================================================
+
+run_reg_item "gemm_4lane_scaled_fullcache_dma_load_store_case190" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 190
+
+    set STORE_STRESS_JOB_COUNT 1
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 0
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+}
+
+run_reg_item "gemm_4lane_scaled_fullcache_axis_stream_load_store_case191" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 191
+
+    set AXIS_STRESS_JOB_COUNT 1
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 0
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+}
+
+run_reg_item "gemm_4lane_scaled_fullcache_direct_stream_load_store_case192" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 192
+
+    set DS_STRESS_JOB_COUNT 1
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 0
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
     set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
 }
 

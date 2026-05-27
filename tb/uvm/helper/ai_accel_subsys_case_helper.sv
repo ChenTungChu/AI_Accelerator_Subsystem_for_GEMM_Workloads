@@ -270,6 +270,10 @@ class ai_accel_subsys_case_helper extends uvm_object;
     );
         int unsigned a_elems;
         int unsigned b_elems;
+        int unsigned m;
+        int unsigned n;
+        int unsigned kk;
+        int signed   val;
     begin
         profile_item = build_case_profile(
             case_id,
@@ -360,6 +364,78 @@ class ai_accel_subsys_case_helper extends uvm_object;
                 b_flat[ 3] =  4; b_flat[ 4] =  5; b_flat[ 5] =  6;
                 b_flat[ 6] = -1; b_flat[ 7] =  0; b_flat[ 8] =  1;
                 b_flat[ 9] =  2; b_flat[10] = -2; b_flat[11] =  1;
+            end
+
+            190: begin
+                // P9F large-dimension case: M=1, N=8, K=8.
+                // Purpose:
+                //   - fills one 8-element A row
+                //   - exercises an 8x8 B tile
+                //   - keeps C output small enough for a fast focused run
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    if ((kk % 2) == 0)
+                        a_flat[kk] = int'(kk + 1);
+                    else
+                        a_flat[kk] = -int'(kk + 1);
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk * 3) + (n * 2)) % 7) - 3;
+                        if (val == 0)
+                            val = 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            191: begin
+                // P9F large-dimension case: M=2, N=8, K=8.
+                // Purpose:
+                //   - exercises two A rows with K=8
+                //   - reuses the same 8x8 B tile across multiple output rows
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 1) * (kk + 2)) % 9) - 4;
+                        if (val == 0)
+                            val = int'(m + 1);
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 2) * (n + 1)) % 11) - 5;
+                        if (val == 0)
+                            val = -1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            192: begin
+                // P9F large/tail-dimension case: M=3, N=5, K=7.
+                // Purpose:
+                //   - N and K are not multiples of 4
+                //   - stresses lane-tail behavior while still fitting within
+                //     B-cache max K/N=8 and A-row max K=8
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 2) * (kk + 1)) % 7) - 3;
+                        if (val == 0)
+                            val = 2;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 1) * (n + 3)) % 9) - 4;
+                        if (val == 0)
+                            val = -2;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
             end
 
             default: begin

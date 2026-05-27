@@ -401,18 +401,12 @@ lappend CLOCK_ARG_LIST +CORE_CLK_PERIOD_NS=$CORE_CLK_PERIOD_NS
 # Default:
 #   GEMM_MAC_LANES=1 keeps the existing single-lane baseline.
 #
-# Manual 2-lane run:
+# Manual 2-lane / 4-lane run:
 #   set GEMM_MAC_LANES 2
 #   do run_uvm.tcl
 #
-# P8B 4-lane plumbing-only run:
 #   set GEMM_MAC_LANES 4
 #   do run_uvm.tcl
-#
-# Note:
-#   In P8B, GEMM_MAC_LANES=4 is accepted by the run flow and
-#   propagated into the DUT, but gemm_top maps it to the existing
-#   effective 2-lane datapath until real 4-lane RTL is implemented.
 # --------------------------------------------------
 if {![info exists GEMM_MAC_LANES]} {
     set GEMM_MAC_LANES 1
@@ -511,6 +505,36 @@ if {($GEMM_ENABLE_B_CACHE != 0) && ($GEMM_ENABLE_B_CACHE != 1)} {
 }
 
 # --------------------------------------------------
+# GEMM B-cache dimension parameters
+#
+# P9 safe parameter plumbing.
+# Default:
+#   GEMM_B_CACHE_MAX_K=4 and GEMM_B_CACHE_MAX_N=4 keep the
+#   current P8 baseline unless explicitly overridden.
+#
+# Manual cache scaling run:
+#   set GEMM_ENABLE_B_CACHE 1
+#   set GEMM_B_CACHE_MAX_K 8
+#   set GEMM_B_CACHE_MAX_N 8
+#   do run_uvm.tcl
+# --------------------------------------------------
+if {![info exists GEMM_B_CACHE_MAX_K]} {
+    set GEMM_B_CACHE_MAX_K 4
+}
+
+if {$GEMM_B_CACHE_MAX_K <= 0} {
+    error "Unsupported GEMM_B_CACHE_MAX_K='$GEMM_B_CACHE_MAX_K'. Must be > 0"
+}
+
+if {![info exists GEMM_B_CACHE_MAX_N]} {
+    set GEMM_B_CACHE_MAX_N 4
+}
+
+if {$GEMM_B_CACHE_MAX_N <= 0} {
+    error "Unsupported GEMM_B_CACHE_MAX_N='$GEMM_B_CACHE_MAX_N'. Must be > 0"
+}
+
+# --------------------------------------------------
 # GEMM packed B-cache preload parameter
 #
 # Default:
@@ -594,7 +618,7 @@ if {($GEMM_ENABLE_PACKED_A_ROW_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_A_ROW_PRELO
 
 
 
-puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD"
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD"
 
 
 # --------------------------------------------------
@@ -702,11 +726,13 @@ set LOG_BASENAME [string map [list \
 #
 # l  = GEMM_MAC_LANES
 # bc = GEMM_ENABLE_B_CACHE
+# bk = GEMM_B_CACHE_MAX_K
+# bn = GEMM_B_CACHE_MAX_N
 # pb = GEMM_ENABLE_PACKED_BCACHE_PRELOAD
 # ar = GEMM_ENABLE_A_ROW_CACHE
 # ak = GEMM_A_ROW_CACHE_MAX_K
 # pa = GEMM_ENABLE_PACKED_A_ROW_PRELOAD
-set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}.log"] $LOG_BASENAME]
+set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -731,6 +757,8 @@ vsim -L uvm12 \
   -voptargs=+acc \
   -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
   -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
+  -gGEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K \
+  -gGEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N \
   -gGEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD \
   -gGEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE \
   -gGEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K \

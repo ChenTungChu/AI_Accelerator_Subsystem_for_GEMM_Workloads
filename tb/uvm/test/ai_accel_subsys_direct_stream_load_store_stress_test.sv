@@ -16,6 +16,17 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
     int unsigned ds_stress_random;
     int unsigned ds_stress_gap_cycles;
 
+    // Optional forced-case mode for focused P9G/P9H larger-dimension path checks.
+    //
+    // run_uvm.tcl may pass a default +CASE_ID=0 even for stress tests that
+    // do not intentionally request a focused case.  CASE_ID=0 is therefore
+    // treated as "not forced" for this stress wrapper.
+    //
+    // When +CASE_ID=<nonzero id> is provided, select_case_for_job() bypasses
+    // the built-in stress pool and every job runs the selected CASE_ID.
+    bit          force_case_id_valid;
+    int unsigned forced_case_id;
+
     int unsigned rng_state;
 
     // Supported case pool:
@@ -44,10 +55,20 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
         ds_stress_random     = 1;
         ds_stress_gap_cycles = 10;
 
+        force_case_id_valid  = 1'b0;
+        forced_case_id       = 0;
+
         void'($value$plusargs("DS_STRESS_JOB_COUNT=%0d",  ds_stress_job_count));
         void'($value$plusargs("DS_STRESS_SEED=%0d",       ds_stress_seed));
         void'($value$plusargs("DS_STRESS_RANDOM=%0d",     ds_stress_random));
         void'($value$plusargs("DS_STRESS_GAP_CYCLES=%0d", ds_stress_gap_cycles));
+
+        if ($value$plusargs("CASE_ID=%0d", forced_case_id)) begin
+            // CASE_ID=0 is a run_uvm.tcl default placeholder for stress tests.
+            // It must not enable forced-case mode, otherwise default/random
+            // stress regression items try to run unsupported CASE_ID=0.
+            force_case_id_valid = (forced_case_id != 0);
+        end
 
         if (ds_stress_job_count == 0) begin
             `uvm_fatal("DIRECT_STREAM_STRESS",
@@ -66,12 +87,21 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
         rng_state = ds_stress_seed;
 
         `uvm_info("DIRECT_STREAM_STRESS",
-            $sformatf("Configured Direct Stream load-store stress: jobs=%0d seed=%0d random=%0d gap_cycles=%0d",
+            $sformatf("Configured Direct Stream load-store stress: jobs=%0d seed=%0d random=%0d gap_cycles=%0d forced_case=%0d forced_case_id=%0d",
                 ds_stress_job_count,
                 ds_stress_seed,
                 ds_stress_random,
-                ds_stress_gap_cycles),
+                ds_stress_gap_cycles,
+                force_case_id_valid,
+                forced_case_id),
             UVM_MEDIUM)
+
+        if (force_case_id_valid) begin
+            `uvm_info("DIRECT_STREAM_STRESS",
+                $sformatf("Forced CASE_ID mode enabled: all Direct Stream stress jobs will run CASE_ID=%0d",
+                    forced_case_id),
+                UVM_MEDIUM)
+        end
     endfunction
 
     // ------------------------------------------------------------
@@ -94,6 +124,10 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
         int unsigned rand_value;
         int unsigned case_idx;
     begin
+        if (force_case_id_valid) begin
+            return forced_case_id;
+        end
+
         if (ds_stress_random != 0) begin
             rand_value = next_rand();
             case_idx   = rand_value % DS_STRESS_CASE_COUNT;
