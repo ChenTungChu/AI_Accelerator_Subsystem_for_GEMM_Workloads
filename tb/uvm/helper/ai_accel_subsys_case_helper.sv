@@ -438,6 +438,127 @@ class ai_accel_subsys_case_helper extends uvm_object;
                 end
             end
 
+            193: begin
+                // P10C K>8 case: M=1, N=4, K=16.
+                // Purpose:
+                //   - first two-tile K=16 software-reference case
+                //   - one A row, four C outputs, compact B footprint
+                //   - expected_mac = 64, expected_output = 4
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    val = int'(((kk + 1) * 3) % 13) - 6;
+                    if (val == 0)
+                        val = 3;
+                    a_flat[kk] = val;
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 2) * (n + 1)) % 17) - 8;
+                        if (val == 0)
+                            val = -3;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            194: begin
+                // P10C K>8 case: M=2, N=4, K=16.
+                // Purpose:
+                //   - two A rows across two K=8-sized logical tiles
+                //   - expected_mac = 128, expected_output = 8
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 1) * (kk + 3)) % 15) - 7;
+                        if (val == 0)
+                            val = int'(m + 2);
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 1) * (n + 2)) % 19) - 9;
+                        if (val == 0)
+                            val = 4;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            195: begin
+                // P10C representative K>8 case: M=4, N=4, K=16.
+                // Purpose:
+                //   - balanced 4x4 output shape with K=16
+                //   - natural future P10 regression candidate
+                //   - expected_mac = 256, expected_output = 16
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 2) * (kk + 5)) % 17) - 8;
+                        if (val == 0)
+                            val = -int'(m + 1);
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 3) * (n + 4)) % 23) - 11;
+                        if (val == 0)
+                            val = int'(n + 1);
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            196: begin
+                // P10C odd/tail K case: M=3, N=5, K=9.
+                // Purpose:
+                //   - K exceeds 8 by only one element
+                //   - N=5 and K=9 stress tail handling for future tiled RTL
+                //   - expected_mac = 135, expected_output = 15
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 3) * (kk + 1)) % 11) - 5;
+                        if (val == 0)
+                            val = 2;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 4) * (n + 2)) % 13) - 6;
+                        if (val == 0)
+                            val = -2;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            197: begin
+                // P10C partial second-tile case: M=4, N=4, K=12.
+                // Purpose:
+                //   - K=12 maps to one full K=8 logical tile plus one K=4 tail
+                //   - expected_mac = 192, expected_output = 16
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 1) * (kk + 7)) % 19) - 9;
+                        if (val == 0)
+                            val = -4;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 5) * (n + 3)) % 17) - 8;
+                        if (val == 0)
+                            val = int'(kk % 3) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
             default: begin
                 `uvm_fatal("CASE_HELPER/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))

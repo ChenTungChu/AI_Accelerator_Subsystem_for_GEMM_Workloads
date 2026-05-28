@@ -334,6 +334,106 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                 end
             end
 
+            193: begin
+                // P10C/P10D K-tiling representative case: M=1, N=4, K=16.
+                // Two full K=8 tiles, small C output.
+                dim_m_i = 1;
+                dim_n_i = 4;
+                dim_k_i = 16;
+
+                a_bytes = 16;
+                b_bytes = 64;
+                c_words = 4;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 5) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
+            194: begin
+                // P10C/P10D K-tiling representative case: M=2, N=4, K=16.
+                // Two A rows and two full K=8 tiles.
+                dim_m_i = 2;
+                dim_n_i = 4;
+                dim_k_i = 16;
+
+                a_bytes = 32;
+                b_bytes = 64;
+                c_words = 8;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 5) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
+            195: begin
+                // P10E frontend compatibility representative case: M=4, N=4, K=16.
+                // Exactly two full K=8 tiles; A/B payloads are both 64 bytes.
+                dim_m_i = 4;
+                dim_n_i = 4;
+                dim_k_i = 16;
+
+                a_bytes = 64;
+                b_bytes = 64;
+                c_words = 16;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 5) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
+            196: begin
+                // P10C/P10D K-tiling tail case: M=3, N=5, K=9.
+                // Exercises a full K=8 tile plus a K=1 tail tile.
+                dim_m_i = 3;
+                dim_n_i = 5;
+                dim_k_i = 9;
+
+                a_bytes = 27;
+                b_bytes = 45;
+                c_words = 15;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 2) % 9) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 7) + 1;
+                end
+            end
+
+            197: begin
+                // P10C/P10D K-tiling tail case: M=4, N=4, K=12.
+                // Exercises a full K=8 tile plus a K=4 tail tile.
+                dim_m_i = 4;
+                dim_n_i = 4;
+                dim_k_i = 12;
+
+                a_bytes = 48;
+                b_bytes = 48;
+                c_words = 16;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = ((i * 5) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = ((i * 3) % 13) + 1;
+                end
+            end
+
             5, 400, 401, 402, 403: begin
                 dim_m_i = 4;
                 dim_n_i = 4;
@@ -383,7 +483,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
             default: begin
                 `uvm_fatal("DMA_STORE_SMOKE",
-                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 400, 401, 402, 403", cid))
+                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 400, 401, 402, 403", cid))
             end
         endcase
 

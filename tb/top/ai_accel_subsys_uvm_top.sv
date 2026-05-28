@@ -39,6 +39,11 @@ module ai_accel_subsys_uvm_top;
     // Default-off so the current P6 baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0;
 
+    // P10B safe parameter plumbing.
+    // Default-off so the current P9 baseline behavior is unchanged.
+    parameter  bit GEMM_ENABLE_K_TILING = 1'b0;
+    parameter  int GEMM_K_TILE_SIZE     = 8;
+
     localparam int BYTES_PER_BEAT  = DATA_WIDTH / 8;
 
     // DMA / AXIS source memory model.
@@ -966,7 +971,9 @@ module ai_accel_subsys_uvm_top;
         .GEMM_ENABLE_PACKED_BCACHE_PRELOAD (GEMM_ENABLE_PACKED_BCACHE_PRELOAD),
         .GEMM_ENABLE_A_ROW_CACHE (GEMM_ENABLE_A_ROW_CACHE),
         .GEMM_A_ROW_CACHE_MAX_K (GEMM_A_ROW_CACHE_MAX_K),
-        .GEMM_ENABLE_PACKED_A_ROW_PRELOAD (GEMM_ENABLE_PACKED_A_ROW_PRELOAD)
+        .GEMM_ENABLE_PACKED_A_ROW_PRELOAD (GEMM_ENABLE_PACKED_A_ROW_PRELOAD),
+        .GEMM_ENABLE_K_TILING (GEMM_ENABLE_K_TILING),
+        .GEMM_K_TILE_SIZE (GEMM_K_TILE_SIZE)
     ) dut (
         .dma_clk              (dma_clk),
         .dma_rst_n            (dma_rst_n),
@@ -1139,7 +1146,7 @@ module ai_accel_subsys_uvm_top;
     // GEMM config display
     // ============================================================
     initial begin
-        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d",
+        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d",
                 GEMM_MAC_LANES,
                 GEMM_ENABLE_B_CACHE,
                 GEMM_B_CACHE_MAX_K,
@@ -1147,7 +1154,9 @@ module ai_accel_subsys_uvm_top;
                 GEMM_ENABLE_PACKED_BCACHE_PRELOAD,
                 GEMM_ENABLE_A_ROW_CACHE,
                 GEMM_A_ROW_CACHE_MAX_K,
-                GEMM_ENABLE_PACKED_A_ROW_PRELOAD);
+                GEMM_ENABLE_PACKED_A_ROW_PRELOAD,
+                GEMM_ENABLE_K_TILING,
+                GEMM_K_TILE_SIZE);
     end
 
     // ============================================================

@@ -16,7 +16,7 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
     int unsigned ds_stress_random;
     int unsigned ds_stress_gap_cycles;
 
-    // Optional forced-case mode for focused P9G/P9H larger-dimension path checks.
+    // Optional forced-case mode for focused P9G/P9H larger-dimension and P10E K-tiling frontend checks.
     //
     // run_uvm.tcl may pass a default +CASE_ID=0 even for stress tests that
     // do not intentionally request a focused case.  CASE_ID=0 is therefore
@@ -101,6 +101,12 @@ class ai_accel_subsys_direct_stream_load_store_stress_test
                 $sformatf("Forced CASE_ID mode enabled: all Direct Stream stress jobs will run CASE_ID=%0d",
                     forced_case_id),
                 UVM_MEDIUM)
+
+            if ((forced_case_id >= 193) && (forced_case_id <= 197)) begin
+                `uvm_info("DIRECT_STREAM_STRESS",
+                    "Forced CASE_ID is in the P10 K-tiling focused case range 193..197",
+                    UVM_MEDIUM)
+            end
         end
     endfunction
 

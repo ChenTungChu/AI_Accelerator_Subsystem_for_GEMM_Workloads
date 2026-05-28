@@ -235,6 +235,17 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             191: begin dim_m = 2; dim_n = 8; dim_k = 8; end
             192: begin dim_m = 3; dim_n = 5; dim_k = 7; end
 
+            // P10C K>8 software-reference / test-case support.
+            // These cases intentionally exceed the P9 cache-fit K<=8 class
+            // and are used to prepare the UVM case database, payload builder,
+            // scoreboard profile checks, and software reference model before
+            // enabling the P10 tiled RTL datapath.
+            193: begin dim_m = 1; dim_n = 4; dim_k = 16; end
+            194: begin dim_m = 2; dim_n = 4; dim_k = 16; end
+            195: begin dim_m = 4; dim_n = 4; dim_k = 16; end
+            196: begin dim_m = 3; dim_n = 5; dim_k = 9;  end
+            197: begin dim_m = 4; dim_n = 4; dim_k = 12; end
+
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
 

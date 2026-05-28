@@ -101,6 +101,8 @@ proc clear_uvm_run_vars {} {
         GEMM_ENABLE_A_ROW_CACHE
         GEMM_A_ROW_CACHE_MAX_K
         GEMM_ENABLE_PACKED_A_ROW_PRELOAD
+        GEMM_ENABLE_K_TILING
+        GEMM_K_TILE_SIZE
 
         STRESS_JOB_COUNT
         STRESS_SEED
@@ -1396,6 +1398,137 @@ run_reg_item "gemm_4lane_scaled_fullcache_direct_stream_load_store_case192" {
     set GEMM_ENABLE_A_ROW_CACHE 1
     set GEMM_A_ROW_CACHE_MAX_K 8
     set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+}
+
+# ============================================================
+# P10B K-tiling safe parameter plumbing
+#
+# P10B added GEMM_ENABLE_K_TILING and GEMM_K_TILE_SIZE as default-off
+# elaboration/run-script parameters. No full-regression item was added
+# at that step, so the P9H regression total intentionally remained 65.
+# Focused P10B smoke was run manually with GEMM_ENABLE_K_TILING=1.
+# ============================================================
+
+# ============================================================
+# P10F K-tiling frontend representative regression
+#
+# These items integrate the P10D/P10E K-tiling coverage into the
+# full regression with bounded runtime.
+#
+# Configuration:
+#   GEMM_MAC_LANES=4
+#   GEMM_ENABLE_B_CACHE=1
+#   GEMM_B_CACHE_MAX_K=8
+#   GEMM_B_CACHE_MAX_N=8
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#   GEMM_ENABLE_A_ROW_CACHE=1
+#   GEMM_A_ROW_CACHE_MAX_K=8
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+#   GEMM_ENABLE_K_TILING=1
+#   GEMM_K_TILE_SIZE=8
+#
+# Focused case:
+#   CASE_ID=195, dim=(4,4,16), exactly two K=8 tiles.
+#
+# Covered paths:
+#   1. DMA load/store path
+#   2. AXI-Stream load/store path
+#   3. Direct Stream load/store path
+#
+# Runtime policy:
+#   Each item uses one forced CASE_ID=195 job.  This preserves
+#   frontend coverage while avoiding the heavier P10E manual stress
+#   run counts.
+#
+# Expected regression total after adding these 3 P10 items:
+#   65 + 3 = 68
+# ============================================================
+
+run_reg_item "gemm_4lane_ktiling_dma_load_store_case195" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 195
+
+    set STORE_STRESS_JOB_COUNT 1
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 0
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+}
+
+run_reg_item "gemm_4lane_ktiling_axis_stream_load_store_case195" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 195
+
+    set AXIS_STRESS_JOB_COUNT 1
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 0
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+}
+
+run_reg_item "gemm_4lane_ktiling_direct_stream_load_store_case195" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 195
+
+    set DS_STRESS_JOB_COUNT 1
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 0
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
 }
 
 # ============================================================
