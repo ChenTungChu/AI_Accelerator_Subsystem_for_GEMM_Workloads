@@ -27,11 +27,18 @@ module gemm_top #(
     // Default-off so the current P6 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0,
 
-    // P10B safe parameter plumbing.
-    // Default-off so the current P9 baseline behavior is unchanged.
-    // P10B only propagates/configures the parameters; the K-tiling FSM is added later.
+    // P10 K-tiling parameterization.
+    // Default-off so the pre-P10 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_K_TILING = 1'b0,
-    parameter int GEMM_K_TILE_SIZE     = 8
+    parameter int GEMM_K_TILE_SIZE     = 8,
+
+    // P11 N-dimension/output-column tiling parameterization.
+    // Default-off so the current P10 baseline behavior is unchanged.
+    // When enabled and the job exceeds the effective N tile size, P11D
+    // schedules output-column tiles on top of the P10 row-accumulator
+    // K-tile datapath.
+    parameter bit GEMM_ENABLE_N_TILING = 1'b0,
+    parameter int GEMM_N_TILE_SIZE     = 8
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -141,6 +148,14 @@ module gemm_top #(
             GEMM_K_TILE_SIZE_LIMIT_B :
             GEMM_A_ROW_CACHE_MAX_K;
 
+    // P11D N-tiling effective output-column tile size.
+    // The active N tile must fit the B-cache N dimension and the row
+    // accumulator width.
+    localparam int GEMM_N_TILE_SIZE_EFFECTIVE =
+        (GEMM_N_TILE_SIZE < GEMM_B_CACHE_MAX_N) ?
+            GEMM_N_TILE_SIZE :
+            GEMM_B_CACHE_MAX_N;
+
 `ifndef SYNTHESIS
     initial begin
         if ((GEMM_MAC_LANES != 1) &&
@@ -186,12 +201,26 @@ module gemm_top #(
                 GEMM_K_TILE_SIZE_EFFECTIVE
             );
         end
+
+        if (GEMM_N_TILE_SIZE <= 0) begin
+            $fatal(1,
+                "Unsupported GEMM_N_TILE_SIZE=%0d. Must be > 0.",
+                GEMM_N_TILE_SIZE
+            );
+        end
+
+        if (GEMM_N_TILE_SIZE_EFFECTIVE <= 0) begin
+            $fatal(1,
+                "Unsupported GEMM_N_TILE_SIZE_EFFECTIVE=%0d. Check GEMM_N_TILE_SIZE and GEMM_B_CACHE_MAX_N.",
+                GEMM_N_TILE_SIZE_EFFECTIVE
+            );
+        end
     end
 `endif
 
 `ifndef SYNTHESIS
     initial begin
-        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_MAC_LANES_EFFECTIVE=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_K_TILE_SIZE_EFFECTIVE=%0d",
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_MAC_LANES_EFFECTIVE=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_K_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_N_TILING=%0d GEMM_N_TILE_SIZE=%0d GEMM_N_TILE_SIZE_EFFECTIVE=%0d",
                  GEMM_MAC_LANES,
                  GEMM_MAC_LANES_EFFECTIVE,
                  GEMM_ENABLE_B_CACHE,
@@ -203,7 +232,10 @@ module gemm_top #(
                  GEMM_ENABLE_PACKED_A_ROW_PRELOAD,
                  GEMM_ENABLE_K_TILING,
                  GEMM_K_TILE_SIZE,
-                 GEMM_K_TILE_SIZE_EFFECTIVE);
+                 GEMM_K_TILE_SIZE_EFFECTIVE,
+                 GEMM_ENABLE_N_TILING,
+                 GEMM_N_TILE_SIZE,
+                 GEMM_N_TILE_SIZE_EFFECTIVE);
 
         if (GEMM_MAC_LANES == 4) begin
             $display("# [GEMM_TOP_CFG] NOTE: GEMM_MAC_LANES=4 enables the P8C cache-backed true 4-lane MAC path when A-row cache and B-cache are active.");
@@ -211,6 +243,10 @@ module gemm_top #(
 
         if (GEMM_ENABLE_K_TILING) begin
             $display("# [GEMM_TOP_CFG] NOTE: GEMM_ENABLE_K_TILING=1 enables the P10D row-accumulator K-tiling path when K exceeds the effective tile size and N fits the B-cache.");
+        end
+
+        if (GEMM_ENABLE_N_TILING) begin
+            $display("# [GEMM_TOP_CFG] NOTE: GEMM_ENABLE_N_TILING=1 enables the P11D output-column N-tile scheduler when N exceeds the effective tile size.");
         end
     end
 `endif
@@ -289,6 +325,16 @@ module gemm_top #(
     logic [DIM_WIDTH-1:0]           ktile_base_q, ktile_base_d;
     logic [DIM_WIDTH-1:0]           ktile_len_q, ktile_len_d;
 
+    // P11D output-column N-tiling state.
+    // ntile_base_q is the global N index of the active output-column tile.
+    // ntile_len_q is the number of valid N entries in the active tile.
+    logic                           n_tiling_active_job_q;
+    logic                           n_tiling_active_job_d;
+    logic [DIM_WIDTH-1:0]           ntile_base_q, ntile_base_d;
+    logic [DIM_WIDTH-1:0]           ntile_len_q, ntile_len_d;
+
+    logic                           tile_schedule_active_job;
+
     logic signed [ACC_WIDTH-1:0]    c_row_accum_q [0:GEMM_B_CACHE_MAX_N-1];
     logic signed [ACC_WIDTH-1:0]    c_row_accum_d [0:GEMM_B_CACHE_MAX_N-1];
 
@@ -302,6 +348,10 @@ module gemm_top #(
 
     logic k_tiling_dim_supported;
     logic k_tiling_active_calc;
+
+    logic n_tiling_dim_supported;
+    logic n_tiling_active_calc;
+    logic tile_schedule_active_calc;
 
     logic [ADDR_WIDTH-1:0] bcache_total_bytes_calc;
     logic [ADDR_WIDTH-1:0] bpack_last_byte_addr_calc;
@@ -328,6 +378,30 @@ module gemm_top #(
         end
         else begin
             calc_ktile_len = DIM_WIDTH'(remaining);
+        end
+    end
+    endfunction
+
+    function automatic logic [DIM_WIDTH-1:0] calc_ntile_len(
+        input logic [DIM_WIDTH-1:0] base_n
+    );
+        int unsigned remaining;
+        int unsigned tile_limit;
+    begin
+        tile_limit = GEMM_N_TILE_SIZE_EFFECTIVE;
+
+        if (int'(dim_n) > int'(base_n)) begin
+            remaining = int'(dim_n) - int'(base_n);
+        end
+        else begin
+            remaining = 0;
+        end
+
+        if (remaining > tile_limit) begin
+            calc_ntile_len = DIM_WIDTH'(tile_limit);
+        end
+        else begin
+            calc_ntile_len = DIM_WIDTH'(remaining);
         end
     end
     endfunction
@@ -382,12 +456,12 @@ module gemm_top #(
             (base_addr_a[1:0] == 2'b00) &&
             (dim_k[1:0] == 2'b00);
 
-        // P10D first RTL prototype policy:
+        // P10D K-tiling policy:
         // - K-tiling is default-off and only activates when K exceeds the
         //   effective cache tile capacity.
         // - The first tiled path is cache-backed and row-accumulator based.
         // - Packed preloads may still be enabled for non-tiled P9/P10C cases,
-        //   but the first tiled path uses scalar tile preload for robust
+        //   but the tiled path uses scalar tile preload for robust
         //   tail/alignment behavior.
         k_tiling_dim_supported =
             (dim_k != '0) &&
@@ -405,22 +479,58 @@ module gemm_top #(
             (A_BYTES == 1) &&
             (B_BYTES == 1) &&
             k_tiling_dim_supported;
+
+        // P11D N-tiling policy:
+        // - N-tiling is default-off and only activates when N exceeds the
+        //   effective output-column tile capacity.
+        // - The first N-tiled path reuses the P10 row-accumulator scheduler.
+        // - If K also exceeds the effective K tile size, GEMM_ENABLE_K_TILING
+        //   must be enabled so K is tiled inside each N tile.
+        // - Packed B/A preloads are intentionally bypassed for tiled jobs.
+        n_tiling_dim_supported =
+            (dim_k != '0) &&
+            (dim_n != '0) &&
+            (int'(dim_n) > GEMM_N_TILE_SIZE_EFFECTIVE) &&
+            (GEMM_N_TILE_SIZE_EFFECTIVE <= GEMM_B_CACHE_MAX_N) &&
+            (GEMM_K_TILE_SIZE_EFFECTIVE <= GEMM_B_CACHE_MAX_K) &&
+            (GEMM_K_TILE_SIZE_EFFECTIVE <= GEMM_A_ROW_CACHE_MAX_K) &&
+            ((int'(dim_k) <= GEMM_K_TILE_SIZE_EFFECTIVE) || GEMM_ENABLE_K_TILING);
+
+        n_tiling_active_calc =
+            GEMM_ENABLE_N_TILING &&
+            GEMM_ENABLE_B_CACHE &&
+            GEMM_ENABLE_A_ROW_CACHE &&
+            (GEMM_MAC_LANES_EFFECTIVE == 4) &&
+            (A_BYTES == 1) &&
+            (B_BYTES == 1) &&
+            n_tiling_dim_supported;
+
+        tile_schedule_active_calc = k_tiling_active_calc || n_tiling_active_calc;
     end
 
     logic [ADDR_WIDTH-1:0] bcache_tile_base_addr_calc;
     logic [DIM_WIDTH-1:0]    active_k_limit_calc;
     logic [DIM_WIDTH:0]      active_k_limit_ext;
+    logic [DIM_WIDTH-1:0]    active_n_limit_calc;
+    logic [DIM_WIDTH:0]      active_n_limit_ext;
+
+    assign tile_schedule_active_job = k_tiling_active_job_q || n_tiling_active_job_q;
 
     assign active_k_limit_calc =
-        k_tiling_active_job_q ? ktile_len_q : dim_k;
+        tile_schedule_active_job ? ktile_len_q : dim_k;
 
     assign active_k_limit_ext = {1'b0, active_k_limit_calc};
 
+    assign active_n_limit_calc =
+        n_tiling_active_job_q ? ntile_len_q : dim_n;
+
+    assign active_n_limit_ext = {1'b0, active_n_limit_calc};
+
     assign bcache_tile_base_addr_calc =
-        base_addr_b + ((ktile_base_q * dim_n) * B_BYTES);
+        base_addr_b + ((ktile_base_q * dim_n) + ntile_base_q) * B_BYTES;
 
     assign bcache_total_bytes_calc =
-        int'(active_k_limit_calc) * int'(dim_n) * B_BYTES;
+        int'(active_k_limit_calc) * int'(active_n_limit_calc) * B_BYTES;
 
     assign bpack_start_addr_calc =
         {bcache_tile_base_addr_calc[ADDR_WIDTH-1:2], 2'b00};
@@ -433,6 +543,7 @@ module gemm_top #(
 
     logic [DIM_WIDTH:0]             k_idx_ext;
     logic [DIM_WIDTH:0]             dim_k_ext;
+    logic [DIM_WIDTH:0]             dim_n_ext;
     logic [DIM_WIDTH:0]             k_idx_plus1_ext;
     logic [DIM_WIDTH:0]             k_idx_plus2_ext;
     logic [DIM_WIDTH:0]             k_idx_plus3_ext;
@@ -451,6 +562,7 @@ module gemm_top #(
 
     assign k_idx_ext       = {1'b0, k_idx_q};
     assign dim_k_ext       = {1'b0, dim_k};
+    assign dim_n_ext       = {1'b0, dim_n};
     assign k_idx_plus1_ext = k_idx_ext + 1;
     assign k_idx_plus2_ext = k_idx_ext + 2;
     assign k_idx_plus3_ext = k_idx_ext + 3;
@@ -556,32 +668,44 @@ module gemm_top #(
     logic                  arow_last_k;
     logic                  arow_pack_last_k;
     logic                  ktile_last_tile;
+    logic                  ntile_last_tile;
 
     logic [DIM_WIDTH:0]    arow_pack_k_plus4_ext;
     logic [DIM_WIDTH:0]    ktile_base_ext;
     logic [DIM_WIDTH:0]    ktile_len_ext;
     logic [DIM_WIDTH:0]    ktile_next_base_ext;
+    logic [DIM_WIDTH:0]    ntile_base_ext;
+    logic [DIM_WIDTH:0]    ntile_len_ext;
+    logic [DIM_WIDTH:0]    ntile_next_base_ext;
 
     logic [DIM_WIDTH-1:0]  global_k_idx;
     logic [DIM_WIDTH-1:0]  global_k_idx_plus1;
     logic [DIM_WIDTH-1:0]  global_bcache_k;
+    logic [DIM_WIDTH-1:0]  global_bcache_n;
     logic [DIM_WIDTH-1:0]  global_arow_k;
     logic [DIM_WIDTH-1:0]  global_arow_pack_k;
+    logic [DIM_WIDTH-1:0]  global_n_idx;
 
     assign global_k_idx =
-        k_tiling_active_job_q ? (ktile_base_q + k_idx_q) : k_idx_q;
+        tile_schedule_active_job ? (ktile_base_q + k_idx_q) : k_idx_q;
 
     assign global_k_idx_plus1 =
-        k_tiling_active_job_q ? (ktile_base_q + k_idx_plus1) : k_idx_plus1;
+        tile_schedule_active_job ? (ktile_base_q + k_idx_plus1) : k_idx_plus1;
 
     assign global_bcache_k =
-        k_tiling_active_job_q ? (ktile_base_q + bcache_k_q) : bcache_k_q;
+        tile_schedule_active_job ? (ktile_base_q + bcache_k_q) : bcache_k_q;
+
+    assign global_bcache_n =
+        n_tiling_active_job_q ? (ntile_base_q + bcache_n_q) : bcache_n_q;
 
     assign global_arow_k =
-        k_tiling_active_job_q ? (ktile_base_q + arow_k_q) : arow_k_q;
+        tile_schedule_active_job ? (ktile_base_q + arow_k_q) : arow_k_q;
 
     assign global_arow_pack_k =
-        k_tiling_active_job_q ? (ktile_base_q + arow_pack_k_q) : arow_pack_k_q;
+        tile_schedule_active_job ? (ktile_base_q + arow_pack_k_q) : arow_pack_k_q;
+
+    assign global_n_idx =
+        n_tiling_active_job_q ? (ntile_base_q + n_idx_q) : n_idx_q;
 
     assign a_addr_calc =
         base_addr_a + ((m_idx_q * dim_k) + global_k_idx) * A_BYTES;
@@ -593,23 +717,23 @@ module gemm_top #(
         base_addr_a + ((m_idx_q * dim_k) + global_arow_pack_k) * A_BYTES;
 
     assign b_addr_calc =
-        base_addr_b + ((global_k_idx * dim_n) + n_idx_q) * B_BYTES;
+        base_addr_b + ((global_k_idx * dim_n) + global_n_idx) * B_BYTES;
 
     assign a1_addr_calc =
         base_addr_a + ((m_idx_q * dim_k) + global_k_idx_plus1) * A_BYTES;
 
     assign b1_addr_calc =
-        base_addr_b + ((global_k_idx_plus1 * dim_n) + n_idx_q) * B_BYTES;
+        base_addr_b + ((global_k_idx_plus1 * dim_n) + global_n_idx) * B_BYTES;
 
     assign bcache_b_addr_calc =
-        base_addr_b + ((global_bcache_k * dim_n) + bcache_n_q) * B_BYTES;
+        base_addr_b + ((global_bcache_k * dim_n) + global_bcache_n) * B_BYTES;
 
     assign bcache_last_n =
-        (bcache_n_q == (dim_n - 1'b1));
+        (bcache_n_q == (active_n_limit_calc - 1'b1));
 
     assign bcache_last_elem =
         (bcache_k_q == (active_k_limit_calc - 1'b1)) &&
-        (bcache_n_q == (dim_n - 1'b1));
+        (bcache_n_q == (active_n_limit_calc - 1'b1));
 
     assign arow_last_k =
         (arow_k_q == (active_k_limit_calc - 1'b1));
@@ -627,8 +751,15 @@ module gemm_top #(
     assign ktile_last_tile =
         (ktile_next_base_ext >= dim_k_ext);
 
+    assign ntile_base_ext      = {1'b0, ntile_base_q};
+    assign ntile_len_ext       = {1'b0, ntile_len_q};
+    assign ntile_next_base_ext = ntile_base_ext + ntile_len_ext;
+
+    assign ntile_last_tile =
+        (ntile_next_base_ext >= dim_n_ext);
+
     assign c_addr_calc =
-        base_addr_c + ((m_idx_q * dim_n) + n_idx_q) * C_BYTES;
+        base_addr_c + ((m_idx_q * dim_n) + global_n_idx) * C_BYTES;
 
     always_comb begin
         state_d       = state_q;
@@ -674,6 +805,9 @@ module gemm_top #(
         k_tiling_active_job_d = k_tiling_active_job_q;
         ktile_base_d          = ktile_base_q;
         ktile_len_d           = ktile_len_q;
+        n_tiling_active_job_d = n_tiling_active_job_q;
+        ntile_base_d          = ntile_base_q;
+        ntile_len_d           = ntile_len_q;
 
         for (int cn = 0; cn < GEMM_B_CACHE_MAX_N; cn++) begin
             c_row_accum_d[cn] = c_row_accum_q[cn];
@@ -718,11 +852,14 @@ module gemm_top #(
                     bpack_addr_d         = '0;
                     bpack_end_addr_d     = '0;
                     k_tiling_active_job_d = k_tiling_active_calc;
+                    n_tiling_active_job_d = n_tiling_active_calc;
                     ktile_base_d          = '0;
-                    ktile_len_d           = k_tiling_active_calc ? calc_ktile_len(DIM_WIDTH'(0)) : dim_k;
-                    b_cache_active_job_d  = b_cache_active_calc || k_tiling_active_calc;
-                    a_row_cache_active_job_d = a_row_cache_active_calc || k_tiling_active_calc;
-                    packed_a_row_preload_active_job_d = packed_a_row_preload_calc && !k_tiling_active_calc;
+                    ktile_len_d           = tile_schedule_active_calc ? calc_ktile_len(DIM_WIDTH'(0)) : dim_k;
+                    ntile_base_d          = '0;
+                    ntile_len_d           = n_tiling_active_calc ? calc_ntile_len(DIM_WIDTH'(0)) : dim_n;
+                    b_cache_active_job_d  = b_cache_active_calc || tile_schedule_active_calc;
+                    a_row_cache_active_job_d = a_row_cache_active_calc || tile_schedule_active_calc;
+                    packed_a_row_preload_active_job_d = packed_a_row_preload_calc && !tile_schedule_active_calc;
 
                     // Defensive job-local cache cleanup.
                     // Current preload should overwrite all used entries, but clearing
@@ -744,8 +881,8 @@ module gemm_top #(
                     acc_d         = '0;
                     busy_d        = 1'b1;
 
-                    if (k_tiling_active_calc) begin
-                        // P10D tiled path uses scalar tile preload in the first prototype.
+                    if (tile_schedule_active_calc) begin
+                        // P10D/P11D tiled paths use scalar tile preload in the first prototype.
                         state_d = S_BCACHE_INIT;
                     end
                     else if (b_cache_active_calc) begin
@@ -1138,7 +1275,7 @@ module gemm_top #(
 
                 if (active_mac_lanes_calc >= 3'd4) begin
                     if (lane4_last_k_group) begin
-                        if (k_tiling_active_job_q) begin
+                        if (tile_schedule_active_job) begin
                             state_d = S_KTILE_ACCUM_N;
                         end
                         else begin
@@ -1152,7 +1289,7 @@ module gemm_top #(
                 end
                 else if (active_mac_lanes_calc >= 3'd2) begin
                     if (lane2_last_k_group) begin
-                        if (k_tiling_active_job_q) begin
+                        if (tile_schedule_active_job) begin
                             state_d = S_KTILE_ACCUM_N;
                         end
                         else begin
@@ -1166,7 +1303,7 @@ module gemm_top #(
                 end
                 else begin
                     if (k_idx_q == (active_k_limit_calc - 1)) begin
-                        if (k_tiling_active_job_q) begin
+                        if (tile_schedule_active_job) begin
                             state_d = S_KTILE_ACCUM_N;
                         end
                         else begin
@@ -1181,13 +1318,13 @@ module gemm_top #(
             end
 
             // ----------------------------------------------------
-            // P10D K-tiling row-accumulator path
+            // P10D/P11D row-accumulator tiled path
             //
             // At this point acc_q contains the completed tile partial from
             // the previous S_MAC cycle.
-            // Store the completed tile partial for the current n into
-            // c_row_accum[n].  Final C is written only after all K tiles
-            // for the row have been accumulated.
+            // Store the completed tile partial for the current local-n into
+            // c_row_accum[local_n].  Final C is written only after all K
+            // tiles for the active output-column tile have been accumulated.
             // ----------------------------------------------------
             S_KTILE_ACCUM_N: begin
                 c_row_accum_d[int'(n_idx_q)] =
@@ -1205,7 +1342,7 @@ module gemm_top #(
                 b3_val_d      = '0;
                 lane3_valid_d = 1'b0;
 
-                if (n_idx_q == (dim_n - 1'b1)) begin
+                if (n_idx_q == (active_n_limit_calc - 1'b1)) begin
                     n_idx_d = '0;
 
                     if (ktile_last_tile) begin
@@ -1240,10 +1377,28 @@ module gemm_top #(
 
             S_KTILE_WAIT_ROW_WRITE: begin
                 if (mem_wr_done) begin
-                    if (n_idx_q == (dim_n - 1'b1)) begin
+                    if (n_idx_q == (active_n_limit_calc - 1'b1)) begin
                         n_idx_d = '0;
 
-                        if (m_idx_q == (dim_m - 1'b1)) begin
+                        if (n_tiling_active_job_q && !ntile_last_tile) begin
+                            // Advance to the next output-column tile for the same row.
+                            ntile_base_d = ntile_base_q + ntile_len_q;
+                            ntile_len_d  = calc_ntile_len(ntile_base_q + ntile_len_q);
+                            k_idx_d      = '0;
+                            ktile_base_d = '0;
+                            ktile_len_d  = calc_ktile_len(DIM_WIDTH'(0));
+                            bcache_k_d   = '0;
+                            bcache_n_d   = '0;
+                            arow_k_d     = '0;
+                            arow_pack_k_d = '0;
+
+                            for (int cn = 0; cn < GEMM_B_CACHE_MAX_N; cn++) begin
+                                c_row_accum_d[cn] = '0;
+                            end
+
+                            state_d = S_BCACHE_INIT;
+                        end
+                        else if (m_idx_q == (dim_m - 1'b1)) begin
                             state_d = S_DONE;
                         end
                         else begin
@@ -1251,6 +1406,8 @@ module gemm_top #(
                             k_idx_d      = '0;
                             ktile_base_d = '0;
                             ktile_len_d  = calc_ktile_len(DIM_WIDTH'(0));
+                            ntile_base_d = '0;
+                            ntile_len_d  = n_tiling_active_job_q ? calc_ntile_len(DIM_WIDTH'(0)) : dim_n;
                             bcache_k_d   = '0;
                             bcache_n_d   = '0;
                             arow_k_d     = '0;
@@ -1345,6 +1502,9 @@ module gemm_top #(
                 k_tiling_active_job_d = 1'b0;
                 ktile_base_d = '0;
                 ktile_len_d  = '0;
+                n_tiling_active_job_d = 1'b0;
+                ntile_base_d = '0;
+                ntile_len_d  = '0;
             end
         endcase
     end
@@ -1394,6 +1554,9 @@ module gemm_top #(
             k_tiling_active_job_q <= 1'b0;
             ktile_base_q          <= '0;
             ktile_len_q           <= '0;
+            n_tiling_active_job_q <= 1'b0;
+            ntile_base_q          <= '0;
+            ntile_len_q           <= '0;
 
             for (int cn = 0; cn < GEMM_B_CACHE_MAX_N; cn++) begin
                 c_row_accum_q[cn] <= '0;
@@ -1457,6 +1620,9 @@ module gemm_top #(
             k_tiling_active_job_q <= k_tiling_active_job_d;
             ktile_base_q          <= ktile_base_d;
             ktile_len_q           <= ktile_len_d;
+            n_tiling_active_job_q <= n_tiling_active_job_d;
+            ntile_base_q          <= ntile_base_d;
+            ntile_len_q           <= ntile_len_d;
 
             for (int cn = 0; cn < GEMM_B_CACHE_MAX_N; cn++) begin
                 c_row_accum_q[cn] <= c_row_accum_d[cn];

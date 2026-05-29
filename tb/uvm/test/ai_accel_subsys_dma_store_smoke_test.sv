@@ -15,6 +15,12 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     localparam int DMA_DST_MEM_BYTES = 4096;
     localparam int BYTES_PER_BEAT    = DATA_WIDTH / 8;
 
+    // Default preserves the historical DMA-store smoke timeout.
+    // Long-running P11D/P11E focused runs may override this with
+    // +SMOKE_DONE_TIMEOUT_CYCLES=<cycles> or
+    // +DMA_STORE_DONE_TIMEOUT_CYCLES=<cycles>.
+    localparam int unsigned DEFAULT_GEMM_DONE_TIMEOUT_CYCLES = 30000;
+
     localparam logic [1:0] AXI_RESP_OKAY  = 2'b00;
     localparam logic [1:0] AXI_BURST_INCR = 2'b01;
 
@@ -42,6 +48,8 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
     bit enable_result_check;
 
+    int unsigned gemm_done_timeout_cycles;
+
     logic [ADDR_WIDTH-1:0] base_a;
     logic [ADDR_WIDTH-1:0] base_b;
     logic [ADDR_WIDTH-1:0] base_c;
@@ -60,7 +68,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     int unsigned c_bytes;
 
     logic [7:0]  a_payload  [0:63];
-    logic [7:0]  b_payload  [0:63];
+    logic [7:0]  b_payload  [0:255];
     logic [31:0] expected_c [0:63];
 
     function new(string name = "ai_accel_subsys_dma_store_smoke_test",
@@ -74,7 +82,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         if (cid <= 99) begin
             return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
         end
-        else if ((cid >= 100) && (cid <= 199)) begin
+        else if ((cid >= 100) && (cid <= 202)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
         end
         else if ((cid >= 400) && (cid <= 499)) begin
@@ -121,6 +129,58 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endfunction
 
+    // ------------------------------------------------------------
+    // Parse GEMM done timeout
+    //
+    // Default:
+    //   DEFAULT_GEMM_DONE_TIMEOUT_CYCLES
+    //
+    // Overrides:
+    //   +DMA_STORE_DONE_TIMEOUT_CYCLES=<cycles>
+    //       dedicated DMA-store/frontend timeout knob
+    //
+    //   +SMOKE_DONE_TIMEOUT_CYCLES=<cycles>
+    //       shared focused-run timeout knob used by P11D/P11E
+    //
+    // Priority:
+    //   DMA_STORE_DONE_TIMEOUT_CYCLES overrides SMOKE_DONE_TIMEOUT_CYCLES.
+    // ------------------------------------------------------------
+    function void parse_gemm_done_timeout_cycles();
+        int unsigned tmp;
+        string       source;
+    begin
+        gemm_done_timeout_cycles = DEFAULT_GEMM_DONE_TIMEOUT_CYCLES;
+        source                   = "default";
+
+        if ($value$plusargs("SMOKE_DONE_TIMEOUT_CYCLES=%d", tmp)) begin
+            if (tmp == 0) begin
+                `uvm_warning("DMA_STORE_SMOKE/BAD_SMOKE_TIMEOUT",
+                    "SMOKE_DONE_TIMEOUT_CYCLES=0 is invalid; using default GEMM done timeout")
+            end
+            else begin
+                gemm_done_timeout_cycles = tmp;
+                source                   = "SMOKE_DONE_TIMEOUT_CYCLES";
+            end
+        end
+
+        if ($value$plusargs("DMA_STORE_DONE_TIMEOUT_CYCLES=%d", tmp)) begin
+            if (tmp == 0) begin
+                `uvm_warning("DMA_STORE_SMOKE/BAD_DMA_TIMEOUT",
+                    "DMA_STORE_DONE_TIMEOUT_CYCLES=0 is invalid; keeping previously selected GEMM done timeout")
+            end
+            else begin
+                gemm_done_timeout_cycles = tmp;
+                source                   = "DMA_STORE_DONE_TIMEOUT_CYCLES";
+            end
+        end
+
+        `uvm_info("DMA_STORE_SMOKE",
+            $sformatf("gemm_done_timeout_cycles=%0d source=%s",
+                gemm_done_timeout_cycles, source),
+            UVM_MEDIUM)
+    end
+    endfunction
+
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
 
@@ -141,6 +201,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         end
 
         parse_result_check_enable();
+        parse_gemm_done_timeout_cycles();
 
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
             this, "env", "vif", vif);
@@ -189,8 +250,11 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     begin
         for (i = 0; i < 64; i++) begin
             a_payload[i]  = 8'h00;
-            b_payload[i]  = 8'h00;
             expected_c[i] = 32'h0000_0000;
+        end
+
+        for (i = 0; i < 256; i++) begin
+            b_payload[i]  = 8'h00;
         end
     end
     endtask
@@ -434,6 +498,106 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                 end
             end
 
+            198: begin
+                // P11C N-tiling first software-reference case: M=1, N=16, K=8.
+                // N exceeds B-cache max-N=8; K still fits one K tile.
+                dim_m_i = 1;
+                dim_n_i = 16;
+                dim_k_i = 8;
+
+                a_bytes = 8;
+                b_bytes = 128;
+                c_words = 16;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 1) * 2) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 3) * 5) % 17) + 1;
+                end
+            end
+
+            199: begin
+                // P11C N-tiling multi-row case: M=2, N=16, K=8.
+                // N exceeds B-cache max-N=8; two A rows reuse the B payload.
+                dim_m_i = 2;
+                dim_n_i = 16;
+                dim_k_i = 8;
+
+                a_bytes = 16;
+                b_bytes = 128;
+                c_words = 32;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 2) * 3) % 13) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 5) * 7) % 19) + 1;
+                end
+            end
+
+            200: begin
+                // P11C representative N+K tiling case: M=4, N=16, K=16.
+                // N and K both exceed one cache8 tile; C has 64 output words.
+                dim_m_i = 4;
+                dim_n_i = 16;
+                dim_k_i = 16;
+
+                a_bytes = 64;
+                b_bytes = 256;
+                c_words = 64;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 1) * 5) % 17) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 2) * 3) % 23) + 1;
+                end
+            end
+
+            201: begin
+                // P11C irregular N/K tail case: M=3, N=9, K=9.
+                // N tile split is 8+1 and K tile split is 8+1.
+                dim_m_i = 3;
+                dim_n_i = 9;
+                dim_k_i = 9;
+
+                a_bytes = 27;
+                b_bytes = 81;
+                c_words = 27;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 3) * 2) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 4) * 5) % 13) + 1;
+                end
+            end
+
+            202: begin
+                // P11C N-tail + K-tiling case: M=4, N=12, K=16.
+                // N tile split is 8+4 and K tile split is 8+8.
+                dim_m_i = 4;
+                dim_n_i = 12;
+                dim_k_i = 16;
+
+                a_bytes = 64;
+                b_bytes = 192;
+                c_words = 48;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 4) * 3) % 19) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 6) * 5) % 17) + 1;
+                end
+            end
+
             5, 400, 401, 402, 403: begin
                 dim_m_i = 4;
                 dim_n_i = 4;
@@ -483,7 +647,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
             default: begin
                 `uvm_fatal("DMA_STORE_SMOKE",
-                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 400, 401, 402, 403", cid))
+                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 400, 401, 402, 403", cid))
             end
         endcase
 
@@ -916,8 +1080,10 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             end
 
             timeout++;
-            if (timeout > 30000) begin
-                `uvm_fatal("DMA_STORE_SMOKE", "Timeout waiting for acc_done")
+            if (timeout > gemm_done_timeout_cycles) begin
+                `uvm_fatal("DMA_STORE_SMOKE",
+                    $sformatf("Timeout waiting for acc_done after %0d cycles",
+                        gemm_done_timeout_cycles))
             end
         end
 

@@ -430,6 +430,16 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             196: expect_dims_item(item, 3, 5, 9,  "var196");
             197: expect_dims_item(item, 4, 4, 12, "var197");
 
+            // P11C N>8 software-reference cases.
+            // These intentionally exceed the P9/P10 N<=8 cache-fit class.
+            // RTL N-tiling is not enabled in P11C; this only teaches the
+            // scoreboard profile checker the new case dimensions.
+            198: expect_dims_item(item, 1, 16, 8,  "var198");
+            199: expect_dims_item(item, 2, 16, 8,  "var199");
+            200: expect_dims_item(item, 4, 16, 16, "var200");
+            201: expect_dims_item(item, 3, 9,  9,  "var201");
+            202: expect_dims_item(item, 4, 12, 16, "var202");
+
             default: begin
                 `uvm_error("SB/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))

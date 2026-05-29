@@ -559,6 +559,110 @@ class ai_accel_subsys_case_helper extends uvm_object;
                 end
             end
 
+
+            198: begin
+                // P11C N>8 case: M=1, N=16, K=8.
+                // Purpose:
+                //   - first N-tiling software-reference case
+                //   - K still fits one cache8 tile
+                //   - expected_mac = 128, expected_output = 16
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    val = int'(((kk + 1) * 2) % 11) + 1;
+                    a_flat[kk] = val;
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 1) * (n + 3)) % 17) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            199: begin
+                // P11C N>8 case: M=2, N=16, K=8.
+                // Purpose:
+                //   - two A rows with N=16
+                //   - K still fits one cache8 tile
+                //   - expected_mac = 256, expected_output = 32
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 2) * (kk + 1)) % 13) + 1;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 3) * (n + 5)) % 19) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            200: begin
+                // P11C representative N+K tiled case: M=4, N=16, K=16.
+                // Purpose:
+                //   - N requires 8+8 output-column tiles
+                //   - K requires 8+8 K tiles
+                //   - expected_mac = 1024, expected_output = 64
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 1) * (kk + 4)) % 17) + 1;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 2) * (n + 1)) % 23) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            201: begin
+                // P11C irregular N/K tail case: M=3, N=9, K=9.
+                // Purpose:
+                //   - N tile split 8+1
+                //   - K tile split 8+1
+                //   - expected_mac = 243, expected_output = 27
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 3) * (kk + 2)) % 11) + 1;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 5) * (n + 2)) % 13) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
+            202: begin
+                // P11C N-tail + K-tiling case: M=4, N=12, K=16.
+                // Purpose:
+                //   - N tile split 8+4
+                //   - K tile split 8+8
+                //   - expected_mac = 768, expected_output = 48
+                for (m = 0; m < profile_item.dim_m; m++) begin
+                    for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                        val = int'(((m + 2) * (kk + 3)) % 19) + 1;
+                        a_flat[m * profile_item.dim_k + kk] = val;
+                    end
+                end
+
+                for (kk = 0; kk < profile_item.dim_k; kk++) begin
+                    for (n = 0; n < profile_item.dim_n; n++) begin
+                        val = int'(((kk + 4) * (n + 3)) % 17) + 1;
+                        b_flat[kk * profile_item.dim_n + n] = val;
+                    end
+                end
+            end
+
             default: begin
                 `uvm_fatal("CASE_HELPER/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))

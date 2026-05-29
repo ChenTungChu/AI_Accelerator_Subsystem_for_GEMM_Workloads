@@ -75,6 +75,9 @@ proc clear_uvm_run_vars {} {
         EXTRA_PLUSARGS
         LOG_FILE
 
+        SMOKE_DONE_TIMEOUT_CYCLES
+        DMA_STORE_DONE_TIMEOUT_CYCLES
+
         USE_HOST_AGENT_CLEAR_C
         USE_HOST_AGENT_READBACK_C
         USE_HOST_AGENT_PRELOAD_AB
@@ -103,6 +106,8 @@ proc clear_uvm_run_vars {} {
         GEMM_ENABLE_PACKED_A_ROW_PRELOAD
         GEMM_ENABLE_K_TILING
         GEMM_K_TILE_SIZE
+        GEMM_ENABLE_N_TILING
+        GEMM_N_TILE_SIZE
 
         STRESS_JOB_COUNT
         STRESS_SEED
@@ -1529,6 +1534,158 @@ run_reg_item "gemm_4lane_ktiling_direct_stream_load_store_case195" {
 
     set GEMM_ENABLE_K_TILING 1
     set GEMM_K_TILE_SIZE 8
+}
+
+# ============================================================
+# P11B N-tiling safe parameter plumbing
+#
+# P11B adds GEMM_ENABLE_N_TILING and GEMM_N_TILE_SIZE as
+# default-off elaboration/run-script parameters. No full-regression
+# item is added at this step, so the P10F regression total
+# intentionally remains 68. Focused P11B smoke should be run
+# manually with GEMM_ENABLE_N_TILING=1 on a cache-fit case before
+# P11C/P11D add N>8 test cases and the N-tile scheduler.
+# ============================================================
+
+
+# ============================================================
+# P11G N-tiling frontend representative regression
+#
+# These items integrate the P11D/P11E N-tiling coverage into the
+# full regression with bounded runtime.
+#
+# Configuration:
+#   GEMM_MAC_LANES=4
+#   GEMM_ENABLE_B_CACHE=1
+#   GEMM_B_CACHE_MAX_K=8
+#   GEMM_B_CACHE_MAX_N=8
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#   GEMM_ENABLE_A_ROW_CACHE=1
+#   GEMM_A_ROW_CACHE_MAX_K=8
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+#   GEMM_ENABLE_K_TILING=1
+#   GEMM_K_TILE_SIZE=8
+#   GEMM_ENABLE_N_TILING=1
+#   GEMM_N_TILE_SIZE=8
+#
+# Focused case:
+#   CASE_ID=200, dim=(4,16,16), combined K-tiling and N-tiling.
+#
+# Covered paths:
+#   1. DMA load/store path
+#   2. AXI-Stream load/store path
+#   3. Direct Stream load/store path
+#
+# Runtime policy:
+#   Each item uses one forced CASE_ID=200 job and a longer shared
+#   done timeout.  CASE_ID=200 is intentionally larger than the
+#   pre-P11 smoke/stress workloads, and focused P11E validation showed
+#   it can complete in about 31.4k monitor cycles on DMA/AXIS paths.
+#
+# Expected regression total after adding these 3 P11 items:
+#   68 + 3 = 71
+# ============================================================
+
+run_reg_item "gemm_4lane_ntiling_dma_load_store_case200" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 200
+
+    set STORE_STRESS_JOB_COUNT 1
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 0
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 100000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
+}
+
+run_reg_item "gemm_4lane_ntiling_axis_stream_load_store_case200" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 200
+
+    set AXIS_STRESS_JOB_COUNT 1
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 0
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 100000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
+}
+
+run_reg_item "gemm_4lane_ntiling_direct_stream_load_store_case200" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 200
+
+    set DS_STRESS_JOB_COUNT 1
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 0
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 100000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
 }
 
 # ============================================================

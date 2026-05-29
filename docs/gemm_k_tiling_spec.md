@@ -428,12 +428,63 @@ new Direct Stream protocol
 After K-only tiling is stable, future milestones can consider:
 
 ```text
-P11: N tiling / output-column tiling
+P11: N tiling / output-column tiling                    COMPLETED
 P12: M tiling / multi-row tile scheduling
 P13: C read-modify-write partial accumulation
 P14: external tile scheduler
 P15: larger Direct Stream tile movement
 P16: optional C direct-store path
+```
+
+---
+
+## 15A. Relationship to P11 N-Tiling
+
+P11 builds directly on the P10 row-accumulator model.
+
+P10 proved:
+
+```text
+K_total may exceed the local K tile capacity.
+N still fits the B-cache / row-accumulator N capacity.
+```
+
+P11 extends the same execution model to:
+
+```text
+K_total may exceed the local K tile capacity.
+N_total may exceed the local N tile capacity.
+```
+
+The P11 loop composition is:
+
+```text
+for each output row m:
+  for each N tile:
+    clear c_row_accum[local_n]
+
+    for each K tile:
+      reuse the P10 K-tile preload and accumulation behavior
+
+    write final C for the active N tile
+```
+
+Representative P11 case:
+
+```text
+CASE_ID=200 : M=4, N=16, K=16
+K tiling    : 16 = 8 + 8
+N tiling    : 16 = 8 + 8
+```
+
+P11 does not change the P10 K-tile arithmetic rule. It changes the outer output-column scheduling so that the P10 row accumulator is reused as a local-N-tile accumulator.
+
+Current subsystem checkpoint after P11:
+
+```text
+TOTAL : 71
+PASS  : 71
+FAIL  : 0
 ```
 
 ---

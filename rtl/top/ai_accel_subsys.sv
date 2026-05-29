@@ -35,10 +35,15 @@ module ai_accel_subsys #(
     // Default-off so the current P6 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0,
 
-    // P10B safe parameter plumbing.
-    // Default-off so the current P9 baseline behavior is unchanged.
+    // P10 K-tiling parameterization.
+    // Default-off so the pre-P10 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_K_TILING = 1'b0,
-    parameter int GEMM_K_TILE_SIZE     = 8
+    parameter int GEMM_K_TILE_SIZE     = 8,
+
+    // P11B safe parameter plumbing.
+    // Default-off so the current P10 baseline behavior is unchanged.
+    parameter bit GEMM_ENABLE_N_TILING = 1'b0,
+    parameter int GEMM_N_TILE_SIZE     = 8
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -1495,7 +1500,9 @@ module ai_accel_subsys #(
         .GEMM_A_ROW_CACHE_MAX_K (GEMM_A_ROW_CACHE_MAX_K),
         .GEMM_ENABLE_PACKED_A_ROW_PRELOAD (GEMM_ENABLE_PACKED_A_ROW_PRELOAD),
         .GEMM_ENABLE_K_TILING (GEMM_ENABLE_K_TILING),
-        .GEMM_K_TILE_SIZE (GEMM_K_TILE_SIZE)
+        .GEMM_K_TILE_SIZE (GEMM_K_TILE_SIZE),
+        .GEMM_ENABLE_N_TILING (GEMM_ENABLE_N_TILING),
+        .GEMM_N_TILE_SIZE (GEMM_N_TILE_SIZE)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),

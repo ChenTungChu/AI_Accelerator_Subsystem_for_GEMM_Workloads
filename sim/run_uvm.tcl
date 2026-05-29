@@ -108,6 +108,37 @@ if {![info exists ENABLE_RESULT_CHECK]} {
 }
 
 # --------------------------------------------------
+# Smoke / frontend done timeout knob
+#
+#   Default:
+#     Do not forward a timeout plusarg. Each test class keeps
+#     its own historical default timeout.
+#
+#   Manual long-running P11D/P11E focused run:
+#     set SMOKE_DONE_TIMEOUT_CYCLES 100000
+#     do run_uvm.tcl
+#
+#   When explicitly set, this value is forwarded as:
+#     +SMOKE_DONE_TIMEOUT_CYCLES=<cycles>
+#
+#   This shared knob is consumed by:
+#     - ai_accel_subsys_smoke_test
+#     - ai_accel_subsys_dma_store_smoke_test
+#       and its load-store frontend wrappers
+# --------------------------------------------------
+set SMOKE_DONE_TIMEOUT_ARG_LIST [list]
+set SMOKE_DONE_TIMEOUT_MODE     class_default
+
+if {[info exists SMOKE_DONE_TIMEOUT_CYCLES]} {
+    if {$SMOKE_DONE_TIMEOUT_CYCLES <= 0} {
+        error "Unsupported SMOKE_DONE_TIMEOUT_CYCLES='$SMOKE_DONE_TIMEOUT_CYCLES'. Must be > 0"
+    }
+
+    set SMOKE_DONE_TIMEOUT_MODE $SMOKE_DONE_TIMEOUT_CYCLES
+    lappend SMOKE_DONE_TIMEOUT_ARG_LIST +SMOKE_DONE_TIMEOUT_CYCLES=$SMOKE_DONE_TIMEOUT_CYCLES
+}
+
+# --------------------------------------------------
 # Memory Path Policy (Policy B)
 #
 #   Primary mode:
@@ -650,8 +681,43 @@ if {$GEMM_K_TILE_SIZE <= 0} {
 }
 
 
+# --------------------------------------------------
+# GEMM N-tiling parameters
+#
+# P11B safe parameter plumbing.
+# Default:
+#   GEMM_ENABLE_N_TILING=0 keeps the current P10 baseline.
+#
+# Manual P11B plumbing smoke:
+#   set GEMM_ENABLE_N_TILING 1
+#   set GEMM_N_TILE_SIZE 8
+#   do run_uvm.tcl
+#
+# Note:
+#   P11B only propagates/elaborates the parameters. RTL compute
+#   behavior remains the P10 K-tiling path until the N-tile scheduler
+#   is implemented in a later step.
+# --------------------------------------------------
+if {![info exists GEMM_ENABLE_N_TILING]} {
+    set GEMM_ENABLE_N_TILING 0
+}
 
-puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD GEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING GEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE"
+if {($GEMM_ENABLE_N_TILING != 0) && ($GEMM_ENABLE_N_TILING != 1)} {
+    error "Unsupported GEMM_ENABLE_N_TILING='$GEMM_ENABLE_N_TILING'. Supported values: 0, 1"
+}
+
+if {![info exists GEMM_N_TILE_SIZE]} {
+    set GEMM_N_TILE_SIZE 8
+}
+
+if {$GEMM_N_TILE_SIZE <= 0} {
+    error "Unsupported GEMM_N_TILE_SIZE='$GEMM_N_TILE_SIZE'. Must be > 0"
+}
+
+
+
+puts "\[run_uvm\] UVM_TEST=$UVM_TEST CASE_ID=$CASE_ID ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH SMOKE_DONE_TIMEOUT=$SMOKE_DONE_TIMEOUT_MODE"
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD GEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING GEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE GEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING GEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE"
 
 
 # --------------------------------------------------
@@ -767,7 +833,9 @@ set LOG_BASENAME [string map [list \
 # pa = GEMM_ENABLE_PACKED_A_ROW_PRELOAD
 # kt = GEMM_ENABLE_K_TILING
 # ks = GEMM_K_TILE_SIZE
-set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}.log"] $LOG_BASENAME]
+# nt = GEMM_ENABLE_N_TILING
+# ns = GEMM_N_TILE_SIZE
+set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}_nt${GEMM_ENABLE_N_TILING}_ns${GEMM_N_TILE_SIZE}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -800,12 +868,15 @@ vsim -L uvm12 \
   -gGEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD \
   -gGEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING \
   -gGEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE \
+  -gGEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING \
+  -gGEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE \
   work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \
   +CASE_ID=$CASE_ID \
   +ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK \
   +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
+  {*}$SMOKE_DONE_TIMEOUT_ARG_LIST \
   {*}$LEGACY_HOST_OVERRIDE_ARGS \
   {*}$JOB_ARG_LIST \
   {*}$DMA_SMOKE_ARG_LIST \

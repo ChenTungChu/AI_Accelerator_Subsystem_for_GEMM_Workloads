@@ -707,4 +707,4 @@ DMA / AXI-Stream / Direct Stream compatibility
 full-regression integration
 ```
 
-P9 deliberately avoids tiling and partial accumulation. Those remain future milestones after cache-size and larger-dimension single-job behavior has been proven.
+P9 deliberately avoids tiling and partial accumulation. Those were addressed in later milestones: P10 adds K tiling and P11 adds N tiling while preserving the P9 cache8 foundation.

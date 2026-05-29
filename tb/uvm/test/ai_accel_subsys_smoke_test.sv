@@ -59,6 +59,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     // ------------------------------------------------------------
     int unsigned selected_case_id;
     ai_accel_subsys_seq_item::test_kind_e selected_test_kind;
+    int unsigned done_timeout_cycles;
 
     // ------------------------------------------------------------
     // Result check / memory path policy
@@ -95,7 +96,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         if (case_id <= 99) begin
             return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
         end
-        else if ((case_id >= 100) && (case_id <= 199)) begin
+        else if ((case_id >= 100) && (case_id <= 202)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
         end
         else if ((case_id >= 400) && (case_id <= 499)) begin
@@ -125,6 +126,36 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     endfunction
 
     // ------------------------------------------------------------
+    // Parse smoke done timeout
+    //
+    // Default:
+    //   DEFAULT_DONE_TIMEOUT_CYCLES
+    //
+    // Override:
+    //   +SMOKE_DONE_TIMEOUT_CYCLES=<cycles>
+    // ------------------------------------------------------------
+    function void parse_done_timeout_cycles();
+        int unsigned tmp;
+    begin
+        done_timeout_cycles = DEFAULT_DONE_TIMEOUT_CYCLES;
+
+        if ($value$plusargs("SMOKE_DONE_TIMEOUT_CYCLES=%d", tmp)) begin
+            if (tmp == 0) begin
+                `uvm_warning("SMOKE_TEST/BAD_TIMEOUT",
+                    "SMOKE_DONE_TIMEOUT_CYCLES=0 is invalid; using default timeout")
+            end
+            else begin
+                done_timeout_cycles = tmp;
+            end
+        end
+
+        `uvm_info("SMOKE_TEST",
+            $sformatf("done_timeout_cycles=%0d", done_timeout_cycles),
+            UVM_MEDIUM)
+    end
+    endfunction
+
+    // ------------------------------------------------------------
     // Parse result-check enable
     //
     // When enabled, smoke_test prepares expected data, performs
@@ -148,12 +179,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Parse helper-fallback force knob
-    //
-    // Default:
-    //   result check enabled -> host-agent memory path
-    //
-    // Override:
-    //   FORCE_HELPER_MEM_PATH=1 -> helper fallback path
     // ------------------------------------------------------------
     function void parse_force_helper_mem_path_enable();
         int unsigned tmp;
@@ -203,9 +228,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Parse optional clear-C path override
-    //
-    // Default comes from Policy B.
-    // USE_HOST_AGENT_CLEAR_C is kept only for path-level debug.
     // ------------------------------------------------------------
     function void parse_host_agent_clear_c_enable();
         int unsigned tmp;
@@ -214,8 +236,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     begin
         explicit_override = 1'b0;
 
-        // Defensive re-parse so subclasses that do not explicitly call
-        // parse_force_helper_mem_path_enable() still inherit Policy B.
         if ($value$plusargs("FORCE_HELPER_MEM_PATH=%d", force_tmp)) begin
             force_helper_mem_path = (force_tmp != 0);
         end
@@ -245,9 +265,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Parse optional readback-C path override
-    //
-    // Default comes from Policy B.
-    // USE_HOST_AGENT_READBACK_C is kept only for path-level debug.
     // ------------------------------------------------------------
     function void parse_host_agent_readback_c_enable();
         int unsigned tmp;
@@ -285,9 +302,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Parse optional preload-A/B path override
-    //
-    // Default comes from Policy B.
-    // USE_HOST_AGENT_PRELOAD_AB is kept only for path-level debug.
     // ------------------------------------------------------------
     function void parse_host_agent_preload_ab_enable();
         int unsigned tmp;
@@ -422,10 +436,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Clear C region before acc_start
-    //
-    // Route:
-    //   - host agent in default mode
-    //   - helper in fallback mode
     // ------------------------------------------------------------
     task automatic clear_c_region_pre_start(
         input ai_accel_subsys_seq_item profile_item,
@@ -506,10 +516,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Preload A/B before acc_start
-    //
-    // Route:
-    //   - host agent in default mode
-    //   - helper in fallback mode
     // ------------------------------------------------------------
     task automatic preload_ab_pre_start(
         input ai_accel_subsys_seq_item profile_item,
@@ -604,10 +610,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Read back C region after acc_done
-    //
-    // Route:
-    //   - host agent in default mode
-    //   - helper in fallback mode
     // ------------------------------------------------------------
     task automatic readback_c_region_post_done(
         input  ai_accel_subsys_seq_item profile_item,
@@ -979,12 +981,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Build phase
-    //
-    // Responsibilities:
-    //   - parse case selection and memory-path policy
-    //   - fetch required virtual interfaces
-    //   - pass runtime context down to env / monitor / scoreboard
-    //   - decide whether host agent should be ACTIVE or PASSIVE
     // ------------------------------------------------------------
     function void build_phase(uvm_phase phase);
         super.build_phase(phase);
@@ -996,6 +992,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         end
 
         parse_test_selection();
+        parse_done_timeout_cycles();
         parse_result_check_enable();
         parse_force_helper_mem_path_enable();
         parse_host_agent_clear_c_enable();
@@ -1008,24 +1005,18 @@ class ai_accel_subsys_smoke_test extends uvm_test;
                 "axi0_vif is not set for ai_accel_subsys_smoke_test")
         end
 
-        // Pass vif down to env
         uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::set(
             this, "env", "vif", vif);
 
-        // Pass axi0_vif down to env explicitly
         uvm_config_db#(axi0_vif_t)::set(
             this, "env", "axi0_vif", axi0_vif);
 
-        // Pass selected case context down to monitor
         uvm_config_db#(int unsigned)::set(
             this, "env.agent.monitor", "selected_case_id", selected_case_id);
 
         uvm_config_db#(ai_accel_subsys_seq_item::test_kind_e)::set(
             this, "env.agent.monitor", "selected_test_kind", selected_test_kind);
 
-        // Policy B:
-        //   host agent is ACTIVE only when at least one memory path
-        //   is routed through host agent for this run.
         if (enable_result_check && any_host_agent_mem_path_enabled()) begin
             uvm_config_db#(uvm_active_passive_enum)::set(
                 this, "env", "host_is_active", UVM_ACTIVE);
@@ -1035,7 +1026,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
                 this, "env", "host_is_active", UVM_PASSIVE);
         end
 
-        // Pass result-check enable down to scoreboard
         uvm_config_db#(bit)::set(
             this, "env.scoreboard", "result_check_enable", enable_result_check);
 
@@ -1084,7 +1074,6 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     end
     endtask
 
-
     task automatic wait_for_acc_done_rearmed(
         int unsigned timeout_cycles = DEFAULT_DONE_TIMEOUT_CYCLES
     );
@@ -1124,16 +1113,8 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     end
     endtask
 
-
     // ------------------------------------------------------------
     // Run phase
-    //
-    // Flow:
-    //   1. wait for reset release
-    //   2. prepare pre-start payload / memory state when enabled
-    //   3. launch subsystem control sequence
-    //   4. wait for acc_done
-    //   5. collect post-done data and publish compare payload
     // ------------------------------------------------------------
     task run_phase(uvm_phase phase);
         ai_accel_subsys_smoke_seq seq;
@@ -1176,7 +1157,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
             "Completed ai_accel_subsys_smoke_seq, now waiting for acc_done",
             UVM_MEDIUM)
 
-        wait_for_acc_done();
+        wait_for_acc_done(done_timeout_cycles);
 
         if (enable_result_check) begin
             collect_case_actual_post_done(actual_c, have_actual_payload);
