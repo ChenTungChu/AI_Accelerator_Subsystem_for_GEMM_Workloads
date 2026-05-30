@@ -32,6 +32,7 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     // ------------------------------------------------------------
     localparam int unsigned MIN_VALID_LATENCY = 1;
     localparam int unsigned MAX_VALID_LATENCY = 50000;
+    localparam int unsigned MAX_VALID_LATENCY_P12_M_GT4 = 200000;
 
     // ------------------------------------------------------------
     // Analysis imports
@@ -440,6 +441,16 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             201: expect_dims_item(item, 3, 9,  9,  "var201");
             202: expect_dims_item(item, 4, 12, 16, "var202");
 
+            // P12C M>4 software-reference cases.
+            // These intentionally exceed the P11 M<=4 representative class.
+            // RTL M-tiling is not enabled in P12C; this only teaches the
+            // scoreboard profile checker the new case dimensions.
+            203: expect_dims_item(item, 8, 8,  8,  "var203");
+            204: expect_dims_item(item, 8, 16, 8,  "var204");
+            205: expect_dims_item(item, 8, 16, 16, "var205");
+            206: expect_dims_item(item, 5, 9,  9,  "var206");
+            207: expect_dims_item(item, 7, 12, 16, "var207");
+
             default: begin
                 `uvm_error("SB/VAR_BAD_CASE",
                     $sformatf("Unsupported variable-dimension case_id=%0d", case_id))
@@ -511,13 +522,39 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     endfunction
 
     // ------------------------------------------------------------
+    // Helper: per-case latency sanity limit
+    // ------------------------------------------------------------
+    function int unsigned get_max_valid_latency(ai_accel_subsys_seq_item item);
+        if (item == null)
+            return MAX_VALID_LATENCY;
+
+        if (item.test_kind == ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE) begin
+            case (item.case_id)
+                // P12C M>4 focused cases can exceed the historical
+                // single-row-oriented latency sanity limit before the
+                // P12D multi-row tile scheduler is implemented.
+                203, 204, 205, 206, 207:
+                    return MAX_VALID_LATENCY_P12_M_GT4;
+                default:
+                    return MAX_VALID_LATENCY;
+            endcase
+        end
+
+        return MAX_VALID_LATENCY;
+    endfunction
+
+    // ------------------------------------------------------------
     // Helper: check done / latency consistency
     //
     // Only DONE-side ctrl items should reach here.
     // ------------------------------------------------------------
     function void check_ctrl_item_done_latency(ai_accel_subsys_seq_item item);
         int unsigned exp_latency;
+        int unsigned max_valid_latency;
+        bit          latency_check_pass;
     begin
+        latency_check_pass = 1'b1;
+
         if (item == null) begin
             `uvm_error("SB/NOCTRL", "ctrl item is null, cannot check done/latency")
             return;
@@ -532,6 +569,7 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             `uvm_error("SB/CYCLE_ORDER",
                 $sformatf("done_cycle < start_cycle: start=%0d done=%0d",
                     item.start_cycle, item.done_cycle))
+            latency_check_pass = 1'b0;
         end
 
         exp_latency = item.done_cycle - item.start_cycle;
@@ -541,24 +579,33 @@ class ai_accel_subsys_scoreboard extends uvm_component;
                 $sformatf("latency mismatch: got=%0d exp=%0d (start=%0d done=%0d)",
                     item.latency_cycles, exp_latency,
                     item.start_cycle, item.done_cycle))
+            latency_check_pass = 1'b0;
         end
 
         if (item.latency_cycles < MIN_VALID_LATENCY) begin
             `uvm_error("SB/LATENCY_TOO_SMALL",
                 $sformatf("latency too small: %0d", item.latency_cycles))
+            latency_check_pass = 1'b0;
         end
 
-        if (item.latency_cycles > MAX_VALID_LATENCY) begin
+        max_valid_latency = get_max_valid_latency(item);
+
+        if (item.latency_cycles > max_valid_latency) begin
             `uvm_error("SB/LATENCY_TOO_LARGE",
-                $sformatf("latency too large: %0d", item.latency_cycles))
+                $sformatf("latency too large: %0d max=%0d case_id=%0d test_kind=%0d",
+                    item.latency_cycles, max_valid_latency, item.case_id, item.test_kind))
+            latency_check_pass = 1'b0;
         end
 
-        ctrl_latency_pass_count++;
+        if (latency_check_pass) begin
+            ctrl_latency_pass_count++;
 
-        `uvm_info("SB",
-            $sformatf("Latency check passed: case_id=%0d start=%0d done=%0d latency=%0d cycles",
-                item.case_id, item.start_cycle, item.done_cycle, item.latency_cycles),
-            UVM_LOW)
+            `uvm_info("SB",
+                $sformatf("Latency check passed: case_id=%0d start=%0d done=%0d latency=%0d max=%0d cycles",
+                    item.case_id, item.start_cycle, item.done_cycle, item.latency_cycles,
+                    max_valid_latency),
+                UVM_LOW)
+        end
     end
     endfunction
 

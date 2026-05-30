@@ -96,7 +96,7 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         if (case_id <= 99) begin
             return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
         end
-        else if ((case_id >= 100) && (case_id <= 202)) begin
+        else if ((case_id >= 100) && (case_id <= 207)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
         end
         else if ((case_id >= 400) && (case_id <= 499)) begin

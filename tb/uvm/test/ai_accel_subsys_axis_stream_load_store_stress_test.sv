@@ -16,7 +16,7 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
     int unsigned axis_stress_random;
     int unsigned axis_stress_gap_cycles;
 
-    // Optional forced-case mode for focused P9G/P9H larger-dimension, P10E K-tiling, and P11C/P11F N-tiling frontend checks.
+    // Optional forced-case mode for focused P9G/P9H larger-dimension, P10E K-tiling, P11C/P11F N-tiling, and P12C/P12F M-tiling frontend checks.
     //
     // run_uvm.tcl may pass a default +CASE_ID=0 even for stress tests that
     // do not intentionally request a focused case.  CASE_ID=0 is therefore
@@ -113,6 +113,12 @@ class ai_accel_subsys_axis_stream_load_store_stress_test
             if ((forced_case_id >= 198) && (forced_case_id <= 202)) begin
                 `uvm_info("AXIS_LS_STRESS",
                     "Forced CASE_ID is in the P11 N-tiling focused case range 198..202",
+                    UVM_MEDIUM)
+            end
+
+            if ((forced_case_id >= 203) && (forced_case_id <= 207)) begin
+                `uvm_info("AXIS_LS_STRESS",
+                    "Forced CASE_ID is in the P12 M-tiling focused case range 203..207",
                     UVM_MEDIUM)
             end
         end

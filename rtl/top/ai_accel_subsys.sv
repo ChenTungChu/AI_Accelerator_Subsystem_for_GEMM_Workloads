@@ -43,7 +43,12 @@ module ai_accel_subsys #(
     // P11B safe parameter plumbing.
     // Default-off so the current P10 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_N_TILING = 1'b0,
-    parameter int GEMM_N_TILE_SIZE     = 8
+    parameter int GEMM_N_TILE_SIZE     = 8,
+
+    // P12B safe parameter plumbing.
+    // Default-off so the current P11 baseline behavior is unchanged.
+    parameter bit GEMM_ENABLE_M_TILING = 1'b0,
+    parameter int GEMM_M_TILE_SIZE     = 2
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -589,8 +594,9 @@ module ai_accel_subsys #(
     //
     //   core_clk:
     //     - synchronize start toggle
-    //     - generate one-cycle gemm_start_core pulse
+    //     - generate one-cycle raw start event
     //     - latch captured config into core-domain registers
+    //     - launch GEMM one core_clk cycle later
     //
     // Notes:
     //   This is a bundled-data style CDC for configuration.
@@ -685,6 +691,7 @@ module ai_accel_subsys #(
     logic start_sync2_qq;
     logic start_sync_armed_q;
 
+    logic gemm_start_core_raw;
     logic gemm_start_core;
 
     always_ff @(posedge core_clk or negedge core_rst_n or negedge dma_rst_n) begin
@@ -707,8 +714,24 @@ module ai_accel_subsys #(
         end
     end
 
-    assign gemm_start_core = start_sync_armed_q &&
-                             (start_sync2_q ^ start_sync2_qq);
+    assign gemm_start_core_raw = start_sync_armed_q &&
+                                 (start_sync2_q ^ start_sync2_qq);
+
+    // ------------------------------------------------------------
+    // core_clk side: delayed GEMM start pulse
+    //
+    // Keep gemm_top.start one core_clk cycle after the synchronized
+    // start event. This lets the core-domain configuration registers
+    // below become visible to gemm_top before its start_accept cycle.
+    // ------------------------------------------------------------
+    always_ff @(posedge core_clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            gemm_start_core <= 1'b0;
+        end
+        else begin
+            gemm_start_core <= gemm_start_core_raw;
+        end
+    end
 
     // ------------------------------------------------------------
     // core_clk side: latched GEMM configuration
@@ -735,7 +758,7 @@ module ai_accel_subsys #(
 
             gemm_input_stream_mode_core_q <= 1'b0;
         end
-        else if (gemm_start_core) begin
+        else if (gemm_start_core_raw) begin
             base_addr_a_core_q <= base_addr_a_dma_q;
             base_addr_b_core_q <= base_addr_b_dma_q;
             base_addr_c_core_q <= base_addr_c_dma_q;
@@ -1502,7 +1525,9 @@ module ai_accel_subsys #(
         .GEMM_ENABLE_K_TILING (GEMM_ENABLE_K_TILING),
         .GEMM_K_TILE_SIZE (GEMM_K_TILE_SIZE),
         .GEMM_ENABLE_N_TILING (GEMM_ENABLE_N_TILING),
-        .GEMM_N_TILE_SIZE (GEMM_N_TILE_SIZE)
+        .GEMM_N_TILE_SIZE (GEMM_N_TILE_SIZE),
+        .GEMM_ENABLE_M_TILING (GEMM_ENABLE_M_TILING),
+        .GEMM_M_TILE_SIZE (GEMM_M_TILE_SIZE)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),

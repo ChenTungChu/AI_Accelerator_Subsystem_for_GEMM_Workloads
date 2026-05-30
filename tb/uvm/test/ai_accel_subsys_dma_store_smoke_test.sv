@@ -67,9 +67,9 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     int unsigned c_words;
     int unsigned c_bytes;
 
-    logic [7:0]  a_payload  [0:63];
+    logic [7:0]  a_payload  [0:127];
     logic [7:0]  b_payload  [0:255];
-    logic [31:0] expected_c [0:63];
+    logic [31:0] expected_c [0:127];
 
     function new(string name = "ai_accel_subsys_dma_store_smoke_test",
                  uvm_component parent = null);
@@ -82,7 +82,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         if (cid <= 99) begin
             return ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE;
         end
-        else if ((cid >= 100) && (cid <= 202)) begin
+        else if ((cid >= 100) && (cid <= 207)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
         end
         else if ((cid >= 400) && (cid <= 499)) begin
@@ -248,7 +248,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     task automatic clear_payload_arrays();
         int unsigned i;
     begin
-        for (i = 0; i < 64; i++) begin
+        for (i = 0; i < 128; i++) begin
             a_payload[i]  = 8'h00;
             expected_c[i] = 32'h0000_0000;
         end
@@ -598,6 +598,106 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                 end
             end
 
+            203: begin
+                // P12C M>4 first software-reference case: M=8, N=8, K=8.
+                // K/N both fit one cache8 tile; C has 64 output words.
+                dim_m_i = 8;
+                dim_n_i = 8;
+                dim_k_i = 8;
+
+                a_bytes = 64;
+                b_bytes = 64;
+                c_words = 64;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 1) * 3) % 17) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 2) * 5) % 19) + 1;
+                end
+            end
+
+            204: begin
+                // P12C M+N case: M=8, N=16, K=8.
+                // N exceeds B-cache max-N=8; K still fits one K tile.
+                dim_m_i = 8;
+                dim_n_i = 16;
+                dim_k_i = 8;
+
+                a_bytes = 64;
+                b_bytes = 128;
+                c_words = 128;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 2) * 3) % 13) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 3) * 5) % 23) + 1;
+                end
+            end
+
+            205: begin
+                // P12C representative M+N+K tiling case: M=8, N=16, K=16.
+                // M, N, and K all exceed the first P12 target tile shape.
+                dim_m_i = 8;
+                dim_n_i = 16;
+                dim_k_i = 16;
+
+                a_bytes = 128;
+                b_bytes = 256;
+                c_words = 128;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 1) * 5) % 17) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 2) * 3) % 23) + 1;
+                end
+            end
+
+            206: begin
+                // P12C irregular M/N/K tail case: M=5, N=9, K=9.
+                // M tail is 2+2+1, N tail is 8+1, and K tail is 8+1.
+                dim_m_i = 5;
+                dim_n_i = 9;
+                dim_k_i = 9;
+
+                a_bytes = 45;
+                b_bytes = 81;
+                c_words = 45;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 3) * 2) % 11) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 4) * 5) % 13) + 1;
+                end
+            end
+
+            207: begin
+                // P12C M-tail + N-tail + K-tiling case: M=7, N=12, K=16.
+                // M tail is 2+2+2+1, N tail is 8+4, and K is 8+8.
+                dim_m_i = 7;
+                dim_n_i = 12;
+                dim_k_i = 16;
+
+                a_bytes = 112;
+                b_bytes = 192;
+                c_words = 84;
+
+                for (i = 0; i < a_bytes; i++) begin
+                    a_payload[i] = (((i + 4) * 3) % 19) + 1;
+                end
+
+                for (i = 0; i < b_bytes; i++) begin
+                    b_payload[i] = (((i + 6) * 5) % 17) + 1;
+                end
+            end
+
             5, 400, 401, 402, 403: begin
                 dim_m_i = 4;
                 dim_n_i = 4;
@@ -647,7 +747,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
             default: begin
                 `uvm_fatal("DMA_STORE_SMOKE",
-                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 400, 401, 402, 403", cid))
+                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 400, 401, 402, 403", cid))
             end
         endcase
 

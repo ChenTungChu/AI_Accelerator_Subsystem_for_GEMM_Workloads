@@ -108,6 +108,8 @@ proc clear_uvm_run_vars {} {
         GEMM_K_TILE_SIZE
         GEMM_ENABLE_N_TILING
         GEMM_N_TILE_SIZE
+        GEMM_ENABLE_M_TILING
+        GEMM_M_TILE_SIZE
 
         STRESS_JOB_COUNT
         STRESS_SEED
@@ -1687,6 +1689,18 @@ run_reg_item "gemm_4lane_ntiling_direct_stream_load_store_case200" {
     set GEMM_ENABLE_N_TILING 1
     set GEMM_N_TILE_SIZE 8
 }
+
+# ============================================================
+# P12B M-tiling safe parameter plumbing
+#
+# P12B adds GEMM_ENABLE_M_TILING and GEMM_M_TILE_SIZE as
+# default-off elaboration/run-script parameters. No full-regression
+# item is added at this step, so the P11G regression total
+# intentionally remains 71. Focused P12B smoke should be run
+# manually with GEMM_ENABLE_M_TILING=1 on an existing P11 case before
+# P12C/P12D add M>current-row test cases and the multi-row scheduler.
+# ============================================================
+
 
 # ============================================================
 # Final summary

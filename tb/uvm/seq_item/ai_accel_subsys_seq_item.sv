@@ -256,6 +256,16 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             201: begin dim_m = 3; dim_n = 9;  dim_k = 9;  end
             202: begin dim_m = 4; dim_n = 12; dim_k = 16; end
 
+            // P12C M>4 software-reference / test-case support.
+            // These cases prepare the UVM case database, payload builder,
+            // scoreboard profile checks, and software reference model before
+            // enabling the P12 multi-row M-tile scheduler RTL.
+            203: begin dim_m = 8; dim_n = 8;  dim_k = 8;  end
+            204: begin dim_m = 8; dim_n = 16; dim_k = 8;  end
+            205: begin dim_m = 8; dim_n = 16; dim_k = 16; end
+            206: begin dim_m = 5; dim_n = 9;  dim_k = 9;  end
+            207: begin dim_m = 7; dim_n = 12; dim_k = 16; end
+
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
 
