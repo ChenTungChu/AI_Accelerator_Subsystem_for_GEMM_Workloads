@@ -110,6 +110,53 @@ P12 starts the next natural step: local multi-row output tile scheduling for `M_
 
 ---
 
+
+## 1A. P12 Closure Status
+
+P12 is closed.
+
+```text
+P12A: M-tiling / multi-row tile scheduling spec         PASS
+P12B: safe M-tiling parameter plumbing                  PASS
+P12C: M>current-row testcase / software reference       PASS
+P12D: actual M-tile execution microarchitecture         PASS
+P12E: host-primary focused validation                   PASS
+P12F: frontend compatibility sanity                     PASS
+P12G: regression integration                            PASS
+P12H: documentation / closure update                    PASS
+```
+
+Final full regression:
+
+```text
+TOTAL : 74
+PASS  : 74
+FAIL  : 0
+```
+
+Validated P12 representative configuration:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+```
+
+P12G adds three representative full-regression items using `CASE_ID=207` across DMA, AXI-Stream, and Direct Stream load-store paths.
+
+---
+
 ## 2. P12 High-Level Goal
 
 P12 adds optional M-tiling support to `gemm_top`.
@@ -981,6 +1028,8 @@ CASE_ID=206 PASS
 
 ### P12E: Host-Primary Focused Validation
 
+Status: PASS
+
 Goal:
 
 ```text
@@ -1009,24 +1058,21 @@ UVM_FATAL=0
 
 ### P12F: Frontend Compatibility
 
+Status: PASS
+
 Goal:
 
 ```text
 Validate M/N/K-tiled GEMM across DMA, AXI-Stream, and Direct Stream load-store paths.
 ```
 
-Recommended representative case:
+Representative validation:
 
 ```text
-CASE_ID=205 : M=8, N=16, K=16
-```
-
-Recommended path checks:
-
-```text
-DMA load-store           CASE_ID=205
-AXI-Stream load-store    CASE_ID=205
-Direct Stream load-store CASE_ID=205
+DMA store smoke          CASE_ID=205 PASS
+DMA load-store           CASE_ID=207 PASS
+AXI-Stream load-store    CASE_ID=207 PASS
+Direct Stream load-store CASE_ID=207 PASS
 ```
 
 ### P12G: Regression Integration
@@ -1037,12 +1083,12 @@ Goal:
 Add a small representative P12 subset to full regression.
 ```
 
-Recommended additions:
+Added regression items:
 
 ```text
-gemm_4lane_mtiling_dma_load_store_case205
-gemm_4lane_mtiling_axis_stream_load_store_case205
-gemm_4lane_mtiling_direct_stream_load_store_case205
+gemm_4lane_mtiling_dma_load_store_case207
+gemm_4lane_mtiling_axis_stream_load_store_case207
+gemm_4lane_mtiling_direct_stream_load_store_case207
 ```
 
 Expected full regression total:
@@ -1055,14 +1101,14 @@ After P12G:
   71 + 3 = 74
 ```
 
-The exact total may change if more representative cases are selected.
+The selected representative subset brings the full regression total to 74.
 
 ### P12H: Documentation / Closure
 
 Goal:
 
 ```text
-Update README, regression list, performance spec, operand reuse spec, Direct Stream frontend spec, M-tiling spec, and P12 closure summary.
+Update README, regression list, performance spec, operand reuse spec, Direct Stream frontend spec, K/N tiling cross-reference specs, and M-tiling spec.
 ```
 
 Expected closure status:
@@ -1070,6 +1116,42 @@ Expected closure status:
 ```text
 Performance GEMM P12: M-Dimension Tiling Completed
 Full regression: 74/74 PASS
+```
+
+---
+
+
+## 15A. P12 Validation Results
+
+Focused host-primary validation:
+
+```text
+CASE_ID=203 : M=8, N=8,  K=8   PASS
+CASE_ID=204 : M=8, N=16, K=8   PASS
+CASE_ID=205 : M=8, N=16, K=16  PASS
+CASE_ID=206 : M=5, N=9,  K=9   PASS
+CASE_ID=207 : M=7, N=12, K=16  PASS
+```
+
+Representative frontend compatibility validation:
+
+```text
+DMA store smoke          CASE_ID=205 PASS
+DMA load-store           CASE_ID=207 PASS
+AXI-Stream load-store    CASE_ID=207 PASS
+Direct Stream load-store CASE_ID=207 PASS
+```
+
+Full regression integration:
+
+```text
+gemm_4lane_mtiling_dma_load_store_case207         PASS
+gemm_4lane_mtiling_axis_stream_load_store_case207 PASS
+gemm_4lane_mtiling_direct_stream_load_store_case207 PASS
+
+TOTAL : 74
+PASS  : 74
+FAIL  : 0
 ```
 
 ---
@@ -1090,20 +1172,20 @@ Recommended policy:
 Initial full-regression representative case:
 
 ```text
-CASE_ID=205 : M=8, N=16, K=16
+CASE_ID=207 : M=7, N=12, K=16
 ```
 
-Why CASE_ID=205:
+Why CASE_ID=207:
 
 ```text
-- exercises four full M=2 tiles
-- exercises two full N=8 tiles
+- exercises M tail scheduling: 7 = 2 + 2 + 2 + 1
+- exercises partial N tile scheduling: 12 = 8 + 4
 - exercises two full K=8 tiles
 - uses full 4-lane groups inside each K tile
 - validates multi-row output-tile scheduling
 - validates B tile reuse across local M rows
-- B payload remains within 256 bytes
-- C output count is 128, which forces expected-C storage expansion beyond P11
+- keeps B payload within 256 bytes
+- keeps C output count at 84 while still covering M/N/K composition
 ```
 
 Manual / focused cases:
@@ -1123,7 +1205,7 @@ CASE_ID=207 : M tail 2+2+2+1, N tail 8+4, K tiling
 ```tcl
 set UVM_TEST ai_accel_subsys_smoke_test
 set ENABLE_RESULT_CHECK 1
-set CASE_ID 205
+set CASE_ID 207
 
 set FORCE_HELPER_MEM_PATH 0
 set DMA_CLK_PERIOD_NS 10
@@ -1153,7 +1235,7 @@ do run_uvm.tcl
 ```tcl
 set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
 set ENABLE_RESULT_CHECK 1
-set CASE_ID 205
+set CASE_ID 207
 set STORE_STRESS_JOB_COUNT 1
 set STORE_STRESS_RANDOM 0
 set STORE_STRESS_GAP_CYCLES 10
@@ -1186,7 +1268,7 @@ do run_uvm.tcl
 ```tcl
 set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
 set ENABLE_RESULT_CHECK 1
-set CASE_ID 205
+set CASE_ID 207
 set AXIS_STRESS_JOB_COUNT 1
 set AXIS_STRESS_RANDOM 0
 set AXIS_STRESS_GAP_CYCLES 10
@@ -1219,7 +1301,7 @@ do run_uvm.tcl
 ```tcl
 set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
 set ENABLE_RESULT_CHECK 1
-set CASE_ID 205
+set CASE_ID 207
 set DS_STRESS_JOB_COUNT 1
 set DS_STRESS_RANDOM 0
 set DS_STRESS_GAP_CYCLES 10
@@ -1260,7 +1342,7 @@ set CORE_CLK_PERIOD_NS 13
 
 ## 18. Pass / Fail Criteria
 
-P12 is considered closed when:
+P12 is considered closed because:
 
 ```text
 P12A spec is created and committed
@@ -1274,7 +1356,7 @@ full regression passes with the new total
 P12H docs are updated
 ```
 
-Expected first P12 full-regression target:
+Final P12 full-regression result:
 
 ```text
 TOTAL : 74
@@ -1282,7 +1364,7 @@ PASS  : 74
 FAIL  : 0
 ```
 
-The exact total may differ if the project selects more or fewer representative items.
+The selected representative subset uses three CASE_ID=207 frontend-path items, bringing the full regression total to 74.
 
 ---
 
@@ -1451,7 +1533,7 @@ M/N/K-tiled cases make full regression too slow.
 Mitigation:
 
 ```text
-Add only three CASE_ID=205 forced representative items.
+Add only three CASE_ID=207 forced representative items.
 Keep additional P12 cases focused/manual.
 Use explicit smoke done timeout only for the representative long cases.
 ```
@@ -1460,7 +1542,7 @@ Use explicit smoke done timeout only for the representative long cases.
 
 ## 20. Future Work After P12
 
-After M-only tiling is stable, future milestones can consider:
+After M-only tiling is stable and closed, future milestones can consider:
 
 ```text
 P13: C read-modify-write partial accumulation
@@ -1473,13 +1555,13 @@ P19: multi-bank or widened local memory
 P20: constrained-random tile coverage expansion
 ```
 
-P12 should be treated as the bridge between the P11 row-oriented tiled scheduler and a true 2D output tile scheduler.
+P12 should be treated as the bridge between the P11 row-at-a-time tiled design and future external tile scheduling work.
 
 ---
 
 ## 21. Summary
 
-P12 is the next natural milestone after P11.
+P12 is the completed M-dimension tiling milestone after P11.
 
 P10 proved:
 
@@ -1502,7 +1584,7 @@ P12 proves:
 by using a small M x N output-tile accumulator and reusing each B tile across multiple local M rows.
 ```
 
-The recommended first P12 implementation is:
+The completed first P12 implementation is:
 
 ```text
 M-dimension output-row tiling
@@ -1515,7 +1597,7 @@ no scratchpad C read-modify-write
 no frontend protocol changes
 default-off parameterization
 focused CASE_ID=203..207 bring-up
-small regression addition using CASE_ID=205
+small regression addition using CASE_ID=207
 ```
 
 This keeps the milestone meaningful, interview-friendly, and low-risk while moving the project toward a true tiled GEMM accelerator architecture.

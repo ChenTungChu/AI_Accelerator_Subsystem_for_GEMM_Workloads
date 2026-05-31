@@ -49,8 +49,8 @@ FAIL  : 0
 Current project status after P11 N-dimension tiling closure:
 
 ```text
-Performance GEMM P11: N-Dimension Tiling Completed
-Full regression: 71/71 PASS
+Performance GEMM P12: M-Dimension Tiling Completed
+Full regression: 74/74 PASS
 ```
 
 Direct Stream B1 remains compatible with:
@@ -66,6 +66,7 @@ GEMM_MAC_LANES=4 + cache-backed full-cache datapath
 GEMM_MAC_LANES=4 + scaled cache8 larger-dimension datapath
 GEMM_MAC_LANES=4 + K-dimension tiling datapath, CASE_ID=195
 GEMM_MAC_LANES=4 + N-dimension tiling datapath, CASE_ID=200
+GEMM_MAC_LANES=4 + M-dimension tiling datapath, CASE_ID=207
 ```
 
 
@@ -168,7 +169,7 @@ B1 does **not** attempt to:
 
 Those are future milestones.
 
-P10 K-dimension tiling and P11 N-dimension tiling are implemented inside the GEMM compute microarchitecture. Direct Stream B1 remains a preload-then-compute frontend: it loads compact A/B payloads into the operand buffer, then the GEMM core performs K/N tiling through the existing local-memory-like read interface.
+P10 K-dimension tiling, P11 N-dimension tiling, and P12 M-dimension tiling are implemented inside the GEMM compute microarchitecture. Direct Stream B1 remains a preload-then-compute frontend: it loads compact A/B payloads into the operand buffer, then the GEMM core performs K/N tiling through the existing local-memory-like read interface.
 
 ---
 
@@ -1102,11 +1103,11 @@ PASS  : 33
 FAIL  : 0
 ```
 
-Current subsystem regression baseline after P11 closure:
+Current subsystem regression baseline after P12 closure:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -1145,6 +1146,8 @@ The Direct Stream GEMM Frontend B1 milestone is complete because:
 15. No BRAM interface semantic change is required.
 16. Direct Stream remains compatible with P10 K-dimension tiling through the existing operand-buffer and memory-router interface.
 17. P10 Direct Stream representative regression passes with `CASE_ID=195`, `GEMM_ENABLE_K_TILING=1`, and `GEMM_K_TILE_SIZE=8`.
+18. P11 Direct Stream representative regression passes with `CASE_ID=200`, K/N tiling enabled.
+19. P12 Direct Stream representative regression passes with `CASE_ID=207`, K/N/M tiling enabled.
 
 ---
 
@@ -1174,11 +1177,11 @@ v3.4.3 Direct Stream GEMM Frontend B1 Completed
 Regression: 33/33 PASS
 ```
 
-Current subsystem milestone after P11:
+Current subsystem milestone after P12:
 
 ```text
-Performance GEMM P11: N-Dimension Tiling Completed
-Regression: 71/71 PASS
+Performance GEMM P12: M-Dimension Tiling Completed
+Regression: 74/74 PASS
 ```
 
 ---
@@ -1529,6 +1532,67 @@ Full regression after P11G                               71/71 PASS
 ```
 
 
+
+## 17I. P12 M-Dimension Tiling Compatibility
+
+Direct Stream B1 was validated with the P12 M-dimension / multi-row output tile scheduling datapath.
+
+Validated P12 Direct Stream configuration:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+FORCE_HELPER_MEM_PATH=0
+```
+
+P12 Direct Stream representative case:
+
+```text
+CASE_ID=207 : M=7, N=12, K=16
+M tile structure: M[0..1], M[2..3], M[4..5], M[6]
+N tile structure: N[0..7], N[8..11]
+K tile structure: K[0..7], K[8..15]
+```
+
+In Direct Stream mode with M-tiling enabled:
+
+```text
+Direct Stream preload A -> gemm_operand_buffer A
+Direct Stream preload B -> gemm_operand_buffer B
+For each M tile and N tile:
+  For each K tile:
+    B-cache tile preload reads B through gemm_input_mem_router
+    For each active local M row:
+      A-row tile preload reads A through gemm_input_mem_router
+      GEMM accumulates tile partial sums into the local M/N output-tile accumulator
+  GEMM writes final C outputs for the active M/N tile to scratchpad
+DMA store exports final C
+scoreboard compares result
+```
+
+The important compatibility point is that M-tiling is internal to `gemm_top`. Direct Stream B1 does not need tile headers, per-tile stream packets, or direct stream scheduling changes for P12.
+
+P12 Direct Stream validation completed:
+
+```text
+Direct Stream load-store CASE_ID=207 focused sanity      PASS
+Representative full-regression M-tiling Direct Stream   PASS
+Full regression after P12G                               74/74 PASS
+```
+
+
 ## 18. Useful Single-Test Runs
 
 ### Direct Stream smoke RUN_ALL
@@ -1693,6 +1757,37 @@ set GEMM_N_TILE_SIZE 8
 do run_uvm.tcl
 ```
 
+
+### Direct Stream load-store, 4-lane + K/N/M-tiling CASE_ID=207
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 207
+set DS_STRESS_JOB_COUNT 1
+set DS_STRESS_RANDOM 0
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 200000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+do run_uvm.tcl
+```
+
 ### Direct Stream error recovery
 
 ```tcl
@@ -1768,4 +1863,4 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P11 subsystem checkpoint is `71/71 PASS`.
+B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P12 subsystem checkpoint is `74/74 PASS`.

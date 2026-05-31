@@ -20,11 +20,11 @@ The current focus is subsystem integration, DMA load/store behavior, AXI-Stream 
 Current milestone:
 
 ```text
-Performance GEMM P11: N-Dimension Tiling Completed
+Performance GEMM P12: M-Dimension Tiling Completed
 
 Regression:
-  TOTAL : 71
-  PASS  : 71
+  TOTAL : 74
+  PASS  : 74
   FAIL  : 0
 ```
 
@@ -42,9 +42,10 @@ GEMM_MAC_LANES=4 + full cache/preload representative regression
 GEMM_MAC_LANES=4 + scaled cache8 large-dimension representative regression
 GEMM_MAC_LANES=4 + K-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + N-tiling representative regression across DMA / AXI-Stream / Direct Stream
+GEMM_MAC_LANES=4 + M-tiling representative regression across DMA / AXI-Stream / Direct Stream
 ```
 
-Validated P11 N-tiling configuration:
+Validated P12 M-tiling configuration:
 
 ```text
 GEMM_MAC_LANES=4
@@ -59,20 +60,24 @@ GEMM_ENABLE_K_TILING=1
 GEMM_K_TILE_SIZE=8
 GEMM_ENABLE_N_TILING=1
 GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
 
 P11 extends the P10 row-accumulator model to output-column tiling.  It supports `N_total` larger than the local B-cache / row-accumulator N capacity by splitting output columns into local N tiles.
 
-P11 scope:
+P12 extends the P11 tiled model to M-dimension tiling.  It supports `M_total` larger than the local M tile size by grouping output rows into local M tiles and accumulating a local M/N output tile before final C writeback.
+
+P12 scope:
 
 ```text
-N-dimension / output-column tiling
-K tiling composes with N tiling
-M tiling is future work
-Scratchpad C read-modify-write accumulation is not used in P11
-N-tiled jobs use conservative scalar tile preload in the first implementation
+M-dimension / multi-row output tile scheduling
+K tiling composes with N tiling and M tiling
+B tiles are reused across active local M rows inside one M tile
+Scratchpad C read-modify-write accumulation is not used in P12
+M/N/K-tiled jobs use conservative scalar tile preload in the first implementation
 ```
 
 ---
@@ -114,6 +119,8 @@ parameter bit GEMM_ENABLE_K_TILING              = 1'b0
 parameter int GEMM_K_TILE_SIZE                  = 8
 parameter bit GEMM_ENABLE_N_TILING              = 1'b0
 parameter int GEMM_N_TILE_SIZE                  = 8
+parameter bit GEMM_ENABLE_M_TILING              = 1'b0
+parameter int GEMM_M_TILE_SIZE                  = 2
 ```
 
 Supported lane settings:
@@ -132,7 +139,7 @@ Default cache capacity:
   GEMM_B_CACHE_MAX_N=4
   GEMM_A_ROW_CACHE_MAX_K=4
 
-P9/P10/P11 scaled cache capacity:
+P9/P10/P11/P12 scaled cache capacity:
   GEMM_B_CACHE_MAX_K=8
   GEMM_B_CACHE_MAX_N=8
   GEMM_A_ROW_CACHE_MAX_K=8
@@ -144,6 +151,10 @@ P10 K-tiling opt-in:
 P11 N-tiling opt-in:
   GEMM_ENABLE_N_TILING=1
   GEMM_N_TILE_SIZE=8
+
+P12 M-tiling opt-in:
+  GEMM_ENABLE_M_TILING=1
+  GEMM_M_TILE_SIZE=2
 ```
 
 The default remains:
@@ -156,6 +167,7 @@ GEMM_ENABLE_A_ROW_CACHE=0
 GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0
 GEMM_ENABLE_K_TILING=0
 GEMM_ENABLE_N_TILING=0
+GEMM_ENABLE_M_TILING=0
 ```
 
 This preserves existing regression behavior unless the run script explicitly overrides the performance parameters.
@@ -269,6 +281,39 @@ M tiling is not part of P11
 Scratchpad C read-modify-write accumulation is not used in P11
 ```
 
+### P12 M-dimension tiling / multi-row output tile scheduling
+
+When `GEMM_ENABLE_M_TILING=1`, the cache-backed 4-lane path can process `M_total` values larger than the configured local M tile size by splitting output rows into local M tiles.
+
+The P12 implementation extends the P11 row accumulator into a local M/N output-tile accumulator:
+
+```text
+for each M tile:
+  for each N tile:
+    clear c_tile_accum[local_m][local_n]
+
+    for each K tile:
+      preload B tile into b_cache[local_k][local_n]
+
+      for each local_m in the active M tile:
+        preload A row tile into a_row_cache[local_k]
+        accumulate partial dot products into c_tile_accum[local_m][local_n]
+
+    write final C[m_tile_base + local_m][n_tile_base + local_n]
+    once after all K tiles are complete
+```
+
+Validated P12 policy:
+
+```text
+M_tile_size = 2
+K_tile_size = 8
+N_tile_size = 8
+K tiling, N tiling, and M tiling may be active in the same job
+B tile is reused across active local M rows inside one M tile
+Scratchpad C read-modify-write accumulation is not used in P12
+```
+
 ### GEMM completion semantics
 
 `gemm_top.done` means:
@@ -310,6 +355,8 @@ For P10 K-tiling, the MAC counter counts logical MACs across all K tiles.
 
 For P11 N-tiling, the MAC counter counts logical MACs across all K tiles and N tiles.
 
+For P12 M-tiling, the MAC counter counts logical MACs across all M tiles, N tiles, and K tiles.
+
 ---
 
 ## Validated Case Groups
@@ -320,6 +367,7 @@ Variable dimension   : CASE_ID 100, 101, 105
 P9 larger dimension  : CASE_ID 190, 191, 192
 P10 K-tiling cases   : CASE_ID 193, 194, 195, 196, 197
 P11 N-tiling cases   : CASE_ID 198, 199, 200, 201, 202
+P12 M-tiling cases   : CASE_ID 203, 204, 205, 206, 207
 Configurable base    : CASE_ID 400, 401, 402, 403
 RUN_ALL recipe       : 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
 Corner recipe        : 5 -> 101 -> 105 -> 403
@@ -406,7 +454,7 @@ DMA / Direct Stream source memory
     -> result_bridge / scoreboard
 ```
 
-P10/P11 do not change any frontend protocol. The K/N-tiled GEMM path uses the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
+P10/P11/P12 do not change any frontend protocol. The K/N/M-tiled GEMM path uses the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
 
 ---
 
@@ -462,6 +510,8 @@ Current UVM regression covers:
 - P10 K-tiling DMA / AXI-Stream / Direct Stream representative regression
 - P11 N-tiling host-primary focused cases
 - P11 N-tiling DMA / AXI-Stream / Direct Stream representative regression
+- P12 M-tiling host-primary focused cases
+- P12 M-tiling DMA / AXI-Stream / Direct Stream representative regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -472,11 +522,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 71 items and is passing:
+The current full UVM regression contains 74 items and is passing:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -499,6 +549,16 @@ gemm_4lane_ntiling_direct_stream_load_store_case200
 ```
 
 These all use forced single-case mode with `CASE_ID=200`, `GEMM_ENABLE_K_TILING=1`, `GEMM_K_TILE_SIZE=8`, `GEMM_ENABLE_N_TILING=1`, and `GEMM_N_TILE_SIZE=8`.
+
+P12G added these representative M-tiling items:
+
+```text
+gemm_4lane_mtiling_dma_load_store_case207
+gemm_4lane_mtiling_axis_stream_load_store_case207
+gemm_4lane_mtiling_direct_stream_load_store_case207
+```
+
+These all use forced single-case mode with `CASE_ID=207`, `GEMM_ENABLE_K_TILING=1`, `GEMM_K_TILE_SIZE=8`, `GEMM_ENABLE_N_TILING=1`, `GEMM_N_TILE_SIZE=8`, `GEMM_ENABLE_M_TILING=1`, and `GEMM_M_TILE_SIZE=2`.
 
 ---
 
@@ -528,8 +588,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -748,6 +808,128 @@ do run_uvm.tcl
 
 ---
 
+## Useful P12 Single-Test Runs
+
+### P12 host-primary M-tiling focused case
+
+```tcl
+set UVM_TEST ai_accel_subsys_smoke_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 207
+set RUN_ALL 0
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 200000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+do run_uvm.tcl
+```
+
+### P12 DMA load-store M-tiling representative case
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 207
+set STORE_STRESS_JOB_COUNT 1
+set STORE_STRESS_RANDOM 0
+set STORE_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 200000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+do run_uvm.tcl
+```
+
+### P12 AXI-Stream load-store M-tiling representative case
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 207
+set AXIS_STRESS_JOB_COUNT 1
+set AXIS_STRESS_RANDOM 0
+set AXIS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 200000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+do run_uvm.tcl
+```
+
+### P12 Direct Stream M-tiling representative case
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 207
+set DS_STRESS_JOB_COUNT 1
+set DS_STRESS_RANDOM 0
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 200000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+do run_uvm.tcl
+```
+
+---
+
 ## Known Warning
 
 Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
@@ -765,7 +947,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P11: N-Dimension Tiling Completed
+Performance GEMM P12: M-Dimension Tiling Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -789,16 +971,23 @@ Completed:
   P11D: actual N-tile execution microarchitecture          PASS
   P11E: frontend compatibility sanity                      PASS
   P11G: regression integration                             PASS
-  P11H: documentation / closure update                     PASS
+  P12A: M-tiling / multi-row tile scheduling spec         PASS
+  P12B: safe M-tiling parameter plumbing                  PASS
+  P12C: M>current-row testcase / reference support        PASS
+  P12D: actual M-tile execution microarchitecture         PASS
+  P12E: host-primary focused validation                   PASS
+  P12F: frontend compatibility sanity                     PASS
+  P12G: regression integration                            PASS
+  P12H: documentation / closure update                    PASS
 
 Regression:
-  71/71 PASS
+  74/74 PASS
 ```
 
 ---
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, and N-dimension output-column tiling using row-accumulator partial accumulation.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, and M-dimension multi-row output tile scheduling.
 
-P11 proves that the 4-lane cache-backed GEMM path can handle both `K_total` and `N_total` larger than the local tile capacity by composing K tiles with output-column N tiles and writing each final C output once after all tile accumulation completes.
+P12 proves that the 4-lane cache-backed GEMM path can handle `K_total`, `N_total`, and `M_total` larger than the local tile capacities by composing K tiles, N tiles, and M tiles while writing each final C output once after all tile accumulation completes.

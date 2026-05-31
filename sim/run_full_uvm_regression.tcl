@@ -1703,6 +1703,160 @@ run_reg_item "gemm_4lane_ntiling_direct_stream_load_store_case200" {
 
 
 # ============================================================
+# P12G M-tiling frontend representative regression
+#
+# These items integrate the P12D/P12E/P12F M-tiling coverage into
+# the full regression with bounded runtime.
+#
+# Configuration:
+#   GEMM_MAC_LANES=4
+#   GEMM_ENABLE_B_CACHE=1
+#   GEMM_B_CACHE_MAX_K=8
+#   GEMM_B_CACHE_MAX_N=8
+#   GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+#   GEMM_ENABLE_A_ROW_CACHE=1
+#   GEMM_A_ROW_CACHE_MAX_K=8
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+#   GEMM_ENABLE_K_TILING=1
+#   GEMM_K_TILE_SIZE=8
+#   GEMM_ENABLE_N_TILING=1
+#   GEMM_N_TILE_SIZE=8
+#   GEMM_ENABLE_M_TILING=1
+#   GEMM_M_TILE_SIZE=2
+#
+# Focused case:
+#   CASE_ID=207, dim=(7,12,16), combined M/N/K tiling with
+#   ragged M and N tile tails.
+#
+# Covered paths:
+#   1. DMA load/store path
+#   2. AXI-Stream load/store path
+#   3. Direct Stream load/store path
+#
+# Runtime policy:
+#   Each item uses one forced CASE_ID=207 job and a longer shared
+#   done timeout.  P12E/P12F focused validation already covered the
+#   wider host-primary and frontend sanity matrix.  Full regression
+#   keeps one representative M-tiling frontend job per path to avoid
+#   making every full regression too heavy.
+#
+# Expected regression total after adding these 3 P12 items:
+#   71 + 3 = 74
+# ============================================================
+
+run_reg_item "gemm_4lane_mtiling_dma_load_store_case207" {
+    set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 207
+
+    set STORE_STRESS_JOB_COUNT 1
+    set STORE_STRESS_SEED 20260502
+    set STORE_STRESS_RANDOM 0
+    set STORE_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 200000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
+
+    set GEMM_ENABLE_M_TILING 1
+    set GEMM_M_TILE_SIZE 2
+}
+
+run_reg_item "gemm_4lane_mtiling_axis_stream_load_store_case207" {
+    set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 207
+
+    set AXIS_STRESS_JOB_COUNT 1
+    set AXIS_STRESS_SEED 20260502
+    set AXIS_STRESS_RANDOM 0
+    set AXIS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 200000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
+
+    set GEMM_ENABLE_M_TILING 1
+    set GEMM_M_TILE_SIZE 2
+}
+
+run_reg_item "gemm_4lane_mtiling_direct_stream_load_store_case207" {
+    set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 207
+
+    set DS_STRESS_JOB_COUNT 1
+    set DS_STRESS_SEED 20260502
+    set DS_STRESS_RANDOM 0
+    set DS_STRESS_GAP_CYCLES 10
+
+    set FORCE_HELPER_MEM_PATH 0
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set SMOKE_DONE_TIMEOUT_CYCLES 200000
+
+    set GEMM_MAC_LANES 4
+
+    set GEMM_ENABLE_B_CACHE 1
+    set GEMM_B_CACHE_MAX_K 8
+    set GEMM_B_CACHE_MAX_N 8
+    set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+
+    set GEMM_ENABLE_A_ROW_CACHE 1
+    set GEMM_A_ROW_CACHE_MAX_K 8
+    set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+
+    set GEMM_ENABLE_K_TILING 1
+    set GEMM_K_TILE_SIZE 8
+
+    set GEMM_ENABLE_N_TILING 1
+    set GEMM_N_TILE_SIZE 8
+
+    set GEMM_ENABLE_M_TILING 1
+    set GEMM_M_TILE_SIZE 2
+}
+
+
+# ============================================================
 # Final summary
 # ============================================================
 

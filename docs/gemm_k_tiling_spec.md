@@ -429,7 +429,7 @@ After K-only tiling is stable, future milestones can consider:
 
 ```text
 P11: N tiling / output-column tiling                    COMPLETED
-P12: M tiling / multi-row tile scheduling
+P12: M tiling / multi-row tile scheduling                COMPLETED
 P13: C read-modify-write partial accumulation
 P14: external tile scheduler
 P15: larger Direct Stream tile movement
@@ -489,6 +489,62 @@ FAIL  : 0
 
 ---
 
+## 15B. Relationship to P12 M-Tiling
+
+P12 builds directly on the P10/P11 tiled accumulator model.
+
+P10 proved:
+
+```text
+K_total may exceed the local K tile capacity.
+N still fits the B-cache / row-accumulator N capacity.
+M is scheduled row-by-row.
+```
+
+P11 extended the same execution model to N tiling, and P12 extends it again to M tiling:
+
+```text
+K_total may exceed the local K tile capacity.
+N_total may exceed the local N tile capacity.
+M_total may be grouped into local M tiles.
+```
+
+The P12 loop composition is:
+
+```text
+for each M tile:
+  for each N tile:
+    clear c_tile_accum[local_m][local_n]
+
+    for each K tile:
+      reuse the P10 K-tile preload behavior
+      reuse the P11 local N-tile B-cache addressing behavior
+      reuse the active B tile across local M rows
+
+    write final C for the active M/N tile
+```
+
+Representative P12 case:
+
+```text
+CASE_ID=207 : M=7, N=12, K=16
+M tiling    : 7  = 2 + 2 + 2 + 1
+N tiling    : 12 = 8 + 4
+K tiling    : 16 = 8 + 8
+```
+
+P12 does not change the P10 K-tile arithmetic rule. It changes the outer output-row scheduling so that the K/N tile work is accumulated into a local M/N output tile.
+
+Current subsystem checkpoint after P12:
+
+```text
+TOTAL : 74
+PASS  : 74
+FAIL  : 0
+```
+
+---
+
 ## 16. Summary
 
 P10 proves:
@@ -508,4 +564,5 @@ default-off parameterization
 focused CASE_ID=193..197 bring-up
 small regression addition using CASE_ID=195
 full regression 68/68 PASS
+later composed with P11 N-tiling and P12 M-tiling in the 74/74 subsystem checkpoint
 ```

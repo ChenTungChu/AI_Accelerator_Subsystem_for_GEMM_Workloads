@@ -1391,12 +1391,70 @@ Keep additional P11 cases focused/manual.
 
 ---
 
-## 20. Future Work After P11
 
-After N-only tiling is stable, future milestones can consider:
+## 20A. Relationship to P12 M-Tiling
+
+P12 builds directly on the P11 output-column tiling model.
+
+P11 proved:
 
 ```text
-P12: M tiling / multi-row tile scheduling
+K_total may exceed the local K tile capacity.
+N_total may exceed the local N tile capacity.
+M is still processed row-by-row.
+```
+
+P12 extends the same internal tiling model to:
+
+```text
+K_total may exceed the local K tile capacity.
+N_total may exceed the local N tile capacity.
+M_total may be grouped into local M tiles.
+```
+
+The P12 loop composition is:
+
+```text
+for each M tile:
+  for each N tile:
+    clear c_tile_accum[local_m][local_n]
+
+    for each K tile:
+      preload B K/N tile once
+
+      for each local M row:
+        preload A row K tile
+        accumulate into c_tile_accum[local_m][local_n]
+
+    write final C for the active M/N tile
+```
+
+Representative P12 case:
+
+```text
+CASE_ID=207 : M=7, N=12, K=16
+M tiling    : 7  = 2 + 2 + 2 + 1
+N tiling    : 12 = 8 + 4
+K tiling    : 16 = 8 + 8
+```
+
+P12 does not change the P11 N-tile arithmetic rule. It changes the output-row scheduling so that one active B K/N tile can be reused across multiple local M rows.
+
+Current subsystem checkpoint after P12:
+
+```text
+TOTAL : 74
+PASS  : 74
+FAIL  : 0
+```
+
+---
+
+## 20. Future Work After P11
+
+After N-only tiling, P12 M-tiling is now stable. Future milestones can consider:
+
+```text
 P13: C read-modify-write partial accumulation
 P14: external tile scheduler
 P15: A-row tile reuse across N tiles
@@ -1405,13 +1463,13 @@ P17: larger Direct Stream tile movement
 P18: optional C direct-store path
 ```
 
-P11 should be treated as the bridge between P10 K-only tiling and a more general 2D tiled GEMM scheduler.
+P11 should be treated as the bridge between P10 K-only tiling and the completed P12 multi-row output-tile scheduler.
 
 ---
 
 ## 21. Summary
 
-P11 is the next natural milestone after P10.
+P11 is the output-column tiling milestone after P10 and is now composed with the completed P12 M-tiling scheduler.
 
 P10 proved:
 

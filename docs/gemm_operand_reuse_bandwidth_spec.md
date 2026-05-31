@@ -17,10 +17,11 @@ P8: cache-backed true 4-lane MAC completed
 P9: larger-dimension / cache-size scaling completed
 P10: K-dimension tiling with row-accumulator partial accumulation completed
 P11: N-dimension / output-column tiling with row-accumulator partial accumulation completed
+P12: M-dimension / multi-row output-tile scheduling completed
 
 Full regression:
-  TOTAL : 71
-  PASS  : 71
+  TOTAL : 74
+  PASS  : 74
   FAIL  : 0
 ```
 
@@ -35,6 +36,7 @@ P8: use the completed cache stack to feed a true 4-lane MAC
 P9: scale B-cache to 8x8 and A-row cache to K=8
 P10: reuse the cache stack per K tile and accumulate partial sums in an internal row accumulator
 P11: reuse the P10 row-accumulator model per output-column N tile
+P12: reuse each B tile across multiple local M rows in one output tile
 ```
 
 ---
@@ -283,7 +285,95 @@ Packed tile-preload optimization for tiled paths remains future work.
 
 ---
 
-## 8. Compatibility Across Frontend Paths
+
+## 8. P12 M-Tiling / Multi-Row Output Tile Closure
+
+P12 extends the P11 K/N-tiled path from row-at-a-time scheduling to local M-tile scheduling.  Instead of writing one row accumulator per active output row, P12 accumulates a local M/N output tile:
+
+```text
+c_tile_accum[local_m][local_n]
+```
+
+Validated P12 mode:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+```
+
+For each active M/N tile, P12 preloads one B K/N tile and reuses it across all active local M rows before moving to the next K tile or N tile:
+
+```text
+for each M tile:
+  for each N tile:
+    clear c_tile_accum[local_m][local_n]
+
+    for each K tile:
+      preload B K/N tile once
+
+      for each local M row:
+        preload A row K tile
+        accumulate into c_tile_accum[local_m][local_n]
+
+    write final C tile once
+```
+
+Operand-reuse properties:
+
+```text
+A-row cache reuse: A row tile reused across the active N tile
+B-cache reuse: B K/N tile reused across active local M rows
+C writeback: one final write per output element
+M scheduling: output rows are processed in local M tiles
+```
+
+Validated P12 cases:
+
+```text
+CASE_ID | M | N  | K  | MACS | OUTPUTS | Purpose
+203     | 8 | 8  | 8  | 512  | 64      | M tiling only
+204     | 8 | 16 | 8  | 1024 | 128     | M/N tiling
+205     | 8 | 16 | 16 | 2048 | 128     | combined M/N/K tiling representative
+206     | 5 | 9  | 9  | 405  | 45      | M/N/K tail tiles
+207     | 7 | 12 | 16 | 1344 | 84      | representative frontend M/N/K tiling case
+```
+
+P12 closure:
+
+```text
+P12B: safe parameter plumbing                         PASS
+P12C: M>current-row testcase / reference support      PASS
+P12D: actual M-tile RTL execution                     PASS
+P12E: host-primary focused validation                 PASS
+P12F: frontend compatibility sanity                   PASS
+P12G: regression integration                          PASS
+
+Full regression after P12G:
+  74/74 PASS
+```
+
+Current implementation note:
+
+```text
+The M-tiled path uses conservative scalar tile preload.
+Packed multi-row tile-preload optimization remains future work.
+```
+
+---
+
+## 9. Compatibility Across Frontend Paths
 
 The cache/preload stack remains compatible with the three major operand delivery paths:
 
@@ -308,7 +398,7 @@ Direct Stream           CASE_ID=195
 
 ---
 
-## 9. Acceptance Criteria
+## 10. Acceptance Criteria
 
 Current acceptance:
 
@@ -321,22 +411,22 @@ cache-backed true 4-lane MAC correctness                  DONE
 scaled cache8 larger-dimension correctness                DONE
 K-dimension tiling correctness                            DONE
 N-dimension tiling correctness                            DONE
-row-accumulator partial accumulation correctness           DONE
+M-dimension tiling correctness                            DONE
+row/output-tile accumulator partial accumulation correctness           DONE
 DMA / AXI-Stream / Direct Stream compatibility            DONE
 full UVM regression integration                           DONE
 
 Regression:
-  71/71 PASS
+  74/74 PASS
 ```
 
 ---
 
-## 10. Future Work
+## 11. Future Work
 
-After P11, recommended directions are:
+After P12, recommended directions are:
 
 ```text
-M tiling / multi-row tile scheduling
 C read-modify-write accumulation for external/multi-job tiling
 packed tile-preload optimization for K-tiled tails
 multi-bank or widened local memory
@@ -347,8 +437,8 @@ coverage closure
 
 ---
 
-## 11. Summary
+## 12. Summary
 
-P4/P5/P6/P7/P8/P9/P10/P11 improve GEMM performance and scalability by reducing repeated operand reads, improving cache fill granularity, reusing operands locally, feeding a cache-backed multi-lane compute step, extending K beyond the local cache depth through K-only tiling, and extending N beyond the local output-column tile capacity through N tiling.
+P4/P5/P6/P7/P8/P9/P10/P11/P12 improve GEMM performance and scalability by reducing repeated operand reads, improving cache fill granularity, reusing operands locally, feeding a cache-backed multi-lane compute step, extending K beyond the local cache depth through K-only tiling, and extending N beyond the local output-column tile capacity through N tiling, and extending M beyond row-at-a-time scheduling through local multi-row output-tile scheduling.
 
-The current `71/71 PASS` baseline is the clean checkpoint after P11 N-dimension tiling closure.
+The current `74/74 PASS` baseline is the clean checkpoint after P12 M-dimension tiling closure.

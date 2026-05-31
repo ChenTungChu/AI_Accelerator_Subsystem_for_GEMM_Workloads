@@ -4,7 +4,7 @@
 
 This document defines the performance-oriented GEMM architecture milestone sequence on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the performance sequence through P11:
+The project has now completed the performance sequence through P12:
 
 ```text
 P0: GEMM performance counter baseline
@@ -19,13 +19,14 @@ P8: cache-backed true 4-lane MAC
 P9: larger-dimension / cache-size scaling
 P10: K-dimension tiling with row-accumulator partial accumulation
 P11: N-dimension / output-column tiling with row-accumulator partial accumulation
+P12: M-dimension / multi-row output-tile scheduling
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -58,6 +59,7 @@ cache-backed 4-lane MAC representative regression
 scaled cache8 larger-dimension representative regression
 K-tiling representative regression across DMA / AXI-Stream / Direct Stream
 N-tiling representative regression across DMA / AXI-Stream / Direct Stream
+M-tiling representative regression across DMA / AXI-Stream / Direct Stream
 ```
 
 ---
@@ -181,6 +183,48 @@ for each output row m:
 
 P11 does not use scratchpad C read-modify-write accumulation.
 
+### P12: M-Dimension / Multi-Row Output Tile Scheduling
+
+P12 extends the P11 K/N-tiled model beyond single-row scheduling.  The active output rows are split into local M tiles, and the row accumulator is extended into a local M/N output-tile accumulator.
+
+Validated P12 configuration:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+```
+
+P12 output-tile scheduling model:
+
+```text
+for each M tile:
+  for each N tile:
+    clear c_tile_accum[local_m][local_n]
+
+    for each K tile:
+      preload B K/N tile once
+
+      for each local M row:
+        preload A row tile
+        accumulate partial dot products into c_tile_accum[local_m][local_n]
+
+    write final C[m_tile_base + local_m][n_tile_base + local_n] once
+```
+
+P12 does not use scratchpad C read-modify-write accumulation.
+
 ---
 
 ## 4. P10 Validation
@@ -214,8 +258,8 @@ gemm_4lane_ktiling_direct_stream_load_store_case195
 Final regression:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -261,8 +305,48 @@ gemm_4lane_ntiling_direct_stream_load_store_case200
 Final regression:
 
 ```text
-TOTAL : 71
-PASS  : 71
+TOTAL : 74
+PASS  : 74
+FAIL  : 0
+```
+
+---
+
+
+## 4B. P12 Validation
+
+Focused host-primary cases:
+
+```text
+CASE_ID=203 : M=8, N=8,  K=8  -> MAC=512,  OUTPUT=64   PASS
+CASE_ID=204 : M=8, N=16, K=8  -> MAC=1024, OUTPUT=128  PASS
+CASE_ID=205 : M=8, N=16, K=16 -> MAC=2048, OUTPUT=128  PASS
+CASE_ID=206 : M=5, N=9,  K=9  -> MAC=405,  OUTPUT=45   PASS
+CASE_ID=207 : M=7, N=12, K=16 -> MAC=1344, OUTPUT=84   PASS
+```
+
+Frontend compatibility sanity:
+
+```text
+DMA store smoke       CASE_ID=205 PASS
+DMA load-store        CASE_ID=207 PASS
+AXI-Stream load-store CASE_ID=207 PASS
+Direct Stream         CASE_ID=207 PASS
+```
+
+Regression integration:
+
+```text
+gemm_4lane_mtiling_dma_load_store_case207
+gemm_4lane_mtiling_axis_stream_load_store_case207
+gemm_4lane_mtiling_direct_stream_load_store_case207
+```
+
+Final regression:
+
+```text
+TOTAL : 74
+PASS  : 74
 FAIL  : 0
 ```
 
@@ -283,8 +367,10 @@ cache-backed true 4-lane MAC                              DONE
 scaled cache8 larger-dimension support                    DONE
 K-dimension tiling with row accumulator                    DONE
 N-dimension tiling with row accumulator                    DONE
+M-dimension tiling with multi-row output tile accumulator   DONE
 frontend compatibility for P10 representative case         DONE
 frontend compatibility for P11 representative case         DONE
+frontend compatibility for P12 representative case         DONE
 full regression integration                                DONE
 ```
 
@@ -292,10 +378,9 @@ full regression integration                                DONE
 
 ## 6. Future Work
 
-After P11, recommended directions are:
+After P12, recommended directions are:
 
 ```text
-M tiling / multi-row tile scheduling
 C read-modify-write accumulation for external/multi-job tiling
 packed tile-preload optimization for K-tiled tails
 larger Direct Stream operand buffers
