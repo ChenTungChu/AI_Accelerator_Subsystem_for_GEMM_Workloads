@@ -43,6 +43,7 @@ set INC_LIST [list \
   "+incdir+../rtl/subsystem" \
   "+incdir+../rtl/mem" \
   "+incdir+../rtl/dma" \
+  "+incdir+../rtl/csr" \
   "+incdir+../tb/interface" \
   "+incdir+../tb/dma" \
   "+incdir+../tb/uvm/pkg" \
@@ -67,6 +68,7 @@ set INC_LIST [list \
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_apply_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_commit_if.sv
+vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_lite_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../tb/interface/ai_accel_subsys_ctrl_if.sv
 
 # --------------------------------------------------------
@@ -93,14 +95,28 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/gemm_inp
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys.sv
 
 # --------------------------------------------------------
+# Compile CSR control-plane RTL
+# --------------------------------------------------------
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/csr/ai_accel_csr_regs.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys_csr_top.sv
+
+# --------------------------------------------------------
 # Compile UVM package
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
 
 # --------------------------------------------------------
 # Compile UVM top
+#
+# Notes:
+#   - ai_accel_subsys_uvm_top is the existing sideband subsystem top.
+#   - ai_accel_subsys_csr_uvm_top is the CSR-wrapper subsystem top.
+#   - ai_accel_csr_regs_uvm_top is a unit-level CSR register smoke top.
+# --------------------------------------------------------
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_uvm_top.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_csr_uvm_top.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_csr_regs_uvm_top.sv
 
 # --------------------------------------------------------
 # Compile DMA unit-level TB

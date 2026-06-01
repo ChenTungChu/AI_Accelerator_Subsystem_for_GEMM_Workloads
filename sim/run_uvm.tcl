@@ -1,5 +1,4 @@
 # File: sim/run_uvm.tcl
-# P13D6_SANITY: this replacement run_uvm.tcl supports ai_accel_subsys_c_rmw_accum_dut_test and forwards RUN_ALL.
 file mkdir logs
 
 # --------------------------------------------------
@@ -64,7 +63,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_perf_counter_smoke_test \
     ai_accel_subsys_perf_profile_test \
     ai_accel_subsys_c_rmw_accum_ref_model_test \
-    ai_accel_subsys_c_rmw_accum_dut_test \
+    ai_accel_csr_regs_smoke_test \
 ]
 
 # --------------------------------------------------
@@ -93,14 +92,38 @@ if {[lsearch -exact $SUPPORTED_UVM_TESTS $UVM_TEST] < 0} {
 }
 
 # --------------------------------------------------
+# Select simulation top
+#
+# Default:
+#   ai_accel_subsys_uvm_top for existing sideband subsystem tests
+#
+# CSR standalone register smoke uses ai_accel_csr_regs_uvm_top.
+# Future CSR-controlled subsystem tests can set:
+#   set UVM_TOP ai_accel_subsys_csr_uvm_top
+# --------------------------------------------------
+set SUPPORTED_UVM_TOPS [list \
+    ai_accel_subsys_uvm_top \
+    ai_accel_subsys_csr_uvm_top \
+    ai_accel_csr_regs_uvm_top \
+]
+
+if {![info exists UVM_TOP]} {
+    if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
+        set UVM_TOP ai_accel_csr_regs_uvm_top
+    } else {
+        set UVM_TOP ai_accel_subsys_uvm_top
+    }
+}
+
+if {[lsearch -exact $SUPPORTED_UVM_TOPS $UVM_TOP] < 0} {
+    error "Unsupported UVM_TOP='$UVM_TOP'. Supported tops: $SUPPORTED_UVM_TOPS"
+}
+
+# --------------------------------------------------
 # Case selection
 # --------------------------------------------------
 if {![info exists CASE_ID]} {
     set CASE_ID 0
-}
-
-if {($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test") && ($CASE_ID == 0)} {
-    set CASE_ID 208
 }
 
 # --------------------------------------------------
@@ -112,10 +135,6 @@ if {($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test") && ($CASE_ID == 0)} {
 # --------------------------------------------------
 if {![info exists ENABLE_RESULT_CHECK]} {
     set ENABLE_RESULT_CHECK 0
-}
-
-if {$UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test"} {
-    set ENABLE_RESULT_CHECK 1
 }
 
 # --------------------------------------------------
@@ -175,19 +194,19 @@ if {$FORCE_HELPER_MEM_PATH} {
 }
 
 # --------------------------------------------------
-# P13 C RMW runtime control bit
+# C RMW runtime control bit
 #
 # Default:
-#   ACCUMULATE_ENABLE=0 keeps the current P12 write-final-C behavior.
+#   ACCUMULATE_ENABLE=0 keeps the default write-final-C behavior.
 #
-# Manual P13B plumbing smoke:
+# Manual C RMW accumulation plumbing smoke:
 #   set GEMM_ENABLE_C_RMW_ACCUM 1
 #   set ACCUMULATE_ENABLE 0
 #   do run_uvm.tcl
 #
 # Note:
-#   P13B only propagates the control bit. RTL C read-modify-write
-#   accumulation behavior is implemented in a later step.
+#   This knob forwards the default runtime C RMW accumulation bit.
+#   Recipe tests may still drive per-job accumulation through UVM.
 # --------------------------------------------------
 if {![info exists ACCUMULATE_ENABLE]} {
     set ACCUMULATE_ENABLE 0
@@ -252,7 +271,10 @@ set EXTRA_ARGS [list]
 # --------------------------------------------------
 set JOB_ARG_LIST [list]
 
-if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
+if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
+    set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}.log
+
+} elseif {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     if {![info exists JOB_COUNT]} {
         set JOB_COUNT 2
     }
@@ -317,8 +339,7 @@ if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
-    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
-    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
+    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test")} {
 
     if {![info exists RUN_ALL]} {
         set RUN_ALL 0
@@ -557,7 +578,7 @@ if {$UVM_TEST eq "ai_accel_subsys_direct_stream_load_store_stress_test"} {
 # GEMM B-cache parameter
 #
 # Default:
-#   GEMM_ENABLE_B_CACHE=0 keeps the current P4 mainline baseline.
+#   GEMM_ENABLE_B_CACHE=0 keeps the current B-cache baseline.
 #
 # Manual B-cache run:
 #   set GEMM_ENABLE_B_CACHE 1
@@ -574,10 +595,9 @@ if {($GEMM_ENABLE_B_CACHE != 0) && ($GEMM_ENABLE_B_CACHE != 1)} {
 # --------------------------------------------------
 # GEMM B-cache dimension parameters
 #
-# P9 safe parameter plumbing.
 # Default:
-#   GEMM_B_CACHE_MAX_K=4 and GEMM_B_CACHE_MAX_N=4 keep the
-#   current P8 baseline unless explicitly overridden.
+#   GEMM_B_CACHE_MAX_K=4 and GEMM_B_CACHE_MAX_N=4 preserve
+#   the baseline cache configuration unless explicitly overridden.
 #
 # Manual cache scaling run:
 #   set GEMM_ENABLE_B_CACHE 1
@@ -623,9 +643,9 @@ if {($GEMM_ENABLE_PACKED_BCACHE_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_BCACHE_PRE
 # --------------------------------------------------
 # GEMM A-row cache parameters
 #
-# P6 safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_A_ROW_CACHE=0 keeps the current P5 baseline.
+#   GEMM_ENABLE_A_ROW_CACHE=0 keeps A-row cache disabled unless
+#   explicitly overridden.
 #
 # Manual A-row cache run:
 #   set GEMM_MAC_LANES 2
@@ -636,8 +656,7 @@ if {($GEMM_ENABLE_PACKED_BCACHE_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_BCACHE_PRE
 #   do run_uvm.tcl
 #
 # Note:
-#   P6B only propagates the parameters. RTL behavior is unchanged
-#   until the A-row cache FSM/datapath is implemented in P6C.
+#   A-row cache is enabled only when the RTL parameter is explicitly set.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_A_ROW_CACHE]} {
     set GEMM_ENABLE_A_ROW_CACHE 0
@@ -658,11 +677,11 @@ if {$GEMM_A_ROW_CACHE_MAX_K <= 0} {
 # --------------------------------------------------
 # GEMM packed A-row preload parameter
 #
-# P7 safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0 keeps the current P6 baseline.
+#   GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0 keeps packed A-row preload
+#   disabled unless explicitly overridden.
 #
-# Manual packed A-row preload plumbing run:
+# Manual packed A-row preload run:
 #   set GEMM_MAC_LANES 2
 #   set GEMM_ENABLE_B_CACHE 1
 #   set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
@@ -672,8 +691,7 @@ if {$GEMM_A_ROW_CACHE_MAX_K <= 0} {
 #   do run_uvm.tcl
 #
 # Note:
-#   P7B only propagates the parameter. RTL behavior is unchanged
-#   until the packed A-row preload FSM/datapath is implemented later.
+#   Packed A-row preload is enabled only when the RTL parameter is explicitly set.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_PACKED_A_ROW_PRELOAD]} {
     set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 0
@@ -686,19 +704,16 @@ if {($GEMM_ENABLE_PACKED_A_ROW_PRELOAD != 0) && ($GEMM_ENABLE_PACKED_A_ROW_PRELO
 # --------------------------------------------------
 # GEMM K-tiling parameters
 #
-# P10B safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_K_TILING=0 keeps the current P9 baseline.
+#   GEMM_ENABLE_K_TILING=0 keeps K tiling disabled unless explicitly overridden.
 #
-# Manual P10B plumbing smoke:
+# Manual K-tiling run:
 #   set GEMM_ENABLE_K_TILING 1
 #   set GEMM_K_TILE_SIZE 8
 #   do run_uvm.tcl
 #
 # Note:
-#   P10B only propagates/elaborates the parameters. RTL compute
-#   behavior remains the P9 single-job path until the K-tiling FSM
-#   is implemented in a later step.
+#   K tiling is enabled only when the RTL parameter is explicitly set.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_K_TILING]} {
     set GEMM_ENABLE_K_TILING 0
@@ -720,19 +735,16 @@ if {$GEMM_K_TILE_SIZE <= 0} {
 # --------------------------------------------------
 # GEMM N-tiling parameters
 #
-# P11B safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_N_TILING=0 keeps the current P10 baseline.
+#   GEMM_ENABLE_N_TILING=0 keeps N tiling disabled unless explicitly overridden.
 #
-# Manual P11B plumbing smoke:
+# Manual N-tiling run:
 #   set GEMM_ENABLE_N_TILING 1
 #   set GEMM_N_TILE_SIZE 8
 #   do run_uvm.tcl
 #
 # Note:
-#   P11B only propagates/elaborates the parameters. RTL compute
-#   behavior remains the P10 K-tiling path until the N-tile scheduler
-#   is implemented in a later step.
+#   N tiling is enabled only when the RTL parameter is explicitly set.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_N_TILING]} {
     set GEMM_ENABLE_N_TILING 0
@@ -753,18 +765,17 @@ if {$GEMM_N_TILE_SIZE <= 0} {
 # --------------------------------------------------
 # GEMM M-tiling parameters
 #
-# P12B safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_M_TILING=0 keeps the current P11 baseline.
+#   GEMM_ENABLE_M_TILING=0 keeps M tiling disabled unless explicitly overridden.
 #
-# Manual P12B plumbing smoke:
+# Manual M-tiling run:
 #   set GEMM_ENABLE_M_TILING 1
 #   set GEMM_M_TILE_SIZE 2
 #   do run_uvm.tcl
 #
 # Note:
 #   P12B only propagates/elaborates the parameters. RTL compute
-#   behavior remains the P11 K+N tiling path until the multi-row
+#   behavior remains the K+N tiling path until the multi-row
 #   tile scheduler is implemented in a later step.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_M_TILING]} {
@@ -786,19 +797,17 @@ if {$GEMM_M_TILE_SIZE <= 0} {
 # --------------------------------------------------
 # GEMM C RMW accumulation parameter
 #
-# P13B safe parameter plumbing.
 # Default:
-#   GEMM_ENABLE_C_RMW_ACCUM=0 keeps the current P12 baseline.
+#   GEMM_ENABLE_C_RMW_ACCUM=0 keeps C RMW accumulation disabled
+#   unless explicitly overridden.
 #
-# Manual P13B plumbing smoke:
+# Manual C RMW accumulation plumbing smoke:
 #   set GEMM_ENABLE_C_RMW_ACCUM 1
 #   set ACCUMULATE_ENABLE 0
 #   do run_uvm.tcl
 #
 # Note:
-#   P13B only propagates/elaborates the parameter. RTL C RMW
-#   behavior remains the P12 final-C-write path until the C RMW
-#   datapath is implemented in a later step.
+#   C RMW accumulation is enabled only when the RTL parameter is explicitly set.
 # --------------------------------------------------
 if {![info exists GEMM_ENABLE_C_RMW_ACCUM]} {
     set GEMM_ENABLE_C_RMW_ACCUM 0
@@ -810,7 +819,7 @@ if {($GEMM_ENABLE_C_RMW_ACCUM != 0) && ($GEMM_ENABLE_C_RMW_ACCUM != 1)} {
 
 
 
-puts "\[run_uvm\] UVM_TEST=$UVM_TEST CASE_ID=$CASE_ID ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE SMOKE_DONE_TIMEOUT=$SMOKE_DONE_TIMEOUT_MODE"
+puts "\[run_uvm\] UVM_TOP=$UVM_TOP UVM_TEST=$UVM_TEST CASE_ID=$CASE_ID ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE SMOKE_DONE_TIMEOUT=$SMOKE_DONE_TIMEOUT_MODE"
 puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD GEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING GEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE GEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING GEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE GEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING GEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE GEMM_ENABLE_C_RMW_ACCUM=$GEMM_ENABLE_C_RMW_ACCUM"
 
 
@@ -834,7 +843,10 @@ if {![info exists EXTRA_PLUSARGS]} {
 # --------------------------------------------------
 set LOG_DATE_PREFIX [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
 
-if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
+if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
+    set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}.log
+
+} elseif {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_corner_test"} {
@@ -852,8 +864,7 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
           ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
-          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
-          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
+          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test")} {
     if {$RUN_ALL} {
         set LOG_BASENAME ${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
@@ -888,6 +899,9 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
 # --------------------------------------------------
 set LOG_BASENAME [string map [list \
     "ai_accel_subsys_" "aas_" \
+    "ai_accel_csr_regs_smoke_test" "csr_regs_smoke" \
+    "ai_accel_csr_regs_uvm_top" "csr_regs_top" \
+    "ai_accel_subsys_csr_uvm_top" "aas_csr_top" \
     "axis_stream_load_store_stress_test" "axis_ls_stress" \
     "direct_stream_load_store_stress_test" "ds_ls_stress" \
     "dma_load_store_stress_test" "dma_ls_stress" \
@@ -903,7 +917,6 @@ set LOG_BASENAME [string map [list \
     "perf_counter_smoke_test" "perf_cnt" \
     "perf_profile_test" "perf_prof" \
     "c_rmw_accum_ref_model_test" "c_rmw_ref" \
-    "c_rmw_accum_dut_test" "c_rmw_dut" \
     "back_to_back_test" "b2b" \
     "reset_recovery_test" "rst_rec" \
     "corner_test" "corner" \
@@ -937,7 +950,9 @@ set LOG_BASENAME [string map [list \
 # ms = GEMM_M_TILE_SIZE
 # cr = GEMM_ENABLE_C_RMW_ACCUM
 # ae = ACCUMULATE_ENABLE
-set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}_nt${GEMM_ENABLE_N_TILING}_ns${GEMM_N_TILE_SIZE}_mt${GEMM_ENABLE_M_TILING}_ms${GEMM_M_TILE_SIZE}_cr${GEMM_ENABLE_C_RMW_ACCUM}_ae${ACCUMULATE_ENABLE}.log"] $LOG_BASENAME]
+if {$UVM_TOP ne "ai_accel_csr_regs_uvm_top"} {
+    set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}_nt${GEMM_ENABLE_N_TILING}_ns${GEMM_N_TILE_SIZE}_mt${GEMM_ENABLE_M_TILING}_ms${GEMM_M_TILE_SIZE}_cr${GEMM_ENABLE_C_RMW_ACCUM}_ae${ACCUMULATE_ENABLE}.log"] $LOG_BASENAME]
+}
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -951,51 +966,57 @@ transcript on
 # --------------------------------------------------
 # Run simulation
 #
-#   Policy knobs:
-#     +ENABLE_RESULT_CHECK
-#     +FORCE_HELPER_MEM_PATH
-#
-#   Optional legacy overrides are forwarded only when
-#   explicitly set in the Tcl session.
+# Existing subsystem tops receive GEMM generics and subsystem plusargs.
+# The standalone CSR register top is a unit-level CSR smoke and does
+# not have GEMM generics.
 # --------------------------------------------------
-vsim -L uvm12 \
-  -voptargs=+acc \
-  -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
-  -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
-  -gGEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K \
-  -gGEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N \
-  -gGEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD \
-  -gGEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE \
-  -gGEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K \
-  -gGEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD \
-  -gGEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING \
-  -gGEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE \
-  -gGEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING \
-  -gGEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE \
-  -gGEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING \
-  -gGEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE \
-  -gGEMM_ENABLE_C_RMW_ACCUM=$GEMM_ENABLE_C_RMW_ACCUM \
-  work.ai_accel_subsys_uvm_top \
-  -uvmcontrol=all \
-  +UVM_TESTNAME=$UVM_TEST \
-  +CASE_ID=$CASE_ID \
-  +ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK \
-  +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
-  +ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE \
-  {*}$SMOKE_DONE_TIMEOUT_ARG_LIST \
-  {*}$LEGACY_HOST_OVERRIDE_ARGS \
-  {*}$JOB_ARG_LIST \
-  {*}$DMA_SMOKE_ARG_LIST \
-  {*}$DMA_LOAD_STRESS_ARG_LIST \
-  {*}$DMA_LOAD_STORE_STRESS_ARG_LIST \
-  {*}$DMA_STORE_ERROR_ARG_LIST \
-  {*}$EXTRA_ARGS \
-  {*}$CLOCK_ARG_LIST \
-  +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
-  +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
-  +RESET_HOLD_CYCLES=$RESET_HOLD_CYCLES \
-  +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES \
-  {*}$EXTRA_PLUSARGS
+if {$UVM_TOP eq "ai_accel_csr_regs_uvm_top"} {
+    vsim -L uvm12 \
+      -voptargs=+acc \
+      work.$UVM_TOP \
+      -uvmcontrol=all \
+      +UVM_TESTNAME=$UVM_TEST \
+      {*}$EXTRA_PLUSARGS
+} else {
+    vsim -L uvm12 \
+      -voptargs=+acc \
+      -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
+      -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
+      -gGEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K \
+      -gGEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N \
+      -gGEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD \
+      -gGEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE \
+      -gGEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K \
+      -gGEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD \
+      -gGEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING \
+      -gGEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE \
+      -gGEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING \
+      -gGEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE \
+      -gGEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING \
+      -gGEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE \
+      -gGEMM_ENABLE_C_RMW_ACCUM=$GEMM_ENABLE_C_RMW_ACCUM \
+      work.$UVM_TOP \
+      -uvmcontrol=all \
+      +UVM_TESTNAME=$UVM_TEST \
+      +CASE_ID=$CASE_ID \
+      +ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK \
+      +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
+      +ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE \
+      {*}$SMOKE_DONE_TIMEOUT_ARG_LIST \
+      {*}$LEGACY_HOST_OVERRIDE_ARGS \
+      {*}$JOB_ARG_LIST \
+      {*}$DMA_SMOKE_ARG_LIST \
+      {*}$DMA_LOAD_STRESS_ARG_LIST \
+      {*}$DMA_LOAD_STORE_STRESS_ARG_LIST \
+      {*}$DMA_STORE_ERROR_ARG_LIST \
+      {*}$EXTRA_ARGS \
+      {*}$CLOCK_ARG_LIST \
+      +PRE_RESET_CASE_ID=$PRE_RESET_CASE_ID \
+      +POST_RESET_CASE_ID=$POST_RESET_CASE_ID \
+      +RESET_HOLD_CYCLES=$RESET_HOLD_CYCLES \
+      +POST_RESET_SETTLE_CYCLES=$POST_RESET_SETTLE_CYCLES \
+      {*}$EXTRA_PLUSARGS
+}
 
 # --------------------------------------------------
 # Suppress GUI confirmation dialog when UVM calls $finish
