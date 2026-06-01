@@ -24,12 +24,19 @@ module direct_stream_preload_engine #(
 
     // ============================================================
     // Core/operand-buffer clock domain
+    //
+    // The stream loader and operand-buffer write adapter run in core_clk.
     // ============================================================
     input  logic                         core_clk,
     input  logic                         core_rst_n,
 
     // ============================================================
     // Control interface, dma_clk domain
+    //
+    // Direct Stream preload moves a linear DATA_WIDTH-beat payload from
+    // source memory into the local GEMM operand buffer. It is used only
+    // for A/B operands. GEMM C remains in scratchpad for writeback and
+    // optional C RMW accumulation.
     //
     // ds_operand_sel:
     //   0 = operand A
@@ -66,7 +73,8 @@ module direct_stream_preload_engine #(
     // ============================================================
     // Operand buffer clear controls, core_clk domain
     //
-    // Connect to gemm_operand_buffer clear ports.
+    // Each preload clears only the selected operand side plus status.
+    // This keeps A and B independent across their two preload jobs.
     // ============================================================
     output logic                         operand_buf_clear_a,
     output logic                         operand_buf_clear_b,
@@ -93,6 +101,9 @@ module direct_stream_preload_engine #(
 
     // ============================================================
     // Core-domain activity indication
+    //
+    // direct_stream_load_active is used by top-level control to block
+    // GEMM start until the selected A/B preload has drained.
     // ============================================================
     output logic                         direct_stream_load_active,
 
@@ -168,11 +179,9 @@ module direct_stream_preload_engine #(
     // ============================================================
     // Core-domain FSM
     //
-    // C_START exists so config is latched first, then loader starts
-    // one core_clk later with stable config.
-    //
-    // C_DRAIN exists so operand buffer sticky error can be sampled
-    // after the final write.
+    // C_START separates config latch from loader start.
+    // C_DRAIN gives the write adapter / operand buffer one drain window
+    // so final-beat errors are reflected before done is reported.
     // ============================================================
     typedef enum logic [2:0] {
         C_IDLE        = 3'd0,
@@ -621,8 +630,8 @@ module direct_stream_preload_engine #(
                 end
 
                 C_START: begin
-                    // Loader start / buffer clear pulses are generated
-                    // combinationally in this state.
+                    // Loader start and selected-buffer clear pulses are
+                    // generated combinationally in this state.
                 end
 
                 C_ACTIVE: begin
@@ -671,7 +680,7 @@ module direct_stream_preload_engine #(
     //
     // Error:
     //   inject one synthetic zero TLAST beat so the core-side loader
-    //   can terminate deterministically after MM2S error.
+    //   terminates deterministically after an MM2S-side error.
     // ============================================================
     always_comb begin
         fifo_s_tdata  = poison_valid_q ? '0   : mm2s_axis_tdata;
@@ -820,6 +829,9 @@ module direct_stream_preload_engine #(
 
     // ============================================================
     // Submodule: stream-loader write request -> operand buffer write
+    //
+    // Translates logical A/B write addresses into local operand-buffer
+    // byte offsets. C traffic never uses this adapter.
     // ============================================================
     gemm_operand_buffer_write_adapter #(
         .ADDR_WIDTH (ADDR_WIDTH),

@@ -354,3 +354,34 @@ DMA load A/B -> GEMM run -> readback C -> compare
 [4] GEMM core 使用 DMA-loaded A/B 正常完成
 [5] result check PASS
 [6] existing smoke/back-to-back/reset regression 不被破壞
+
+14. P13 C RMW compatibility note
+
+P13 does not change the DMA load protocol.
+
+For P13 C read-modify-write accumulation, the DMA load path is used repeatedly to provide compact A/B payloads for each partial job:
+
+```text
+for each partial job:
+    DMA load A_part into scratchpad
+    DMA load B_part into scratchpad
+    GEMM computes partial C
+    if accumulate_enable=1, GEMM reads old C from scratchpad and accumulates
+```
+
+C remains in scratchpad between partial jobs.  The DMA load engine must not clear or overwrite C as part of A/B preload.
+
+P13 frontend representative validation includes:
+
+```text
+DMA load-store CASE_ID=211 PASS
+Full regression after P13G: 82/82 PASS
+```
+
+The original v1 rule still holds:
+
+```text
+DMA load completes before GEMM start.
+DMA load and GEMM compute do not overlap in this baseline.
+BRAM RTL remains unchanged.
+```

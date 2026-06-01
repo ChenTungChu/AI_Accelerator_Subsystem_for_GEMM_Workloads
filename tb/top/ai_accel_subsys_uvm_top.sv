@@ -26,33 +26,37 @@ module ai_accel_subsys_uvm_top;
     parameter  int GEMM_B_CACHE_MAX_K  = 4;
     parameter  int GEMM_B_CACHE_MAX_N  = 4;
 
-    // P5 packed B-cache preload.
+    // packed B-cache preload packed B-cache preload.
     // Default-off so the current baseline behavior is unchanged unless explicitly enabled.
     parameter  bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0;
 
-    // P6 safe parameter patch.
-    // Default-off so the current P5 baseline behavior is unchanged.
+    // A-row cache safe parameter patch.
+    // Default-off so the current packed B-cache preload baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_A_ROW_CACHE = 1'b0;
     parameter  int GEMM_A_ROW_CACHE_MAX_K  = 4;
 
-    // P7 safe parameter patch.
-    // Default-off so the current P6 baseline behavior is unchanged.
+    // packed A-row preload safe parameter patch.
+    // Default-off so the current A-row cache baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0;
 
-    // P10 K-tiling parameterization.
-    // Default-off so the pre-P10 baseline behavior is unchanged.
+    // K tiling K-tiling parameterization.
+    // Default-off so the pre-K tiling baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_K_TILING = 1'b0;
     parameter  int GEMM_K_TILE_SIZE     = 8;
 
-    // P11B safe parameter plumbing.
-    // Default-off so the current P10 baseline behavior is unchanged.
+    // N tiling safe parameter plumbing.
+    // Default-off so the current K tiling baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_N_TILING = 1'b0;
     parameter  int GEMM_N_TILE_SIZE     = 8;
 
-    // P12B safe parameter plumbing.
-    // Default-off so the current P11 baseline behavior is unchanged.
+    // M tiling safe parameter plumbing.
+    // Default-off so the current N tiling baseline behavior is unchanged.
     parameter  bit GEMM_ENABLE_M_TILING = 1'b0;
     parameter  int GEMM_M_TILE_SIZE     = 2;
+
+    // C RMW accumulationB safe parameter plumbing.
+    // Default-off so the current M tiling baseline behavior is unchanged.
+    parameter  bit GEMM_ENABLE_C_RMW_ACCUM = 1'b0;
 
     localparam int BYTES_PER_BEAT  = DATA_WIDTH / 8;
 
@@ -110,6 +114,10 @@ module ai_accel_subsys_uvm_top;
     // ============================================================
     logic acc_busy;
     logic acc_done;
+
+    // C RMW accumulation runtime control.  This remains 0 by default
+    // and is passed through to ai_accel_subsys.
+    logic accumulate_enable;
 
     // ============================================================
     // GEMM performance counter wires
@@ -987,7 +995,8 @@ module ai_accel_subsys_uvm_top;
         .GEMM_ENABLE_N_TILING (GEMM_ENABLE_N_TILING),
         .GEMM_N_TILE_SIZE (GEMM_N_TILE_SIZE),
         .GEMM_ENABLE_M_TILING (GEMM_ENABLE_M_TILING),
-        .GEMM_M_TILE_SIZE (GEMM_M_TILE_SIZE)
+        .GEMM_M_TILE_SIZE (GEMM_M_TILE_SIZE),
+        .GEMM_ENABLE_C_RMW_ACCUM (GEMM_ENABLE_C_RMW_ACCUM)
     ) dut (
         .dma_clk              (dma_clk),
         .dma_rst_n            (dma_rst_n),
@@ -1107,6 +1116,7 @@ module ai_accel_subsys_uvm_top;
 
         // Accelerator control
         .gemm_input_stream_mode (ctrl_if.gemm_input_stream_mode),
+        .accumulate_enable      (ctrl_if.accumulate_enable),
 
         .acc_start              (ctrl_if.acc_start),
         .acc_busy               (acc_busy),
@@ -1160,7 +1170,7 @@ module ai_accel_subsys_uvm_top;
     // GEMM config display
     // ============================================================
     initial begin
-        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_ENABLE_N_TILING=%0d GEMM_N_TILE_SIZE=%0d GEMM_ENABLE_M_TILING=%0d GEMM_M_TILE_SIZE=%0d",
+        $display("# [UVM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_ENABLE_N_TILING=%0d GEMM_N_TILE_SIZE=%0d GEMM_ENABLE_M_TILING=%0d GEMM_M_TILE_SIZE=%0d GEMM_ENABLE_C_RMW_ACCUM=%0d",
                 GEMM_MAC_LANES,
                 GEMM_ENABLE_B_CACHE,
                 GEMM_B_CACHE_MAX_K,
@@ -1174,7 +1184,30 @@ module ai_accel_subsys_uvm_top;
                 GEMM_ENABLE_N_TILING,
                 GEMM_N_TILE_SIZE,
                 GEMM_ENABLE_M_TILING,
-                GEMM_M_TILE_SIZE);
+                GEMM_M_TILE_SIZE,
+                GEMM_ENABLE_C_RMW_ACCUM);
+    end
+
+    // ============================================================
+    // C RMW accumulation runtime control plusarg
+    // ============================================================
+    initial begin
+        int unsigned accumulate_enable_i;
+
+        accumulate_enable_i = 0;
+        void'($value$plusargs("ACCUMULATE_ENABLE=%0d", accumulate_enable_i));
+
+        if ((accumulate_enable_i != 0) && (accumulate_enable_i != 1)) begin
+            $fatal(1,
+                "[UVM_TOP_CFG] Unsupported ACCUMULATE_ENABLE=%0d. Supported values: 0, 1",
+                accumulate_enable_i
+            );
+        end
+
+        accumulate_enable = (accumulate_enable_i != 0);
+        ctrl_if.accumulate_enable = accumulate_enable;
+
+        $display("# [UVM_TOP_CFG] ACCUMULATE_ENABLE=%0d", accumulate_enable);
     end
 
     // ============================================================

@@ -16,7 +16,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     localparam int BYTES_PER_BEAT    = DATA_WIDTH / 8;
 
     // Default preserves the historical DMA-store smoke timeout.
-    // Long-running P11D/P11E focused runs may override this with
+    // Long-running focused runs may override this with
     // +SMOKE_DONE_TIMEOUT_CYCLES=<cycles> or
     // +DMA_STORE_DONE_TIMEOUT_CYCLES=<cycles>.
     localparam int unsigned DEFAULT_GEMM_DONE_TIMEOUT_CYCLES = 30000;
@@ -39,6 +39,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     ) axi0_vif_t;
 
     ai_accel_subsys_env env;
+    ai_accel_subsys_case_helper case_helper;
 
     ctrl_vif_t vif;
     axi0_vif_t axi0_vif;
@@ -67,6 +68,9 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     int unsigned c_words;
     int unsigned c_bytes;
 
+    // C RMW accumulation runtime control for the currently launched GEMM job.
+    bit accumulate_enable_i;
+
     logic [7:0]  a_payload  [0:127];
     logic [7:0]  b_payload  [0:255];
     logic [31:0] expected_c [0:127];
@@ -74,6 +78,14 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     function new(string name = "ai_accel_subsys_dma_store_smoke_test",
                  uvm_component parent = null);
         super.new(name, parent);
+    endfunction
+
+    function automatic bit is_c_rmw_accum_recipe_case(input int unsigned cid);
+        if (case_helper == null) begin
+            return ((cid >= 208) && (cid <= 212));
+        end
+
+        return case_helper.is_c_rmw_accum_recipe_case(cid);
     endfunction
 
     function automatic ai_accel_subsys_seq_item::test_kind_e infer_test_kind(
@@ -84,6 +96,9 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         end
         else if ((cid >= 100) && (cid <= 207)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
+        end
+        else if (is_c_rmw_accum_recipe_case(cid)) begin
+            return ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
         end
         else if ((cid >= 400) && (cid <= 499)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE;
@@ -109,6 +124,9 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 return $sformatf("dma_store_config_base_case_%0d", cid);
 
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                return $sformatf("dma_store_c_rmw_accum_recipe_%0d", cid);
+
             default:
                 return $sformatf("dma_store_case_%0d_kind_%0d", cid, kind);
         endcase
@@ -131,19 +149,6 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
     // ------------------------------------------------------------
     // Parse GEMM done timeout
-    //
-    // Default:
-    //   DEFAULT_GEMM_DONE_TIMEOUT_CYCLES
-    //
-    // Overrides:
-    //   +DMA_STORE_DONE_TIMEOUT_CYCLES=<cycles>
-    //       dedicated DMA-store/frontend timeout knob
-    //
-    //   +SMOKE_DONE_TIMEOUT_CYCLES=<cycles>
-    //       shared focused-run timeout knob used by P11D/P11E
-    //
-    // Priority:
-    //   DMA_STORE_DONE_TIMEOUT_CYCLES overrides SMOKE_DONE_TIMEOUT_CYCLES.
     // ------------------------------------------------------------
     function void parse_gemm_done_timeout_cycles();
         int unsigned tmp;
@@ -200,6 +205,8 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             run_all = 0;
         end
 
+        case_helper = ai_accel_subsys_case_helper::type_id::create("case_helper");
+
         parse_result_check_enable();
         parse_gemm_done_timeout_cycles();
 
@@ -220,6 +227,23 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
         uvm_config_db#(bit)::set(
             this, "env.scoreboard", "result_check_enable", enable_result_check);
+
+        // C RMW accumulation frontend recipes launch multiple partial GEMM jobs but publish
+        // only one final C result after the last accumulated job.  Reuse the
+        // scoreboard final-result-only policy used by C RMW accumulation flows.
+        // This keeps the two partial-job START/DONE ctrl observations useful
+        // for profile/latency checks without requiring one result item per
+        // partial job.
+        uvm_config_db#(bit)::set(
+            this, "env.scoreboard", "c_rmw_accum_final_result_only_mode",
+            ((case_id >= 208) && (case_id <= 212)));
+
+        if ((case_id >= 208) && (case_id <= 212)) begin
+            `uvm_info("DMA_STORE_SMOKE/C_RMW_ACCUM_FE",
+                $sformatf("Enabled scoreboard C RMW accumulation final-result-only mode for CASE_ID=%0d",
+                    case_id),
+                UVM_MEDIUM)
+        end
 
         env = ai_accel_subsys_env::type_id::create("env", this);
     endfunction
@@ -245,16 +269,95 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         return (addr % BYTES_PER_BEAT) == 0;
     endfunction
 
-    task automatic clear_payload_arrays();
+    task automatic clear_ab_payload_arrays();
         int unsigned i;
     begin
         for (i = 0; i < 128; i++) begin
-            a_payload[i]  = 8'h00;
-            expected_c[i] = 32'h0000_0000;
+            a_payload[i] = 8'h00;
         end
 
         for (i = 0; i < 256; i++) begin
-            b_payload[i]  = 8'h00;
+            b_payload[i] = 8'h00;
+        end
+    end
+    endtask
+
+    task automatic clear_payload_arrays();
+        int unsigned i;
+    begin
+        clear_ab_payload_arrays();
+
+        for (i = 0; i < 128; i++) begin
+            expected_c[i] = 32'h0000_0000;
+        end
+    end
+    endtask
+
+    task automatic check_payload_sizes(
+        input int unsigned a_count,
+        input int unsigned b_count,
+        input int unsigned c_count
+    );
+    begin
+        if (a_count > 128) begin
+            `uvm_fatal("DMA_STORE_SMOKE/PAYLOAD_A",
+                $sformatf("A payload too large: %0d > 128", a_count))
+        end
+
+        if (b_count > 256) begin
+            `uvm_fatal("DMA_STORE_SMOKE/PAYLOAD_B",
+                $sformatf("B payload too large: %0d > 256", b_count))
+        end
+
+        if (c_count > 128) begin
+            `uvm_fatal("DMA_STORE_SMOKE/PAYLOAD_C",
+                $sformatf("C payload too large: %0d > 128", c_count))
+        end
+    end
+    endtask
+
+    task automatic copy_ab_payloads(
+        input int signed a_flat[],
+        input int signed b_flat[]
+    );
+        int unsigned i;
+    begin
+        clear_ab_payload_arrays();
+
+        a_bytes = a_flat.size();
+        b_bytes = b_flat.size();
+
+        check_payload_sizes(a_bytes, b_bytes, c_words);
+
+        for (i = 0; i < a_bytes; i++) begin
+            a_payload[i] = a_flat[i][7:0];
+        end
+
+        for (i = 0; i < b_bytes; i++) begin
+            b_payload[i] = b_flat[i][7:0];
+        end
+    end
+    endtask
+
+    task automatic copy_expected_payload(
+        input int signed expected_dyn[]
+    );
+        int unsigned i;
+    begin
+        c_words = expected_dyn.size();
+        c_bytes = c_words * 4;
+
+        if (c_words > 128) begin
+            `uvm_fatal("DMA_STORE_SMOKE/PAYLOAD_C",
+                $sformatf("C payload too large: %0d > 128", c_words))
+        end
+
+        for (i = 0; i < 128; i++) begin
+            expected_c[i] = 32'h0000_0000;
+        end
+
+        for (i = 0; i < c_words; i++) begin
+            expected_c[i] = expected_dyn[i][31:0];
         end
     end
     endtask
@@ -272,8 +375,28 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
+    task automatic apply_profile_context(
+        input ai_accel_subsys_seq_item profile_item
+    );
+    begin
+        base_a = profile_item.base_addr_a;
+        base_b = profile_item.base_addr_b;
+        base_c = profile_item.base_addr_c;
+
+        dim_m_i = profile_item.dim_m;
+        dim_n_i = profile_item.dim_n;
+        dim_k_i = profile_item.dim_k;
+
+        accumulate_enable_i = profile_item.accumulate_enable;
+    end
+    endtask
+
     task automatic configure_case(input int unsigned cid);
-        int unsigned i;
+        ai_accel_subsys_seq_item              profile_item;
+        ai_accel_subsys_seq_item::test_kind_e kind;
+        int signed                            a_flat[];
+        int signed                            b_flat[];
+        int signed                            expected_dyn[];
     begin
         clear_payload_arrays();
 
@@ -285,473 +408,50 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         base_c = 32'h0000_0200;
 
         dma_store_dst_base = 32'h0000_0000;
+        accumulate_enable_i = 1'b0;
 
-        case (cid)
-            100: begin
-                dim_m_i = 1;
-                dim_n_i = 1;
-                dim_k_i = 1;
+        kind = infer_test_kind(cid);
 
-                a_bytes = 1;
-                b_bytes = 1;
-                c_words = 1;
-
-                a_payload[0] = 8'd3;
-                b_payload[0] = 8'd5;
+        case (kind)
+            ai_accel_subsys_seq_item::TEST_KIND_FIXED_BASELINE: begin
+                case_helper.build_fixed_case_payload(
+                    cid,
+                    profile_item,
+                    a_flat,
+                    b_flat,
+                    expected_dyn
+                );
             end
 
-            101: begin
-                dim_m_i = 2;
-                dim_n_i = 2;
-                dim_k_i = 2;
-
-                a_bytes = 4;
-                b_bytes = 4;
-                c_words = 4;
-
-                a_payload[0] = 8'd1;
-                a_payload[1] = 8'd2;
-                a_payload[2] = 8'd3;
-                a_payload[3] = 8'd4;
-
-                b_payload[0] = 8'd5;
-                b_payload[1] = 8'd6;
-                b_payload[2] = 8'd7;
-                b_payload[3] = 8'd8;
+            ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE: begin
+                case_helper.build_variable_case_payload(
+                    cid,
+                    profile_item,
+                    a_flat,
+                    b_flat,
+                    expected_dyn
+                );
             end
 
-            105: begin
-                dim_m_i = 2;
-                dim_n_i = 3;
-                dim_k_i = 4;
-
-                a_bytes = 8;
-                b_bytes = 12;
-                c_words = 6;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = i + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = i + 1;
-                end
-            end
-
-            190: begin
-                // P9G large-dimension path case: M=1, N=8, K=8.
-                // This fills an 8x8 B tile while keeping C output small.
-                dim_m_i = 1;
-                dim_n_i = 8;
-                dim_k_i = 8;
-
-                a_bytes = 8;
-                b_bytes = 64;
-                c_words = 8;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (i % 8) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            191: begin
-                // P9G large-dimension path case: M=2, N=8, K=8.
-                // This validates two A rows and B-cache reuse at N/K=8.
-                dim_m_i = 2;
-                dim_n_i = 8;
-                dim_k_i = 8;
-
-                a_bytes = 16;
-                b_bytes = 64;
-                c_words = 16;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 5) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            192: begin
-                // P9G large/tail-dimension path case: M=3, N=5, K=7.
-                // N and K are intentionally not multiples of four.
-                dim_m_i = 3;
-                dim_n_i = 5;
-                dim_k_i = 7;
-
-                a_bytes = 21;
-                b_bytes = 35;
-                c_words = 15;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 2) % 9) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 7) + 1;
-                end
-            end
-
-            193: begin
-                // P10C/P10D K-tiling representative case: M=1, N=4, K=16.
-                // Two full K=8 tiles, small C output.
-                dim_m_i = 1;
-                dim_n_i = 4;
-                dim_k_i = 16;
-
-                a_bytes = 16;
-                b_bytes = 64;
-                c_words = 4;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 5) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            194: begin
-                // P10C/P10D K-tiling representative case: M=2, N=4, K=16.
-                // Two A rows and two full K=8 tiles.
-                dim_m_i = 2;
-                dim_n_i = 4;
-                dim_k_i = 16;
-
-                a_bytes = 32;
-                b_bytes = 64;
-                c_words = 8;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 5) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            195: begin
-                // P10E frontend compatibility representative case: M=4, N=4, K=16.
-                // Exactly two full K=8 tiles; A/B payloads are both 64 bytes.
-                dim_m_i = 4;
-                dim_n_i = 4;
-                dim_k_i = 16;
-
-                a_bytes = 64;
-                b_bytes = 64;
-                c_words = 16;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 5) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            196: begin
-                // P10C/P10D K-tiling tail case: M=3, N=5, K=9.
-                // Exercises a full K=8 tile plus a K=1 tail tile.
-                dim_m_i = 3;
-                dim_n_i = 5;
-                dim_k_i = 9;
-
-                a_bytes = 27;
-                b_bytes = 45;
-                c_words = 15;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 2) % 9) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 7) + 1;
-                end
-            end
-
-            197: begin
-                // P10C/P10D K-tiling tail case: M=4, N=4, K=12.
-                // Exercises a full K=8 tile plus a K=4 tail tile.
-                dim_m_i = 4;
-                dim_n_i = 4;
-                dim_k_i = 12;
-
-                a_bytes = 48;
-                b_bytes = 48;
-                c_words = 16;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = ((i * 5) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 13) + 1;
-                end
-            end
-
-            198: begin
-                // P11C N-tiling first software-reference case: M=1, N=16, K=8.
-                // N exceeds B-cache max-N=8; K still fits one K tile.
-                dim_m_i = 1;
-                dim_n_i = 16;
-                dim_k_i = 8;
-
-                a_bytes = 8;
-                b_bytes = 128;
-                c_words = 16;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 1) * 2) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 3) * 5) % 17) + 1;
-                end
-            end
-
-            199: begin
-                // P11C N-tiling multi-row case: M=2, N=16, K=8.
-                // N exceeds B-cache max-N=8; two A rows reuse the B payload.
-                dim_m_i = 2;
-                dim_n_i = 16;
-                dim_k_i = 8;
-
-                a_bytes = 16;
-                b_bytes = 128;
-                c_words = 32;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 2) * 3) % 13) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 5) * 7) % 19) + 1;
-                end
-            end
-
-            200: begin
-                // P11C representative N+K tiling case: M=4, N=16, K=16.
-                // N and K both exceed one cache8 tile; C has 64 output words.
-                dim_m_i = 4;
-                dim_n_i = 16;
-                dim_k_i = 16;
-
-                a_bytes = 64;
-                b_bytes = 256;
-                c_words = 64;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 1) * 5) % 17) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 2) * 3) % 23) + 1;
-                end
-            end
-
-            201: begin
-                // P11C irregular N/K tail case: M=3, N=9, K=9.
-                // N tile split is 8+1 and K tile split is 8+1.
-                dim_m_i = 3;
-                dim_n_i = 9;
-                dim_k_i = 9;
-
-                a_bytes = 27;
-                b_bytes = 81;
-                c_words = 27;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 3) * 2) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 4) * 5) % 13) + 1;
-                end
-            end
-
-            202: begin
-                // P11C N-tail + K-tiling case: M=4, N=12, K=16.
-                // N tile split is 8+4 and K tile split is 8+8.
-                dim_m_i = 4;
-                dim_n_i = 12;
-                dim_k_i = 16;
-
-                a_bytes = 64;
-                b_bytes = 192;
-                c_words = 48;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 4) * 3) % 19) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 6) * 5) % 17) + 1;
-                end
-            end
-
-            203: begin
-                // P12C M>4 first software-reference case: M=8, N=8, K=8.
-                // K/N both fit one cache8 tile; C has 64 output words.
-                dim_m_i = 8;
-                dim_n_i = 8;
-                dim_k_i = 8;
-
-                a_bytes = 64;
-                b_bytes = 64;
-                c_words = 64;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 1) * 3) % 17) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 2) * 5) % 19) + 1;
-                end
-            end
-
-            204: begin
-                // P12C M+N case: M=8, N=16, K=8.
-                // N exceeds B-cache max-N=8; K still fits one K tile.
-                dim_m_i = 8;
-                dim_n_i = 16;
-                dim_k_i = 8;
-
-                a_bytes = 64;
-                b_bytes = 128;
-                c_words = 128;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 2) * 3) % 13) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 3) * 5) % 23) + 1;
-                end
-            end
-
-            205: begin
-                // P12C representative M+N+K tiling case: M=8, N=16, K=16.
-                // M, N, and K all exceed the first P12 target tile shape.
-                dim_m_i = 8;
-                dim_n_i = 16;
-                dim_k_i = 16;
-
-                a_bytes = 128;
-                b_bytes = 256;
-                c_words = 128;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 1) * 5) % 17) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 2) * 3) % 23) + 1;
-                end
-            end
-
-            206: begin
-                // P12C irregular M/N/K tail case: M=5, N=9, K=9.
-                // M tail is 2+2+1, N tail is 8+1, and K tail is 8+1.
-                dim_m_i = 5;
-                dim_n_i = 9;
-                dim_k_i = 9;
-
-                a_bytes = 45;
-                b_bytes = 81;
-                c_words = 45;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 3) * 2) % 11) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 4) * 5) % 13) + 1;
-                end
-            end
-
-            207: begin
-                // P12C M-tail + N-tail + K-tiling case: M=7, N=12, K=16.
-                // M tail is 2+2+2+1, N tail is 8+4, and K is 8+8.
-                dim_m_i = 7;
-                dim_n_i = 12;
-                dim_k_i = 16;
-
-                a_bytes = 112;
-                b_bytes = 192;
-                c_words = 84;
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (((i + 4) * 3) % 19) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = (((i + 6) * 5) % 17) + 1;
-                end
-            end
-
-            5, 400, 401, 402, 403: begin
-                dim_m_i = 4;
-                dim_n_i = 4;
-                dim_k_i = 4;
-
-                a_bytes = 16;
-                b_bytes = 16;
-                c_words = 16;
-
-                case (cid)
-                    5, 400: begin
-                        base_a = 32'h0000_0000;
-                        base_b = 32'h0000_0100;
-                        base_c = 32'h0000_0200;
-                    end
-
-                    401: begin
-                        base_a = 32'h0000_0040;
-                        base_b = 32'h0000_0140;
-                        base_c = 32'h0000_0240;
-                    end
-
-                    402: begin
-                        base_a = 32'h0000_0080;
-                        base_b = 32'h0000_0180;
-                        base_c = 32'h0000_0280;
-                    end
-
-                    403: begin
-                        base_a = 32'h0000_0020;
-                        base_b = 32'h0000_0060;
-                        base_c = 32'h0000_00a0;
-                    end
-
-                    default: begin
-                    end
-                endcase
-
-                for (i = 0; i < a_bytes; i++) begin
-                    a_payload[i] = (i % 8) + 1;
-                end
-
-                for (i = 0; i < b_bytes; i++) begin
-                    b_payload[i] = ((i * 3) % 11) + 1;
-                end
+            ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE: begin
+                case_helper.build_configurable_base_case_payload(
+                    cid,
+                    profile_item,
+                    a_flat,
+                    b_flat,
+                    expected_dyn
+                );
             end
 
             default: begin
                 `uvm_fatal("DMA_STORE_SMOKE",
-                    $sformatf("Unsupported CASE_ID=%0d. Supported: 5, 100, 101, 105, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 400, 401, 402, 403", cid))
+                    $sformatf("Unsupported single-job CASE_ID=%0d kind=%0d", cid, kind))
             end
         endcase
 
-        c_bytes = c_words * 4;
+        apply_profile_context(profile_item);
+        copy_expected_payload(expected_dyn);
+        copy_ab_payloads(a_flat, b_flat);
 
         if (!addr_is_beat_aligned(base_c)) begin
             `uvm_fatal("DMA_STORE_SMOKE",
@@ -765,47 +465,14 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
                     dma_store_dst_base))
         end
 
-        compute_expected_c();
-
         `uvm_info("DMA_STORE_SMOKE",
-            $sformatf("Configured CASE_ID=%0d dim=(%0d,%0d,%0d) A=0x%08h B=0x%08h C=0x%08h S2MM_DST=0x%08h A_bytes=%0d B_bytes=%0d C_words=%0d C_bytes=%0d",
+            $sformatf("Configured CASE_ID=%0d dim=(%0d,%0d,%0d) A=0x%08h B=0x%08h C=0x%08h S2MM_DST=0x%08h A_bytes=%0d B_bytes=%0d C_words=%0d C_bytes=%0d accumulate_enable=%0d",
                 cid,
                 dim_m_i, dim_n_i, dim_k_i,
                 base_a, base_b, base_c, dma_store_dst_base,
-                a_bytes, b_bytes, c_words, c_bytes),
+                a_bytes, b_bytes, c_words, c_bytes,
+                accumulate_enable_i),
             UVM_MEDIUM)
-    end
-    endtask
-
-    task automatic compute_expected_c();
-        int unsigned r;
-        int unsigned c;
-        int unsigned kk;
-        int signed sum;
-        int signed aa;
-        int signed bb;
-        int unsigned a_idx;
-        int unsigned b_idx;
-        int unsigned c_idx;
-    begin
-        for (r = 0; r < dim_m_i; r++) begin
-            for (c = 0; c < dim_n_i; c++) begin
-                sum = 0;
-
-                for (kk = 0; kk < dim_k_i; kk++) begin
-                    a_idx = r * dim_k_i + kk;
-                    b_idx = kk * dim_n_i + c;
-
-                    aa = $signed(a_payload[a_idx]);
-                    bb = $signed(b_payload[b_idx]);
-
-                    sum += aa * bb;
-                end
-
-                c_idx = r * dim_n_i + c;
-                expected_c[c_idx] = sum;
-            end
-        end
     end
     endtask
 
@@ -855,6 +522,16 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
             expected_dyn,
             actual_dyn
         );
+    end
+    endtask
+
+    virtual task automatic publish_frontend_result_to_scoreboard(
+        input int unsigned cid,
+        input int signed   expected_dyn[],
+        input int signed   actual_dyn[]
+    );
+    begin
+        publish_result_to_scoreboard(cid, expected_dyn, actual_dyn);
     end
     endtask
 
@@ -909,6 +586,8 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         vif.cb_drv.dim_n <= '0;
         vif.cb_drv.dim_k <= '0;
 
+        vif.cb_drv.accumulate_enable <= 1'b0;
+
         vif.cb_drv.dma_load_start    <= 1'b0;
         vif.cb_drv.dma_src_base_addr <= '0;
         vif.cb_drv.dma_dst_base_addr <= '0;
@@ -922,6 +601,8 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         vif.cb_drv.tb_reset_override_en   <= 1'b0;
         vif.cb_drv.tb_dma_rst_n_override  <= 1'b1;
         vif.cb_drv.tb_core_rst_n_override <= 1'b1;
+
+        accumulate_enable_i = 1'b0;
 
         vif.dma_src_set_rresp_error(1'b0, -1);
         vif.dma_dst_set_bresp_error(1'b0, -1);
@@ -1154,8 +835,8 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         set_monitor_case_context(cid);
 
         `uvm_info("DMA_STORE_SMOKE",
-            $sformatf("Starting GEMM after DMA-loaded A/B: case_id=%0d dim=(%0d,%0d,%0d)",
-                cid, dim_m_i, dim_n_i, dim_k_i),
+            $sformatf("Starting GEMM after DMA-loaded A/B: case_id=%0d dim=(%0d,%0d,%0d) accumulate_enable=%0d",
+                cid, dim_m_i, dim_n_i, dim_k_i, accumulate_enable_i),
             UVM_MEDIUM)
 
         @(vif.cb_drv);
@@ -1165,6 +846,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
         vif.cb_drv.dim_m       <= dim_m_i[DIM_WIDTH-1:0];
         vif.cb_drv.dim_n       <= dim_n_i[DIM_WIDTH-1:0];
         vif.cb_drv.dim_k       <= dim_k_i[DIM_WIDTH-1:0];
+        vif.cb_drv.accumulate_enable <= accumulate_enable_i;
 
         repeat (2) @(vif.cb_drv);
 
@@ -1290,10 +972,201 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
     end
     endtask
 
+    virtual task automatic run_c_rmw_accum_frontend_preload_ab(
+        input int unsigned             cid,
+        input ai_accel_subsys_seq_item job_item
+    );
+    begin
+        preload_dma_source_memory();
+
+        run_dma_load("A", dma_src_a, base_a, a_bytes);
+        run_dma_load("B", dma_src_b, base_b, b_bytes);
+    end
+    endtask
+
+    virtual task automatic run_c_rmw_accum_frontend_gemm(
+        input int unsigned             cid,
+        input ai_accel_subsys_seq_item job_item
+    );
+    begin
+        run_gemm(cid);
+    end
+    endtask
+
+    task automatic configure_c_rmw_accum_recipe_context(
+        input int unsigned cid,
+        output ai_accel_subsys_seq_item recipe_item,
+        output int signed               expected_final_c[]
+    );
+        int signed a_full[];
+        int signed b_full[];
+    begin
+        clear_payload_arrays();
+
+        dma_src_a = 32'h0000_0000;
+        dma_src_b = 32'h0000_0100;
+
+        dma_store_dst_base = 32'h0000_0000;
+        accumulate_enable_i = 1'b0;
+
+        case_helper.build_c_rmw_accum_recipe_expected_payload(
+            cid,
+            recipe_item,
+            a_full,
+            b_full,
+            expected_final_c
+        );
+
+        apply_profile_context(recipe_item);
+        copy_expected_payload(expected_final_c);
+
+        a_bytes = 0;
+        b_bytes = 0;
+
+        if (!addr_is_beat_aligned(base_c)) begin
+            `uvm_fatal("DMA_STORE_SMOKE/C_RMW_ACCUM_ALIGN",
+                $sformatf("base_c must be DATA_WIDTH-byte aligned for C RMW accumulation recipe. base_c=0x%08h",
+                    base_c))
+        end
+
+        if (!addr_is_beat_aligned(dma_store_dst_base)) begin
+            `uvm_fatal("DMA_STORE_SMOKE/C_RMW_ACCUM_ALIGN",
+                $sformatf("dma_store_dst_base must be DATA_WIDTH-byte aligned for C RMW accumulation recipe. dst=0x%08h",
+                    dma_store_dst_base))
+        end
+    end
+    endtask
+
+    task automatic configure_c_rmw_accum_job_context(
+        input ai_accel_subsys_seq_item job_item,
+        input int signed               a_part[],
+        input int signed               b_part[]
+    );
+    begin
+        apply_profile_context(job_item);
+        copy_ab_payloads(a_part, b_part);
+
+        // The current job's C footprint is M*N.  The final expected C
+        // vector remains the full-recipe expected vector loaded before
+        // the first partial job.
+        c_words = job_item.dim_m * job_item.dim_n;
+        c_bytes = c_words * 4;
+    end
+    endtask
+
+    task automatic run_c_rmw_accum_frontend_recipe(input int unsigned cid);
+        ai_accel_subsys_seq_item recipe_item;
+        ai_accel_subsys_seq_item job_item;
+        int signed               expected_final_c[];
+        int signed               a_part[];
+        int signed               b_part[];
+        int signed               expected_partial_c[];
+        int signed               expected_accumulated_c[];
+        int signed               expected_dyn[];
+        int signed               actual_dyn[];
+        int unsigned             job_idx;
+        int unsigned             job_count;
+    begin
+        case_id = cid;
+
+        if (!is_c_rmw_accum_recipe_case(cid)) begin
+            `uvm_fatal("DMA_STORE_SMOKE/C_RMW_ACCUM_BAD_CASE",
+                $sformatf("Unsupported C RMW accumulation recipe CASE_ID=%0d", cid))
+        end
+
+        configure_c_rmw_accum_recipe_context(
+            cid,
+            recipe_item,
+            expected_final_c
+        );
+
+        job_count = case_helper.get_c_rmw_accum_recipe_job_count(cid);
+
+        `uvm_info("DMA_STORE_SMOKE/C_RMW_ACCUM_FE",
+            $sformatf("Starting C RMW accumulation frontend recipe CASE_ID=%0d dim=(%0d,%0d,%0d) jobs=%0d C_words=%0d",
+                cid,
+                recipe_item.dim_m,
+                recipe_item.dim_n,
+                recipe_item.dim_k,
+                job_count,
+                c_words),
+            UVM_LOW)
+
+        clear_c_region();
+        clear_dma_destination_memory();
+
+        for (job_idx = 0; job_idx < job_count; job_idx++) begin
+            case_helper.build_c_rmw_accum_job_payload(
+                cid,
+                job_idx,
+                job_item,
+                a_part,
+                b_part,
+                expected_partial_c,
+                expected_accumulated_c
+            );
+
+            configure_c_rmw_accum_job_context(job_item, a_part, b_part);
+
+            `uvm_info("DMA_STORE_SMOKE/C_RMW_ACCUM_FE",
+                $sformatf("CASE_ID=%0d launching frontend partial job=%0d/%0d dim=(%0d,%0d,%0d) k_base=%0d k_part=%0d accumulate_enable=%0d A_part=%0d B_part=%0d partial_C=%0d",
+                    cid,
+                    job_item.recipe_job_idx,
+                    job_item.recipe_job_count,
+                    job_item.dim_m,
+                    job_item.dim_n,
+                    job_item.dim_k,
+                    job_item.recipe_k_base,
+                    job_item.recipe_k_part,
+                    job_item.accumulate_enable,
+                    a_part.size(),
+                    b_part.size(),
+                    expected_partial_c.size()),
+                UVM_MEDIUM)
+
+            run_c_rmw_accum_frontend_preload_ab(cid, job_item);
+            run_c_rmw_accum_frontend_gemm(cid, job_item);
+
+            `uvm_info("DMA_STORE_SMOKE/C_RMW_ACCUM_FE",
+                $sformatf("CASE_ID=%0d completed frontend partial job=%0d/%0d accumulate_enable=%0d",
+                    cid,
+                    job_item.recipe_job_idx,
+                    job_item.recipe_job_count,
+                    job_item.accumulate_enable),
+                UVM_MEDIUM)
+        end
+
+        // Restore the full-recipe profile before final C store/readback
+        // and scoreboard publication.
+        apply_profile_context(recipe_item);
+        copy_expected_payload(expected_final_c);
+        accumulate_enable_i = 1'b0;
+
+        run_dma_store_c();
+        read_dst_and_compare_c(actual_dyn);
+
+        if (enable_result_check) begin
+            build_expected_result_vector(expected_dyn);
+            publish_frontend_result_to_scoreboard(cid, expected_dyn, actual_dyn);
+        end
+
+        clear_monitor_case_context();
+
+        `uvm_info("DMA_STORE_SMOKE/C_RMW_ACCUM_FE",
+            $sformatf("Completed C RMW accumulation frontend recipe CASE_ID=%0d", cid),
+            UVM_LOW)
+    end
+    endtask
+
     task automatic run_one_case(input int unsigned cid);
         int signed expected_dyn[];
         int signed actual_dyn[];
     begin
+        if (is_c_rmw_accum_recipe_case(cid)) begin
+            run_c_rmw_accum_frontend_recipe(cid);
+            return;
+        end
+
         case_id = cid;
         configure_case(case_id);
 
@@ -1311,7 +1184,7 @@ class ai_accel_subsys_dma_store_smoke_test extends uvm_test;
 
         if (enable_result_check) begin
             build_expected_result_vector(expected_dyn);
-            publish_result_to_scoreboard(case_id, expected_dyn, actual_dyn);
+            publish_frontend_result_to_scoreboard(case_id, expected_dyn, actual_dyn);
         end
 
         clear_monitor_case_context();

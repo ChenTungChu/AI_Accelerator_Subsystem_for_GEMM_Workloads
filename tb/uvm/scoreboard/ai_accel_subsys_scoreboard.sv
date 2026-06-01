@@ -33,6 +33,7 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     localparam int unsigned MIN_VALID_LATENCY = 1;
     localparam int unsigned MAX_VALID_LATENCY = 50000;
     localparam int unsigned MAX_VALID_LATENCY_P12_M_GT4 = 200000;
+    localparam int unsigned MAX_VALID_LATENCY_C_RMW_ACCUM = 300000;
 
     // ------------------------------------------------------------
     // Analysis imports
@@ -59,6 +60,15 @@ class ai_accel_subsys_scoreboard extends uvm_component;
     // ------------------------------------------------------------
     bit          midrun_reset_test_mode;
     int unsigned expected_aborted_job_count;
+
+    // ------------------------------------------------------------
+    // C RMW accumulation result policy
+    //
+    // In final-result-only mode, a multi-job accumulation recipe may
+    // produce multiple DONE-side ctrl events but only one final result
+    // item after the last partial job.
+    // ------------------------------------------------------------
+    bit          c_rmw_accum_final_result_only_mode;
 
     // ------------------------------------------------------------
     // Multi-job pairing state
@@ -104,10 +114,12 @@ class ai_accel_subsys_scoreboard extends uvm_component;
         result_check_enable         = 1'b0;
         midrun_reset_test_mode      = 1'b0;
         expected_aborted_job_count  = 0;
+        c_rmw_accum_final_result_only_mode = 1'b0;
 
         void'(uvm_config_db#(bit)::get(this, "", "result_check_enable", result_check_enable));
         void'(uvm_config_db#(bit)::get(this, "", "midrun_reset_test_mode", midrun_reset_test_mode));
         void'(uvm_config_db#(int unsigned)::get(this, "", "expected_aborted_job_count", expected_aborted_job_count));
+        void'(uvm_config_db#(bit)::get(this, "", "c_rmw_accum_final_result_only_mode", c_rmw_accum_final_result_only_mode));
     endfunction
 
     // ------------------------------------------------------------
@@ -253,8 +265,17 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             check_ctrl_item_profile(item);
             check_ctrl_item_done_latency(item);
 
-            ctrl_q.push_back(item);
-            try_match_jobs();
+            if (!(c_rmw_accum_final_result_only_mode &&
+                  (item.test_kind == ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE))) begin
+                ctrl_q.push_back(item);
+                try_match_jobs();
+            end
+            else begin
+                `uvm_info("SB",
+                    $sformatf("C RMW accumulation final-result-only mode: ctrl DONE for recipe case_id=%0d job_idx=%0d is profile/latency checked but not queued for result pairing",
+                        item.case_id, item.recipe_job_idx),
+                    UVM_LOW)
+            end
             return;
         end
 
@@ -306,8 +327,17 @@ class ai_accel_subsys_scoreboard extends uvm_component;
                 ))
         end
 
-        result_q.push_back(item);
-        try_match_jobs();
+        if (!(c_rmw_accum_final_result_only_mode &&
+              (item.test_kind == ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE))) begin
+            result_q.push_back(item);
+            try_match_jobs();
+        end
+        else begin
+            `uvm_info("SB",
+                $sformatf("C RMW accumulation final-result-only mode: final result case_id=%0d is compare-checked without ctrl/result FIFO pairing",
+                    item.case_id),
+                UVM_LOW)
+        end
     endfunction
 
     // ------------------------------------------------------------
@@ -493,6 +523,107 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             UVM_LOW)
     endfunction
 
+
+    // ------------------------------------------------------------
+    // C RMW accumulation recipe checks
+    // ------------------------------------------------------------
+    function void check_c_rmw_accum_recipe_case(
+        ai_accel_subsys_seq_item item,
+        int unsigned case_id
+    );
+        bit dim_match;
+    begin
+        expect_base_map_item(item, BASE_A_DEFAULT, BASE_B_DEFAULT, BASE_C_DEFAULT,
+                             $sformatf("c_rmw_accum_case_%0d", case_id));
+
+        dim_match = 1'b0;
+
+        case (case_id)
+            208: dim_match = (item.dim_m == 1) && (item.dim_n == 4)  && (item.dim_k == 8);
+            209: dim_match = (item.dim_m == 4) && (item.dim_n == 4)  && (item.dim_k == 8);
+            210: dim_match = (item.dim_m == 4) && (item.dim_n == 16) && (item.dim_k == 8);
+            211: dim_match = (item.dim_m == 8) && (item.dim_n == 16) && (item.dim_k == 8);
+            212: dim_match = (item.dim_m == 5) && (item.dim_n == 9)  &&
+                              ((item.dim_k == 8) || (item.dim_k == 1));
+            default: begin
+                `uvm_error("SB/C_RMW_ACCUM_BAD_CASE",
+                    $sformatf("Unsupported C RMW accumulation recipe case_id=%0d", case_id))
+                return;
+            end
+        endcase
+
+        if (!dim_match) begin
+            `uvm_error("SB/C_RMW_ACCUM_DIM",
+                $sformatf("C RMW accumulation recipe dim mismatch: case_id=%0d dim=(%0d,%0d,%0d) job_idx=%0d k_base=%0d k_part=%0d accum=%0d",
+                    item.case_id,
+                    item.dim_m,
+                    item.dim_n,
+                    item.dim_k,
+                    item.recipe_job_idx,
+                    item.recipe_k_base,
+                    item.recipe_k_part,
+                    item.accumulate_enable))
+            return;
+        end
+
+        // C RMW accumulation focused tests use final-result-only scoreboard mode.
+        // The subsystem monitor observes START/DONE from live control signals,
+        // so the ctrl item may carry only the selected case/kind/dims and a
+        // fallback test_name such as observed_case_208_kind_5.  In that path,
+        // job-level recipe metadata is unavailable even though the base/dim
+        // profile is valid.  Check the profile and latency, but do not require
+        // recipe_job_count / recipe_k_* metadata from such monitor-generated
+        // ctrl items.
+        if (c_rmw_accum_final_result_only_mode &&
+            (item.recipe_job_count != 2)) begin
+            ctrl_profile_pass_count++;
+
+            `uvm_info("SB",
+                $sformatf("Matched C RMW accumulation recipe case %0d with monitor ctrl metadata only: dim=(%0d,%0d,%0d) recipe_job_count=%0d test_name=%s",
+                    case_id,
+                    item.dim_m,
+                    item.dim_n,
+                    item.dim_k,
+                    item.recipe_job_count,
+                    item.test_name),
+                UVM_LOW)
+            return;
+        end
+
+        if (item.recipe_job_count != 2) begin
+            `uvm_error("SB/C_RMW_ACCUM_JOB_COUNT",
+                $sformatf("C RMW accumulation recipe expects job_count=2, got %0d", item.recipe_job_count))
+        end
+
+        if (item.recipe_job_idx >= item.recipe_job_count) begin
+            `uvm_error("SB/C_RMW_ACCUM_JOB_IDX",
+                $sformatf("C RMW accumulation recipe job_idx=%0d exceeds job_count=%0d",
+                    item.recipe_job_idx, item.recipe_job_count))
+        end
+
+        if ((item.recipe_job_idx == 0) && item.accumulate_enable) begin
+            `uvm_error("SB/C_RMW_ACCUM_FIRST_ACCUM",
+                "C RMW accumulation recipe job0 must use accumulate_enable=0")
+        end
+
+        if ((item.recipe_job_idx != 0) && !item.accumulate_enable) begin
+            `uvm_error("SB/C_RMW_ACCUM_LATER_NO_ACCUM",
+                $sformatf("C RMW accumulation recipe job%0d must use accumulate_enable=1", item.recipe_job_idx))
+        end
+
+        ctrl_profile_pass_count++;
+
+        `uvm_info("SB",
+            $sformatf("Matched C RMW accumulation recipe case %0d job_idx=%0d k_base=%0d k_part=%0d accumulate_enable=%0d",
+                case_id,
+                item.recipe_job_idx,
+                item.recipe_k_base,
+                item.recipe_k_part,
+                item.accumulate_enable),
+            UVM_LOW)
+    end
+    endfunction
+
     // ------------------------------------------------------------
     // Top-level control-profile check
     //
@@ -513,6 +644,9 @@ class ai_accel_subsys_scoreboard extends uvm_component;
 
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 check_configurable_base_case(item, item.case_id);
+
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                check_c_rmw_accum_recipe_case(item, item.case_id);
 
             default:
                 `uvm_error("SB/BAD_KIND",
@@ -538,6 +672,10 @@ class ai_accel_subsys_scoreboard extends uvm_component;
                 default:
                     return MAX_VALID_LATENCY;
             endcase
+        end
+
+        if (item.test_kind == ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE) begin
+            return MAX_VALID_LATENCY_C_RMW_ACCUM;
         end
 
         return MAX_VALID_LATENCY;
@@ -720,7 +858,14 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             return;
         end
 
-        if (observed_result_count != expected_completed_count) begin
+        if (c_rmw_accum_final_result_only_mode) begin
+            if (observed_result_count != 1) begin
+                `uvm_error("SB/C_RMW_ACCUM_RESULT_COUNT",
+                    $sformatf("C RMW accumulation final-result-only mode expects exactly one final result item, observed=%0d",
+                        observed_result_count))
+            end
+        end
+        else if (observed_result_count != expected_completed_count) begin
             `uvm_error("SB/RESULT_COUNT",
                 $sformatf("Result count mismatch: observed=%0d expected_completed=%0d",
                     observed_result_count, expected_completed_count))
@@ -756,7 +901,7 @@ class ai_accel_subsys_scoreboard extends uvm_component;
                 $sformatf("Unpaired result items remain in queue: %0d", result_q.size()))
         end
 
-        if (result_check_enable) begin
+        if (result_check_enable && !c_rmw_accum_final_result_only_mode) begin
             if (observed_done_count != observed_result_count) begin
                 `uvm_error("SB/CTRL_RESULT_COUNT",
                     $sformatf("DONE/result count mismatch: done=%0d result=%0d",
@@ -764,12 +909,19 @@ class ai_accel_subsys_scoreboard extends uvm_component;
             end
         end
 
-        if (result_check_enable) begin
+        if (result_check_enable && !c_rmw_accum_final_result_only_mode) begin
             if (matched_job_count != observed_done_count) begin
                 `uvm_error("SB/MATCH_COUNT",
                     $sformatf("matched job count mismatch: matched=%0d done=%0d",
                         matched_job_count, observed_done_count))
             end
+        end
+
+        if (result_check_enable && c_rmw_accum_final_result_only_mode) begin
+            `uvm_info("SB",
+                $sformatf("C RMW accumulation final-result-only pairing policy: done=%0d final_result=%0d matched_fifo=%0d",
+                    observed_done_count, observed_result_count, matched_job_count),
+                UVM_LOW)
         end
 
         if (observed_done_count != expected_completed_count) begin

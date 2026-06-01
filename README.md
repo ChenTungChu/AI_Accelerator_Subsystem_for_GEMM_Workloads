@@ -20,11 +20,11 @@ The current focus is subsystem integration, DMA load/store behavior, AXI-Stream 
 Current milestone:
 
 ```text
-Performance GEMM P12: M-Dimension Tiling Completed
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
 
 Regression:
-  TOTAL : 74
-  PASS  : 74
+  TOTAL : 82
+  PASS  : 82
   FAIL  : 0
 ```
 
@@ -43,9 +43,10 @@ GEMM_MAC_LANES=4 + scaled cache8 large-dimension representative regression
 GEMM_MAC_LANES=4 + K-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + N-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + M-tiling representative regression across DMA / AXI-Stream / Direct Stream
+GEMM_MAC_LANES=4 + C RMW accumulation focused and frontend representative regression
 ```
 
-Validated P12 M-tiling configuration:
+Validated P13 C RMW accumulation representative configuration:
 
 ```text
 GEMM_MAC_LANES=4
@@ -62,6 +63,8 @@ GEMM_ENABLE_N_TILING=1
 GEMM_N_TILE_SIZE=8
 GEMM_ENABLE_M_TILING=1
 GEMM_M_TILE_SIZE=2
+GEMM_ENABLE_C_RMW_ACCUM=1
+ACCUMULATE_ENABLE=0
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -70,14 +73,18 @@ P11 extends the P10 row-accumulator model to output-column tiling.  It supports 
 
 P12 extends the P11 tiled model to M-dimension tiling.  It supports `M_total` larger than the local M tile size by grouping output rows into local M tiles and accumulating a local M/N output tile before final C writeback.
 
-P12 scope:
+P13 extends the P12 tiled model to external partial-K accumulation.  Multiple GEMM jobs can contribute partial sums to the same C region by optionally reading old C from scratchpad, adding the current partial sum, and writing the accumulated result back.
+
+P13 scope:
 
 ```text
-M-dimension / multi-row output tile scheduling
-K tiling composes with N tiling and M tiling
-B tiles are reused across active local M rows inside one M tile
-Scratchpad C read-modify-write accumulation is not used in P12
-M/N/K-tiled jobs use conservative scalar tile preload in the first implementation
+C read-modify-write accumulation across external partial-K GEMM jobs
+GEMM_ENABLE_C_RMW_ACCUM enables the optional datapath
+accumulate_enable is driven per job by the control sequence
+job0 uses accumulate_enable=0 and writes the first partial C
+job1 and later jobs use accumulate_enable=1 and add to old C
+K/N/M tiling composes with C RMW accumulation
+Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchpad
 ```
 
 ---
@@ -121,6 +128,7 @@ parameter bit GEMM_ENABLE_N_TILING              = 1'b0
 parameter int GEMM_N_TILE_SIZE                  = 8
 parameter bit GEMM_ENABLE_M_TILING              = 1'b0
 parameter int GEMM_M_TILE_SIZE                  = 2
+parameter bit GEMM_ENABLE_C_RMW_ACCUM           = 1'b0
 ```
 
 Supported lane settings:
@@ -155,6 +163,10 @@ P11 N-tiling opt-in:
 P12 M-tiling opt-in:
   GEMM_ENABLE_M_TILING=1
   GEMM_M_TILE_SIZE=2
+
+P13 C RMW accumulation opt-in:
+  GEMM_ENABLE_C_RMW_ACCUM=1
+  accumulate_enable is captured per GEMM job
 ```
 
 The default remains:
@@ -168,6 +180,8 @@ GEMM_ENABLE_PACKED_A_ROW_PRELOAD=0
 GEMM_ENABLE_K_TILING=0
 GEMM_ENABLE_N_TILING=0
 GEMM_ENABLE_M_TILING=0
+GEMM_ENABLE_C_RMW_ACCUM=0
+ACCUMULATE_ENABLE=0
 ```
 
 This preserves existing regression behavior unless the run script explicitly overrides the performance parameters.
@@ -314,6 +328,40 @@ B tile is reused across active local M rows inside one M tile
 Scratchpad C read-modify-write accumulation is not used in P12
 ```
 
+### P13 C read-modify-write partial accumulation
+
+When `GEMM_ENABLE_C_RMW_ACCUM=1`, the final C writeback point can optionally read old C from scratchpad before writing the new result.
+
+For each output element in one partial job:
+
+```text
+partial_sum = current job dot product
+
+if accumulate_enable == 0:
+  C_new = partial_sum
+
+if accumulate_enable == 1:
+  C_old = scratchpad_read(C_addr)
+  C_new = C_old + partial_sum
+
+scratchpad_write(C_addr, C_new)
+```
+
+The standard P13 recipe uses compact per-job A/B payloads and keeps `base_c`, M, and N constant across partial jobs.
+
+Validated P13 policy:
+
+```text
+GEMM_ENABLE_C_RMW_ACCUM = 1
+ACCUMULATE_ENABLE = 0 at top-level default
+per-job accumulate_enable is driven by the UVM recipe
+job0 writes partial_sum directly
+job1 reads old C and accumulates the second partial sum
+Done waits for final C RMW write completion
+```
+
+Direct Stream mode keeps the same A/B operand-buffer policy, but C RMW old-C reads and C writes route to scratchpad.
+
 ### GEMM completion semantics
 
 `gemm_top.done` means:
@@ -357,6 +405,15 @@ For P11 N-tiling, the MAC counter counts logical MACs across all K tiles and N t
 
 For P12 M-tiling, the MAC counter counts logical MACs across all M tiles, N tiles, and K tiles.
 
+For P13 C RMW recipes, counters remain per GEMM job:
+
+```text
+gemm_perf_mac_count    = M * N * K_part
+gemm_perf_output_count = M * N
+```
+
+Across the full external recipe, the logical MAC count is the sum of all partial jobs. C RMW read transactions do not increase `gemm_perf_mac_count`.
+
 ---
 
 ## Validated Case Groups
@@ -368,6 +425,7 @@ P9 larger dimension  : CASE_ID 190, 191, 192
 P10 K-tiling cases   : CASE_ID 193, 194, 195, 196, 197
 P11 N-tiling cases   : CASE_ID 198, 199, 200, 201, 202
 P12 M-tiling cases   : CASE_ID 203, 204, 205, 206, 207
+P13 C RMW recipes    : CASE_ID 208, 209, 210, 211, 212
 Configurable base    : CASE_ID 400, 401, 402, 403
 RUN_ALL recipe       : 100 -> 101 -> 105 -> 5 -> 400 -> 401 -> 402 -> 403
 Corner recipe        : 5 -> 101 -> 105 -> 403
@@ -393,6 +451,18 @@ CASE_ID | M | N  | K  | MACS | OUTPUTS | Purpose
 200     | 4 | 16 | 16 | 1024 | 64      | representative N tiling + K tiling case
 201     | 3 | 9  | 9  | 243  | 27      | N tail 8+1 and K tail 8+1
 202     | 4 | 12 | 16 | 768  | 48      | N tail 8+4 and K tiles 8+8
+```
+
+
+P13 focused recipes:
+
+```text
+CASE_ID | M | N  | K_total | Parts | OUTPUTS | Purpose
+208     | 1 | 4  | 16      | 8+8   | 4       | minimum two-job accumulation smoke
+209     | 4 | 4  | 16      | 8+8   | 16      | multi-row accumulation
+210     | 4 | 16 | 16      | 8+8   | 64      | accumulation with N tiling
+211     | 8 | 16 | 16      | 8+8   | 128     | accumulation with M and N tiling
+212     | 5 | 9  | 9       | 8+1   | 45      | ragged M/N and tail K partition
 ```
 
 ---
@@ -454,7 +524,15 @@ DMA / Direct Stream source memory
     -> result_bridge / scoreboard
 ```
 
-P10/P11/P12 do not change any frontend protocol. The K/N/M-tiled GEMM path uses the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
+P10/P11/P12/P13 do not change any frontend protocol. The K/N/M-tiled GEMM path and the C RMW accumulation path use the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
+
+Direct Stream routing policy with P13 C RMW enabled:
+
+```text
+GEMM A/B reads          -> operand buffer
+GEMM C RMW old-C reads  -> scratchpad adapter
+GEMM C writes           -> scratchpad adapter
+```
 
 ---
 
@@ -512,6 +590,8 @@ Current UVM regression covers:
 - P11 N-tiling DMA / AXI-Stream / Direct Stream representative regression
 - P12 M-tiling host-primary focused cases
 - P12 M-tiling DMA / AXI-Stream / Direct Stream representative regression
+- P13 C RMW accumulation focused cases
+- P13 C RMW DMA / AXI-Stream / Direct Stream representative regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -522,11 +602,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 74 items and is passing:
+The current full UVM regression contains 82 items and is passing:
 
 ```text
-TOTAL : 74
-PASS  : 74
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -588,8 +668,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 74
-PASS  : 74
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -930,6 +1010,72 @@ do run_uvm.tcl
 
 ---
 
+
+## Useful P13 Single-Test Runs
+
+### P13 host-primary C RMW focused recipe
+
+```tcl
+set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 211
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 300000
+set GEMM_ENABLE_C_RMW_ACCUM 1
+set ACCUMULATE_ENABLE 0
+do run_uvm.tcl
+```
+
+### P13 DMA load-store C RMW representative recipe
+
+```tcl
+set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 211
+set STORE_STRESS_JOB_COUNT 1
+set STORE_STRESS_RANDOM 0
+set STORE_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 300000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+set GEMM_ENABLE_C_RMW_ACCUM 1
+set ACCUMULATE_ENABLE 0
+do run_uvm.tcl
+```
+
+For AXI-Stream or Direct Stream C RMW representative runs, switch only the frontend test and stress knobs:
+
+```text
+AXI-Stream:
+  UVM_TEST = ai_accel_subsys_axis_stream_load_store_stress_test
+  AXIS_STRESS_JOB_COUNT=1
+  AXIS_STRESS_RANDOM=0
+
+Direct Stream:
+  UVM_TEST = ai_accel_subsys_direct_stream_load_store_stress_test
+  DS_STRESS_JOB_COUNT=1
+  DS_STRESS_RANDOM=0
+```
+
+---
+
 ## Known Warning
 
 Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
@@ -947,7 +1093,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P12: M-Dimension Tiling Completed
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -979,15 +1125,23 @@ Completed:
   P12F: frontend compatibility sanity                     PASS
   P12G: regression integration                            PASS
   P12H: documentation / closure update                    PASS
+  P13A: C RMW / partial accumulation spec                  PASS
+  P13B: safe C RMW parameter / control-bit plumbing        PASS
+  P13C: partial-sum recipe / reference support             PASS
+  P13D: RTL C RMW datapath                                 PASS
+  P13E: host-primary focused validation                    PASS
+  P13F: frontend compatibility sanity                      PASS
+  P13G: regression integration                             PASS
+  P13H: documentation / closure update                     PASS
 
 Regression:
-  74/74 PASS
+  82/82 PASS
 ```
 
 ---
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, and M-dimension multi-row output tile scheduling.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, and C read-modify-write partial accumulation.
 
-P12 proves that the 4-lane cache-backed GEMM path can handle `K_total`, `N_total`, and `M_total` larger than the local tile capacities by composing K tiles, N tiles, and M tiles while writing each final C output once after all tile accumulation completes.
+P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.

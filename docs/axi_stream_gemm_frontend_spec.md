@@ -32,13 +32,24 @@ DMA load A/B
 
 The AXI-Stream frontend milestone has now been implemented and verified.
 
-Current full regression baseline:
+Current full regression baseline at AXI-Stream V1 closure:
 
 ```text
 TOTAL : 29
 PASS  : 29
 FAIL  : 0
 ```
+
+
+Current project status after P13 closure:
+
+```text
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
+```
+
+The AXI-Stream frontend remains compatible with the P13 C RMW accumulation path. AXI-Stream preload supplies compact A/B partial-job payloads through scratchpad, while GEMM C RMW old-C reads and C writes remain scratchpad-backed.
+
 
 ---
 
@@ -973,6 +984,41 @@ Completed coverage:
 
 ---
 
+
+### 13.6 P13 C RMW Accumulation Compatibility
+
+The AXI-Stream load-store path was validated with the P13 C RMW accumulation recipe.
+
+P13 AXI-Stream representative recipe:
+
+```text
+CASE_ID=211 : M=8, N=16, K_total=16
+External K partition: 8 + 8
+Job 0: accumulate_enable=0
+Job 1: accumulate_enable=1
+```
+
+Flow:
+
+```text
+for each partial job:
+  AXI-Stream preload A_part into scratchpad
+  AXI-Stream preload B_part into scratchpad
+  launch GEMM with per-job accumulate_enable
+
+after the final partial job:
+  DMA store final C
+  scoreboard compare
+```
+
+P13 AXI-Stream validation completed:
+
+```text
+AXI-Stream load-store CASE_ID=211 PASS
+Representative full-regression C RMW AXI-Stream item PASS
+Full regression after P13G 82/82 PASS
+```
+
 ## 14. Regression Plan and Current Status
 
 Baseline before AXI-Stream frontend:
@@ -1013,13 +1059,24 @@ Full regression: 28 / 28 PASS
 Full regression: 29 / 29 PASS
 ```
 
-Current full regression baseline:
+Current full regression baseline at AXI-Stream V1 closure:
 
 ```text
 TOTAL : 29
 PASS  : 29
 FAIL  : 0
 ```
+
+
+Current project status after P13 closure:
+
+```text
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
+```
+
+The AXI-Stream frontend remains compatible with the P13 C RMW accumulation path. AXI-Stream preload supplies compact A/B partial-job payloads through scratchpad, while GEMM C RMW old-C reads and C writes remain scratchpad-backed.
+
 
 ---
 
@@ -1042,6 +1099,7 @@ Completed criteria:
 11. AXI-Stream CDC clock-ratio sanity passes.
 12. No GEMM compute datapath rewrite was required.
 13. No BRAM interface semantic change was required.
+14. P13 C RMW accumulation is compatible with AXI-Stream load-store representative `CASE_ID=211`.
 
 ---
 
@@ -1155,3 +1213,36 @@ Open questions for Option B:
 - should S2MM write C directly from compute output?
 
 Option B should not begin unless the current 29/29 Option A regression baseline remains preserved.
+
+
+### AXI-Stream load-store, 4-lane + C RMW CASE_ID=211
+
+```tcl
+set UVM_TEST ai_accel_subsys_axis_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 211
+set AXIS_STRESS_JOB_COUNT 1
+set AXIS_STRESS_RANDOM 0
+set AXIS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 300000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+set GEMM_ENABLE_C_RMW_ACCUM 1
+set ACCUMULATE_ENABLE 0
+do run_uvm.tcl
+```

@@ -14,6 +14,17 @@ module axis_scratchpad_write_adapter #(
     input  logic                     rst_n,
 
     // ------------------------------------------------------------
+    // Module role
+    //
+    // Converts axi_stream_loader linear write requests into
+    // single-beat AXI-MM writes toward scratchpad Port1.
+    //
+    // This adapter is used by the AXI-Stream A/B preload path only.
+    // It is not part of GEMM runtime C writes or P13 C RMW old-C
+    // reads; those use the GEMM local-memory scratchpad path.
+    // ------------------------------------------------------------
+
+    // ------------------------------------------------------------
     // Status clear
     //
     // Intended usage:
@@ -25,11 +36,12 @@ module axis_scratchpad_write_adapter #(
     // Linear write-request input
     //
     // Source:
-    //   axi_stream_loader wr_* output
+    //   axi_stream_loader wr_* output.
     //
     // Semantics:
-    //   wr_ready means this adapter has accepted the write request.
-    //   The AXI write response may complete later.
+    //   wr_ready means this adapter has accepted one loader write
+    //   request. The corresponding AXI write response may complete
+    //   later.
     // ------------------------------------------------------------
     input  logic                     wr_valid,
     output logic                     wr_ready,
@@ -42,7 +54,7 @@ module axis_scratchpad_write_adapter #(
     // AXI-MM write address channel
     //
     // Target:
-    //   scratchpad Port1 write path
+    //   scratchpad Port1 STREAM_LOAD owner input.
     // ------------------------------------------------------------
     output logic [ID_WIDTH-1:0]      m_axi_awid,
     output logic [ADDR_WIDTH-1:0]    m_axi_awaddr,
@@ -108,6 +120,10 @@ module axis_scratchpad_write_adapter #(
 
     // ------------------------------------------------------------
     // Captured write request
+    //
+    // One linear loader write is converted into one single-beat AXI
+    // write. AW and W may handshake in either order; the adapter
+    // waits for both before accepting the B response.
     // ------------------------------------------------------------
     logic [ADDR_WIDTH-1:0]   req_addr_q;
     logic [DATA_WIDTH-1:0]   req_data_q;

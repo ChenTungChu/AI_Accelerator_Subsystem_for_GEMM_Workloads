@@ -122,6 +122,12 @@ interface ai_accel_subsys_ctrl_if #(
     logic [DIM_WIDTH-1:0]  dim_n;
     logic [DIM_WIDTH-1:0]  dim_k;
 
+    // C RMW accumulation runtime control bit.
+    // When GEMM_ENABLE_C_RMW_ACCUM=1 in the DUT, this bit selects
+    // whether the current GEMM job overwrites C or accumulates into
+    // the existing C contents.
+    logic                  accumulate_enable;
+
     // ------------------------------------------------------------
     // DMA / AXIS / Direct-stream source memory model storage
     //
@@ -420,6 +426,9 @@ interface ai_accel_subsys_ctrl_if #(
         output dim_n;
         output dim_k;
 
+        // C RMW accumulation runtime control
+        output accumulate_enable;
+
         // Reset override control
         output tb_reset_override_en;
         output tb_dma_rst_n_override;
@@ -503,6 +512,9 @@ interface ai_accel_subsys_ctrl_if #(
         input dim_m;
         input dim_n;
         input dim_k;
+
+        // C RMW accumulation runtime control observation
+        input accumulate_enable;
 
         input tb_reset_override_en;
         input tb_dma_rst_n_override;

@@ -16,7 +16,16 @@ module dma_store_engine #(
     // ------------------------------------------------------------
     // Simple control interface
     //
-    // v1 behavior:
+    // Role:
+    //   Store final C data from scratchpad to destination memory
+    //   after GEMM completion.
+    //
+    // P13 note:
+    //   The store engine is not aware of partial-K jobs. For C RMW
+    //   accumulation flows, software/testbench sequencing launches
+    //   this store only after the final partial job has completed.
+    //
+    // Behavior:
     //   - one store job at a time
     //   - store_byte_count must be non-zero
     //   - src_base_addr and dst_base_addr must be beat-aligned
@@ -44,6 +53,9 @@ module dma_store_engine #(
 
     // ------------------------------------------------------------
     // Scratchpad AXI-MM read master
+    //
+    // Reads C data from scratchpad Port0 through the Port0 owner mux
+    // while DMA_STORE owns the port.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  spad_axi_arid,
     output logic [ADDR_WIDTH-1:0]    spad_axi_araddr,
@@ -62,6 +74,9 @@ module dma_store_engine #(
 
     // ------------------------------------------------------------
     // Destination AXI-MM write master
+    //
+    // Writes the stored C payload into the external destination
+    // memory model / S2MM target.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  dst_axi_awid,
     output logic [ADDR_WIDTH-1:0]    dst_axi_awaddr,
@@ -111,6 +126,9 @@ module dma_store_engine #(
 
     // ------------------------------------------------------------
     // Latched store parameters / current beat tracking
+    //
+    // remaining_bytes_q is byte-based so the final AXI write can
+    // generate a partial WSTRB when C byte count is not beat-aligned.
     // ------------------------------------------------------------
     logic [ADDR_WIDTH-1:0] curr_src_addr_q;
     logic [ADDR_WIDTH-1:0] curr_dst_addr_q;

@@ -9,9 +9,8 @@ module gemm_operand_buffer #(
     parameter int RD_DATA_WIDTH  = 32,
 
     // Byte capacity for each operand buffer.
-    //
-    // Current project cases are small, but keep this comfortably
-    // larger than the current A/B matrix payload footprint.
+    // Keep these larger than the directed A/B payload footprints used
+    // by the current Direct Stream frontend tests.
     parameter int A_BUFFER_BYTES = 1024,
     parameter int B_BUFFER_BYTES = 1024
 )(
@@ -60,7 +59,7 @@ module gemm_operand_buffer #(
     // Read side
     //
     // Source:
-    //   future gemm_input_mem_router
+    //   gemm_input_mem_router
     //
     // Addressing:
     //   rd_addr is a local byte offset within selected operand buffer.
@@ -104,9 +103,9 @@ module gemm_operand_buffer #(
     // ------------------------------------------------------------
     // Operand storage
     //
-    // Byte-addressed storage keeps the interface simple because
-    // A/B are compact int8 payloads and GEMM local reads can request
-    // byte offsets.
+    // Byte-addressed storage keeps Direct Stream simple: A/B are
+    // compact int8 payloads, and GEMM local reads use byte offsets.
+    // C data is not stored here; C stays in scratchpad.
     // ------------------------------------------------------------
     logic [7:0] a_mem [0:A_BUFFER_BYTES-1];
     logic [7:0] b_mem [0:B_BUFFER_BYTES-1];

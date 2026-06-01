@@ -14,10 +14,9 @@ module dma_scratchpad_write_adapter #(
     // ------------------------------------------------------------
     // Upstream linear write request from axi_stream_loader
     //
-    // v1 assumptions:
-    //   - address is already beat-aligned
-    //   - full-beat write is the normal mode
-    //   - one request is accepted at a time
+    // Converts one accepted loader beat into one single-beat AXI-MM
+    // scratchpad write. The upstream engine controls the session; this
+    // adapter tracks beats until the accepted request marked src_wr_last.
     // ------------------------------------------------------------
     input  logic                     src_wr_valid,
     output logic                     src_wr_ready,
@@ -28,6 +27,9 @@ module dma_scratchpad_write_adapter #(
 
     // ------------------------------------------------------------
     // Session / debug status
+    //
+    // Counters are per stream-load session. error is sticky for the
+    // current session and records AXI write-response failures.
     // ------------------------------------------------------------
     output logic                     busy,
     output logic                     done,
@@ -38,6 +40,9 @@ module dma_scratchpad_write_adapter #(
 
     // ------------------------------------------------------------
     // AXI-MM write master toward scratchpad
+    //
+    // Emits single-beat INCR writes. AW and W may complete in either
+    // order; B response completion commits the accepted beat.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  m_axi_awid,
     output logic [ADDR_WIDTH-1:0]    m_axi_awaddr,
@@ -59,7 +64,9 @@ module dma_scratchpad_write_adapter #(
     output logic                     m_axi_bready,
 
     // ------------------------------------------------------------
-    // AXI-MM read channel (unused in v1)
+    // AXI-MM read channel
+    //
+    // This adapter is write-only. Read master outputs are tied idle.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  m_axi_arid,
     output logic [ADDR_WIDTH-1:0]    m_axi_araddr,
@@ -94,6 +101,8 @@ module dma_scratchpad_write_adapter #(
 
     // ------------------------------------------------------------
     // One-entry request buffer
+    //
+    // Holds the accepted loader beat while AW/W/B handshakes complete.
     // ------------------------------------------------------------
     logic                  buf_valid;
     logic [ADDR_WIDTH-1:0] buf_addr;
@@ -137,6 +146,8 @@ module dma_scratchpad_write_adapter #(
 
     // ------------------------------------------------------------
     // Upstream ready
+    //
+    // Accept a new loader beat only when no AXI write is outstanding.
     // ------------------------------------------------------------
     always_comb begin
         src_wr_ready = (state == S_WAIT_REQ);
@@ -264,7 +275,7 @@ module dma_scratchpad_write_adapter #(
             case (state)
                 S_WAIT_REQ: begin
                     if (req_fire) begin
-                        // New session starts on first accepted beat
+                        // Start a new session on the first accepted beat.
                         if (!session_active) begin
                             accepted_beats  <= '0;
                             committed_beats <= '0;
@@ -325,7 +336,7 @@ module dma_scratchpad_write_adapter #(
                 end
 
                 S_DONE_PULSE: begin
-                    // hold sticky status until next session starts
+                    // Hold sticky status until the next session starts.
                 end
 
                 default: begin

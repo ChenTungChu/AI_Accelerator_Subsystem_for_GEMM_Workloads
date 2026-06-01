@@ -1,4 +1,5 @@
 # File: sim/run_uvm.tcl
+# P13D6_SANITY: this replacement run_uvm.tcl supports ai_accel_subsys_c_rmw_accum_dut_test and forwards RUN_ALL.
 file mkdir logs
 
 # --------------------------------------------------
@@ -62,6 +63,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_direct_stream_load_store_stress_test \
     ai_accel_subsys_perf_counter_smoke_test \
     ai_accel_subsys_perf_profile_test \
+    ai_accel_subsys_c_rmw_accum_ref_model_test \
+    ai_accel_subsys_c_rmw_accum_dut_test \
 ]
 
 # --------------------------------------------------
@@ -96,6 +99,10 @@ if {![info exists CASE_ID]} {
     set CASE_ID 0
 }
 
+if {($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test") && ($CASE_ID == 0)} {
+    set CASE_ID 208
+}
+
 # --------------------------------------------------
 # Result checking
 #
@@ -105,6 +112,10 @@ if {![info exists CASE_ID]} {
 # --------------------------------------------------
 if {![info exists ENABLE_RESULT_CHECK]} {
     set ENABLE_RESULT_CHECK 0
+}
+
+if {$UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test"} {
+    set ENABLE_RESULT_CHECK 1
 }
 
 # --------------------------------------------------
@@ -161,6 +172,29 @@ if {$FORCE_HELPER_MEM_PATH} {
     set MEM_PATH_MODE helper_fallback
 } else {
     set MEM_PATH_MODE host_primary
+}
+
+# --------------------------------------------------
+# P13 C RMW runtime control bit
+#
+# Default:
+#   ACCUMULATE_ENABLE=0 keeps the current P12 write-final-C behavior.
+#
+# Manual P13B plumbing smoke:
+#   set GEMM_ENABLE_C_RMW_ACCUM 1
+#   set ACCUMULATE_ENABLE 0
+#   do run_uvm.tcl
+#
+# Note:
+#   P13B only propagates the control bit. RTL C read-modify-write
+#   accumulation behavior is implemented in a later step.
+# --------------------------------------------------
+if {![info exists ACCUMULATE_ENABLE]} {
+    set ACCUMULATE_ENABLE 0
+}
+
+if {($ACCUMULATE_ENABLE != 0) && ($ACCUMULATE_ENABLE != 1)} {
+    error "Unsupported ACCUMULATE_ENABLE='$ACCUMULATE_ENABLE'. Supported values: 0, 1"
 }
 
 # --------------------------------------------------
@@ -282,7 +316,9 @@ if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
-    ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test")} {
+    ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
 
     if {![info exists RUN_ALL]} {
         set RUN_ALL 0
@@ -747,10 +783,35 @@ if {$GEMM_M_TILE_SIZE <= 0} {
     error "Unsupported GEMM_M_TILE_SIZE='$GEMM_M_TILE_SIZE'. Must be > 0"
 }
 
+# --------------------------------------------------
+# GEMM C RMW accumulation parameter
+#
+# P13B safe parameter plumbing.
+# Default:
+#   GEMM_ENABLE_C_RMW_ACCUM=0 keeps the current P12 baseline.
+#
+# Manual P13B plumbing smoke:
+#   set GEMM_ENABLE_C_RMW_ACCUM 1
+#   set ACCUMULATE_ENABLE 0
+#   do run_uvm.tcl
+#
+# Note:
+#   P13B only propagates/elaborates the parameter. RTL C RMW
+#   behavior remains the P12 final-C-write path until the C RMW
+#   datapath is implemented in a later step.
+# --------------------------------------------------
+if {![info exists GEMM_ENABLE_C_RMW_ACCUM]} {
+    set GEMM_ENABLE_C_RMW_ACCUM 0
+}
+
+if {($GEMM_ENABLE_C_RMW_ACCUM != 0) && ($GEMM_ENABLE_C_RMW_ACCUM != 1)} {
+    error "Unsupported GEMM_ENABLE_C_RMW_ACCUM='$GEMM_ENABLE_C_RMW_ACCUM'. Supported values: 0, 1"
+}
 
 
-puts "\[run_uvm\] UVM_TEST=$UVM_TEST CASE_ID=$CASE_ID ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH SMOKE_DONE_TIMEOUT=$SMOKE_DONE_TIMEOUT_MODE"
-puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD GEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING GEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE GEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING GEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE GEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING GEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE"
+
+puts "\[run_uvm\] UVM_TEST=$UVM_TEST CASE_ID=$CASE_ID ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE SMOKE_DONE_TIMEOUT=$SMOKE_DONE_TIMEOUT_MODE"
+puts "\[run_uvm\] GEMM_MAC_LANES=$GEMM_MAC_LANES GEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE GEMM_B_CACHE_MAX_K=$GEMM_B_CACHE_MAX_K GEMM_B_CACHE_MAX_N=$GEMM_B_CACHE_MAX_N GEMM_ENABLE_PACKED_BCACHE_PRELOAD=$GEMM_ENABLE_PACKED_BCACHE_PRELOAD GEMM_ENABLE_A_ROW_CACHE=$GEMM_ENABLE_A_ROW_CACHE GEMM_A_ROW_CACHE_MAX_K=$GEMM_A_ROW_CACHE_MAX_K GEMM_ENABLE_PACKED_A_ROW_PRELOAD=$GEMM_ENABLE_PACKED_A_ROW_PRELOAD GEMM_ENABLE_K_TILING=$GEMM_ENABLE_K_TILING GEMM_K_TILE_SIZE=$GEMM_K_TILE_SIZE GEMM_ENABLE_N_TILING=$GEMM_ENABLE_N_TILING GEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE GEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING GEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE GEMM_ENABLE_C_RMW_ACCUM=$GEMM_ENABLE_C_RMW_ACCUM"
 
 
 # --------------------------------------------------
@@ -790,7 +851,9 @@ if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
           ($UVM_TEST eq "ai_accel_subsys_dma_store_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
-          ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test")} {
+          ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
+          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
+          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
     if {$RUN_ALL} {
         set LOG_BASENAME ${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
@@ -839,6 +902,8 @@ set LOG_BASENAME [string map [list \
     "dma_store_error_test" "dma_s_err" \
     "perf_counter_smoke_test" "perf_cnt" \
     "perf_profile_test" "perf_prof" \
+    "c_rmw_accum_ref_model_test" "c_rmw_ref" \
+    "c_rmw_accum_dut_test" "c_rmw_dut" \
     "back_to_back_test" "b2b" \
     "reset_recovery_test" "rst_rec" \
     "corner_test" "corner" \
@@ -870,7 +935,9 @@ set LOG_BASENAME [string map [list \
 # ns = GEMM_N_TILE_SIZE
 # mt = GEMM_ENABLE_M_TILING
 # ms = GEMM_M_TILE_SIZE
-set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}_nt${GEMM_ENABLE_N_TILING}_ns${GEMM_N_TILE_SIZE}_mt${GEMM_ENABLE_M_TILING}_ms${GEMM_M_TILE_SIZE}.log"] $LOG_BASENAME]
+# cr = GEMM_ENABLE_C_RMW_ACCUM
+# ae = ACCUMULATE_ENABLE
+set LOG_BASENAME [string map [list ".log" "_l${GEMM_MAC_LANES}_bc${GEMM_ENABLE_B_CACHE}_bk${GEMM_B_CACHE_MAX_K}_bn${GEMM_B_CACHE_MAX_N}_pb${GEMM_ENABLE_PACKED_BCACHE_PRELOAD}_ar${GEMM_ENABLE_A_ROW_CACHE}_ak${GEMM_A_ROW_CACHE_MAX_K}_pa${GEMM_ENABLE_PACKED_A_ROW_PRELOAD}_kt${GEMM_ENABLE_K_TILING}_ks${GEMM_K_TILE_SIZE}_nt${GEMM_ENABLE_N_TILING}_ns${GEMM_N_TILE_SIZE}_mt${GEMM_ENABLE_M_TILING}_ms${GEMM_M_TILE_SIZE}_cr${GEMM_ENABLE_C_RMW_ACCUM}_ae${ACCUMULATE_ENABLE}.log"] $LOG_BASENAME]
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
@@ -907,12 +974,14 @@ vsim -L uvm12 \
   -gGEMM_N_TILE_SIZE=$GEMM_N_TILE_SIZE \
   -gGEMM_ENABLE_M_TILING=$GEMM_ENABLE_M_TILING \
   -gGEMM_M_TILE_SIZE=$GEMM_M_TILE_SIZE \
+  -gGEMM_ENABLE_C_RMW_ACCUM=$GEMM_ENABLE_C_RMW_ACCUM \
   work.ai_accel_subsys_uvm_top \
   -uvmcontrol=all \
   +UVM_TESTNAME=$UVM_TEST \
   +CASE_ID=$CASE_ID \
   +ENABLE_RESULT_CHECK=$ENABLE_RESULT_CHECK \
   +FORCE_HELPER_MEM_PATH=$FORCE_HELPER_MEM_PATH \
+  +ACCUMULATE_ENABLE=$ACCUMULATE_ENABLE \
   {*}$SMOKE_DONE_TIMEOUT_ARG_LIST \
   {*}$LEGACY_HOST_OVERRIDE_ARGS \
   {*}$JOB_ARG_LIST \

@@ -22,33 +22,37 @@ module ai_accel_subsys #(
     parameter int GEMM_B_CACHE_MAX_K  = 4,
     parameter int GEMM_B_CACHE_MAX_N  = 4,
 
-    // P5 packed B-cache preload.
-    // Default-off so the current baseline behavior is unchanged unless explicitly enabled.
+    // Packed B-cache preload.
+    // Default-off to preserve the scalar/cache baseline unless enabled by the run script.
     parameter bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0,
 
-    // P6 safe parameter patch.
-    // Default-off so the current P5 baseline behavior is unchanged.
+    // A-row cache.
+    // Default-off to preserve the B-cache baseline unless enabled by the run script.
     parameter bit GEMM_ENABLE_A_ROW_CACHE = 1'b0,
     parameter int GEMM_A_ROW_CACHE_MAX_K  = 4,
 
-    // P7 safe parameter patch.
-    // Default-off so the current P6 baseline behavior is unchanged.
+    // Packed A-row preload.
+    // Default-off to preserve the scalar A-row preload baseline.
     parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0,
 
-    // P10 K-tiling parameterization.
-    // Default-off so the pre-P10 baseline behavior is unchanged.
+    // K-dimension tiling.
+    // Default-off so non-tiled jobs keep the original single-job behavior.
     parameter bit GEMM_ENABLE_K_TILING = 1'b0,
     parameter int GEMM_K_TILE_SIZE     = 8,
 
-    // P11B safe parameter plumbing.
-    // Default-off so the current P10 baseline behavior is unchanged.
+    // N-dimension / output-column tiling.
+    // Default-off so K-only tiled jobs keep their existing behavior.
     parameter bit GEMM_ENABLE_N_TILING = 1'b0,
     parameter int GEMM_N_TILE_SIZE     = 8,
 
-    // P12B safe parameter plumbing.
-    // Default-off so the current P11 baseline behavior is unchanged.
+    // M-dimension / multi-row output-tile scheduling.
+    // Default-off so K/N tiled jobs keep their existing behavior.
     parameter bit GEMM_ENABLE_M_TILING = 1'b0,
-    parameter int GEMM_M_TILE_SIZE     = 2
+    parameter int GEMM_M_TILE_SIZE     = 2,
+
+    // C read-modify-write accumulation.
+    // Default-off so each GEMM job writes its own final C unless enabled.
+    parameter bit GEMM_ENABLE_C_RMW_ACCUM = 1'b0
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -61,22 +65,19 @@ module ai_accel_subsys #(
     // ------------------------------------------------------------
     // External AXI-MM slave-visible port
     //
-    // Policy:
-    // - Host/testbench uses axi0_if to preload/readback when DMA
-    //   load/store is not active.
-    // - During DMA_LOAD phase, Port0 is owned by dma_load_engine.
-    // - During DMA_STORE phase, Port0 is owned by dma_store_engine.
-    // - Port0 ownership is selected by scratchpad_port0_owner_mux.
+    // Port0 ownership policy:
+    // - Host/testbench owns Port0 when no DMA load/store is active.
+    // - dma_load_engine owns Port0 during DMA load writes.
+    // - dma_store_engine owns Port0 during DMA store reads.
+    // - scratchpad_port0_owner_mux performs the selection.
     // ------------------------------------------------------------
     axi_mm_if axi0_if,
 
     // ------------------------------------------------------------
     // DMA load control
     //
-    // Usage:
-    //   1. Pulse dma_load_start in dma_clk domain.
-    //   2. Wait dma_load_done.
-    //   3. Then launch GEMM.
+    // DMA load moves compact A/B payloads from source memory into
+    // scratchpad. GEMM should start only after dma_load_done.
     // ------------------------------------------------------------
     input  logic                      dma_load_start,
     input  logic [ADDR_WIDTH-1:0]     dma_src_base_addr,
@@ -90,16 +91,11 @@ module ai_accel_subsys #(
     // ------------------------------------------------------------
     // DMA store control
     //
-    // Usage:
-    //   1. Wait acc_done after GEMM writes C into scratchpad.
-    //   2. Pulse dma_store_start in dma_clk domain.
-    //   3. Store engine reads C from scratchpad Port0.
-    //   4. Store engine writes C to destination memory.
-    //
-    // Note:
-    //   dma_store_byte_count is byte-based. This allows partial
-    //   final-beat WSTRB generation for C sizes not aligned to
-    //   DATA_WIDTH bytes.
+    // DMA store reads final C from scratchpad Port0 after acc_done
+    // and writes it to destination memory. For C RMW multi-job flows,
+    // the store engine still sees only the final accumulated C region.
+    // dma_store_byte_count is byte-based so the final beat can use
+    // partial WSTRB when C size is not DATA_WIDTH-aligned.
     // ------------------------------------------------------------
     input  logic                      dma_store_start,
     input  logic [ADDR_WIDTH-1:0]     dma_store_src_base_addr,
@@ -113,13 +109,9 @@ module ai_accel_subsys #(
     // ------------------------------------------------------------
     // AXI-Stream preload control
     //
-    // Usage:
-    //   1. Pulse axis_load_start in dma_clk domain.
-    //   2. axis_preload_engine reads source memory through
-    //      axis_src_axi_ar/r.
-    //   3. Data crosses AXI-Stream async FIFO into core_clk.
-    //   4. Stream loader writes A/B payload into scratchpad Port1.
-    //   5. Wait axis_load_done before launching GEMM.
+    // AXI-Stream preload reads source memory through axis_src_axi_ar/r,
+    // crosses into core_clk through an async FIFO, and writes A/B payloads
+    // into scratchpad Port1. GEMM starts only after axis_load_done.
     // ------------------------------------------------------------
     input  logic                      axis_load_start,
     input  logic [ADDR_WIDTH-1:0]     axis_src_base_addr,
@@ -132,6 +124,10 @@ module ai_accel_subsys #(
 
     // ------------------------------------------------------------
     // Direct-stream GEMM operand preload control
+    //
+    // Direct-stream preload loads A/B into the local operand buffer.
+    // C is not stored in the operand buffer; C reads/writes remain on
+    // the scratchpad path.
     //
     // ds_operand_sel:
     //   0 = operand A
@@ -236,12 +232,12 @@ module ai_accel_subsys #(
     // ------------------------------------------------------------
     // Accelerator control
     //
-    // External acc_start/config are treated as dma_clk-domain
-    // control inputs.
-    //
-    // acc_busy / acc_done are reported back in dma_clk domain.
+    // acc_start and config are dma_clk-domain inputs. They are captured
+    // and launched into core_clk through the control CDC below. acc_busy
+    // and acc_done are synchronized back into dma_clk.
     // ------------------------------------------------------------
     input  logic                      gemm_input_stream_mode,
+    input  logic                      accumulate_enable,
 
     input  logic                      acc_start,
     output logic                      acc_busy,
@@ -559,13 +555,11 @@ module ai_accel_subsys #(
     // Port0 owner select
     //
     // Phase-based ownership:
-    //   dma_load_busy_i  = 0 and dma_store_busy_i = 0 -> Host owns Port0
-    //   dma_load_busy_i  = 1 and dma_store_busy_i = 0 -> DMA load owns Port0
-    //   dma_load_busy_i  = 0 and dma_store_busy_i = 1 -> DMA store owns Port0
+    //   no DMA load/store active -> Host owns Port0
+    //   dma_load_busy_i          -> DMA load owns Port0
+    //   dma_store_busy_i         -> DMA store owns Port0
     //
-    // Requirement:
-    //   Do not issue host transactions while dma_load_busy or
-    //   dma_store_busy is high.
+    // Host traffic must not be issued while either DMA engine owns Port0.
     // ------------------------------------------------------------
     logic port0_select_dma;
     logic port0_select_dma_store;
@@ -606,10 +600,10 @@ module ai_accel_subsys #(
     //   core_clk. Current software/testbench sequencing satisfies
     //   this because config is only changed between GEMM jobs.
     //
-    // AXI-Stream preload rule:
-    //   GEMM start is accepted only when axis_load_busy_i is low.
-    //   This prevents GEMM from taking Port1 while stream preload
-    //   still owns Port1.
+    // Frontend preload rule:
+    //   GEMM start is accepted only when AXI-Stream preload and
+    //   Direct Stream preload are both idle. This prevents GEMM from
+    //   consuming operands before the selected preload path is complete.
     // ============================================================
 
     // ------------------------------------------------------------
@@ -647,6 +641,7 @@ module ai_accel_subsys #(
     logic [GEMM_DIM_WIDTH-1:0] dim_k_dma_q;
 
     logic                      gemm_input_stream_mode_dma_q;
+    logic                      accumulate_enable_dma_q;
 
     logic                      start_toggle_dma_q;
 
@@ -661,6 +656,7 @@ module ai_accel_subsys #(
             dim_k_dma_q       <= '0;
 
             gemm_input_stream_mode_dma_q <= 1'b0;
+            accumulate_enable_dma_q      <= 1'b0;
 
             start_toggle_dma_q <= 1'b0;
         end
@@ -674,6 +670,7 @@ module ai_accel_subsys #(
             dim_k_dma_q       <= dim_k;
 
             gemm_input_stream_mode_dma_q <= gemm_input_stream_mode;
+            accumulate_enable_dma_q      <= accumulate_enable;
 
             start_toggle_dma_q <= ~start_toggle_dma_q;
         end
@@ -745,6 +742,7 @@ module ai_accel_subsys #(
     logic [GEMM_DIM_WIDTH-1:0] dim_k_core_q;
 
     logic                      gemm_input_stream_mode_core_q;
+    logic                      accumulate_enable_core_q;
 
     always_ff @(posedge core_clk or negedge core_rst_n) begin
         if (!core_rst_n) begin
@@ -757,6 +755,7 @@ module ai_accel_subsys #(
             dim_k_core_q       <= '0;
 
             gemm_input_stream_mode_core_q <= 1'b0;
+            accumulate_enable_core_q      <= 1'b0;
         end
         else if (gemm_start_core_raw) begin
             base_addr_a_core_q <= base_addr_a_dma_q;
@@ -768,18 +767,17 @@ module ai_accel_subsys #(
             dim_k_core_q       <= dim_k_dma_q;
 
             gemm_input_stream_mode_core_q <= gemm_input_stream_mode_dma_q;
+            accumulate_enable_core_q      <= accumulate_enable_dma_q;
         end
     end
 
     // ============================================================
     // Direct-stream operand region size calculation
     //
-    // GEMM A/B are compact int8 matrices in current baseline:
-    //   A_bytes = M * K * (GEMM_A_WIDTH / 8)
-    //   B_bytes = K * N * (GEMM_B_WIDTH / 8)
-    //
-    // Router uses padded byte regions so final stream beat padding
-    // is considered valid address space.
+    // Direct Stream mode redirects only A/B reads to the operand buffer.
+    // The router uses padded A/B byte regions so final stream-beat padding
+    // remains valid. Reads outside those regions, including C RMW old-C
+    // reads, stay on the scratchpad path.
     // ============================================================
     logic [31:0] direct_a_bytes_core;
     logic [31:0] direct_b_bytes_core;
@@ -845,10 +843,9 @@ module ai_accel_subsys #(
     // ============================================================
     // Core-domain accelerator done generation
     //
-    // GEMM core done means computation FSM is done.
-    // Subsystem done is delayed until the scratchpad adapter is no
-    // longer busy, so C writeback is fully complete from the local
-    // adapter point of view.
+    // gemm_top.done means the compute FSM has reached done. The subsystem
+    // waits for the scratchpad adapter and input router to drain before
+    // toggling acc_done, so downstream DMA store/readback sees completed C.
     // ============================================================
     logic                     gemm_done_core_q;
     logic                     gemm_done_pulse_core;
@@ -1179,9 +1176,8 @@ module ai_accel_subsys #(
     //
     // Source AXI-MM read -> AXI-Stream FIFO -> stream loader
     // -> operand buffer write adapter -> gemm_operand_buffer.
-    //
-    // This path does not write A/B into scratchpad.
-    // It fills local operand buffers for direct-stream GEMM input.
+    // This path loads only A/B operands into local buffers. It does not
+    // handle C; GEMM C writeback and C RMW old-C reads use scratchpad.
     // ============================================================
     direct_stream_preload_engine #(
         .ADDR_WIDTH      (ADDR_WIDTH),
@@ -1258,8 +1254,8 @@ module ai_accel_subsys #(
     // ============================================================
     // Direct-stream GEMM operand buffer
     //
-    // Holds streamed A/B operand payloads.
-    // GEMM reads A/B from this buffer in direct-stream mode.
+    // Holds streamed A/B payloads for Direct Stream mode. C is never
+    // stored here; C remains in scratchpad for writeback and RMW.
     // ============================================================
     gemm_operand_buffer #(
         .ADDR_WIDTH     (ADDR_WIDTH),
@@ -1527,7 +1523,8 @@ module ai_accel_subsys #(
         .GEMM_ENABLE_N_TILING (GEMM_ENABLE_N_TILING),
         .GEMM_N_TILE_SIZE (GEMM_N_TILE_SIZE),
         .GEMM_ENABLE_M_TILING (GEMM_ENABLE_M_TILING),
-        .GEMM_M_TILE_SIZE (GEMM_M_TILE_SIZE)
+        .GEMM_M_TILE_SIZE (GEMM_M_TILE_SIZE),
+        .GEMM_ENABLE_C_RMW_ACCUM (GEMM_ENABLE_C_RMW_ACCUM)
     ) u_gemm_top (
         .clk           (core_clk),
         .rst_n         (core_rst_n),
@@ -1535,6 +1532,8 @@ module ai_accel_subsys #(
         .start         (gemm_start_core),
         .busy          (gemm_busy_core),
         .done          (gemm_done_core),
+
+        .accumulate_enable (accumulate_enable_core_q),
 
         .base_addr_a   (base_addr_a_core_q),
         .base_addr_b   (base_addr_b_core_q),
@@ -1566,11 +1565,12 @@ module ai_accel_subsys #(
     // GEMM input memory router
     //
     // scratchpad mode:
-    //   GEMM reads/writes route to gemm_scratchpad_adapter.
+    //   all GEMM reads and writes use gemm_scratchpad_adapter.
     //
     // direct-stream mode:
-    //   GEMM A/B reads route to gemm_operand_buffer.
-    //   GEMM C writes route to gemm_scratchpad_adapter.
+    //   A/B reads use gemm_operand_buffer.
+    //   non-A/B reads, including C RMW old-C reads, use scratchpad.
+    //   all writes, including C writeback, use scratchpad.
     // ============================================================
     gemm_input_mem_router #(
         .ADDR_WIDTH       (ADDR_WIDTH),

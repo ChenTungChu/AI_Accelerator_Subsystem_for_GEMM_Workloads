@@ -33,6 +33,9 @@ class ai_accel_subsys_case_helper extends uvm_object;
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 item.apply_configurable_base_case(case_id);
 
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                item.apply_c_rmw_accum_recipe_case(case_id);
+
             default: begin
                 `uvm_fatal("CASE_HELPER/BAD_KIND",
                     $sformatf("Unsupported test_kind=%0d for case_id=%0d",
@@ -842,6 +845,353 @@ class ai_accel_subsys_case_helper extends uvm_object;
         endcase
 
         compute_expected_identity_known_4x4(b_flat, expected_c);
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // C RMW accumulation recipe helpers
+    // ------------------------------------------------------------
+    function bit is_c_rmw_accum_recipe_case(input int unsigned case_id);
+        return ((case_id >= 208) && (case_id <= 212));
+    endfunction
+
+    function void get_c_rmw_accum_recipe_shape(
+        input  int unsigned case_id,
+        output int unsigned dim_m,
+        output int unsigned dim_n,
+        output int unsigned k_total
+    );
+        case (case_id)
+            208: begin dim_m = 1; dim_n = 4;  k_total = 16; end
+            209: begin dim_m = 4; dim_n = 4;  k_total = 16; end
+            210: begin dim_m = 4; dim_n = 16; k_total = 16; end
+            211: begin dim_m = 8; dim_n = 16; k_total = 16; end
+            212: begin dim_m = 5; dim_n = 9;  k_total = 9;  end
+            default: begin
+                `uvm_fatal("CASE_HELPER/C_RMW_ACCUM_BAD_RECIPE",
+                    $sformatf("Unsupported C RMW accumulation recipe case_id=%0d", case_id))
+                dim_m = 1;
+                dim_n = 1;
+                k_total = 1;
+            end
+        endcase
+    endfunction
+
+    function int unsigned get_c_rmw_accum_recipe_job_count(input int unsigned case_id);
+        if (is_c_rmw_accum_recipe_case(case_id))
+            return 2;
+
+        `uvm_fatal("CASE_HELPER/C_RMW_ACCUM_BAD_RECIPE",
+            $sformatf("Unsupported C RMW accumulation recipe case_id=%0d", case_id))
+        return 0;
+    endfunction
+
+    function void get_c_rmw_accum_recipe_job_info(
+        input  int unsigned case_id,
+        input  int unsigned job_idx,
+        output int unsigned k_base,
+        output int unsigned k_part,
+        output bit          accumulate_enable
+    );
+        int unsigned job_count;
+    begin
+        job_count = get_c_rmw_accum_recipe_job_count(case_id);
+
+        if (job_idx >= job_count) begin
+            `uvm_fatal("CASE_HELPER/C_RMW_ACCUM_BAD_JOB_IDX",
+                $sformatf("case_id=%0d job_idx=%0d exceeds job_count=%0d",
+                    case_id, job_idx, job_count))
+        end
+
+        accumulate_enable = (job_idx != 0);
+
+        case (case_id)
+            208, 209, 210, 211: begin
+                if (job_idx == 0) begin
+                    k_base = 0;
+                    k_part = 8;
+                end
+                else begin
+                    k_base = 8;
+                    k_part = 8;
+                end
+            end
+
+            212: begin
+                if (job_idx == 0) begin
+                    k_base = 0;
+                    k_part = 8;
+                end
+                else begin
+                    k_base = 8;
+                    k_part = 1;
+                end
+            end
+
+            default: begin
+                `uvm_fatal("CASE_HELPER/C_RMW_ACCUM_BAD_RECIPE",
+                    $sformatf("Unsupported C RMW accumulation recipe case_id=%0d", case_id))
+                k_base = 0;
+                k_part = 0;
+                accumulate_enable = 1'b0;
+            end
+        endcase
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Build deterministic full-K A/B matrices for a C RMW accumulation recipe.
+    //
+    // The generated full matrices are used only by the software
+    // reference model.  Each partial job later extracts a compact
+    // K-partition from these full matrices.
+    // ------------------------------------------------------------
+    task automatic build_c_rmw_accum_full_matrices(
+        input  int unsigned case_id,
+        output ai_accel_subsys_seq_item profile_item,
+        output int signed   a_full[],
+        output int signed   b_full[]
+    );
+        int unsigned dim_m;
+        int unsigned dim_n;
+        int unsigned k_total;
+        int unsigned m;
+        int unsigned n;
+        int unsigned kk;
+        int signed   val;
+    begin
+        profile_item = build_case_profile(
+            case_id,
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE
+        );
+
+        dim_m   = profile_item.dim_m;
+        dim_n   = profile_item.dim_n;
+        k_total = profile_item.dim_k;
+
+        a_full = new[dim_m * k_total];
+        b_full = new[k_total * dim_n];
+
+        zero_vector(a_full);
+        zero_vector(b_full);
+
+        for (m = 0; m < dim_m; m++) begin
+            for (kk = 0; kk < k_total; kk++) begin
+                val = int'((((case_id % 13) + 1) * (m + 1) * (kk + 2)) % 17) - 8;
+                if (val == 0)
+                    val = ((m % 2) != 0) ? -3 : 3;
+                a_full[m * k_total + kk] = val;
+            end
+        end
+
+        for (kk = 0; kk < k_total; kk++) begin
+            for (n = 0; n < dim_n; n++) begin
+                val = int'((((case_id % 11) + 3) * (kk + 1) * (n + 3)) % 19) - 9;
+                if (val == 0)
+                    val = ((n % 2) != 0) ? -2 : 2;
+                b_full[kk * dim_n + n] = val;
+            end
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Extract one compact K-partition job payload from full A/B.
+    // ------------------------------------------------------------
+    task automatic extract_c_rmw_accum_job_payload(
+        input  int signed   a_full[],
+        input  int signed   b_full[],
+        input  int unsigned dim_m,
+        input  int unsigned dim_n,
+        input  int unsigned k_total,
+        input  int unsigned k_base,
+        input  int unsigned k_part,
+        output int signed   a_part[],
+        output int signed   b_part[]
+    );
+        int unsigned m;
+        int unsigned n;
+        int unsigned lk;
+    begin
+        a_part = new[dim_m * k_part];
+        b_part = new[k_part * dim_n];
+
+        for (m = 0; m < dim_m; m++) begin
+            for (lk = 0; lk < k_part; lk++) begin
+                a_part[m * k_part + lk] = a_full[m * k_total + (k_base + lk)];
+            end
+        end
+
+        for (lk = 0; lk < k_part; lk++) begin
+            for (n = 0; n < dim_n; n++) begin
+                b_part[lk * dim_n + n] = b_full[(k_base + lk) * dim_n + n];
+            end
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Accumulate one partial C vector into an existing C vector.
+    // ------------------------------------------------------------
+    task automatic compute_expected_c_accumulate(
+        input  int signed old_c[],
+        input  int signed partial_c[],
+        input  bit        accumulate_enable,
+        output int signed new_c[]
+    );
+        int unsigned i;
+    begin
+        if (old_c.size() != partial_c.size()) begin
+            `uvm_fatal("CASE_HELPER/C_RMW_ACCUM_SIZE",
+                $sformatf("old_c.size=%0d partial_c.size=%0d",
+                    old_c.size(), partial_c.size()))
+        end
+
+        new_c = new[partial_c.size()];
+
+        for (i = 0; i < partial_c.size(); i++) begin
+            if (accumulate_enable)
+                new_c[i] = old_c[i] + partial_c[i];
+            else
+                new_c[i] = partial_c[i];
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Build full-recipe expected final C.
+    // ------------------------------------------------------------
+    task automatic build_c_rmw_accum_recipe_expected_payload(
+        input  int unsigned              case_id,
+        output ai_accel_subsys_seq_item  profile_item,
+        output int signed                a_full[],
+        output int signed                b_full[],
+        output int signed                expected_final_c[]
+    );
+    begin
+        build_c_rmw_accum_full_matrices(
+            case_id,
+            profile_item,
+            a_full,
+            b_full
+        );
+
+        compute_expected_c_compact(
+            a_full,
+            b_full,
+            profile_item.dim_m,
+            profile_item.dim_n,
+            profile_item.dim_k,
+            expected_final_c
+        );
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // Build one partial-job payload and the expected accumulated C
+    // after that job.
+    // ------------------------------------------------------------
+    task automatic build_c_rmw_accum_job_payload(
+        input  int unsigned              case_id,
+        input  int unsigned              job_idx,
+        output ai_accel_subsys_seq_item  job_item,
+        output int signed                a_part[],
+        output int signed                b_part[],
+        output int signed                expected_partial_c[],
+        output int signed                expected_accumulated_c[]
+    );
+        ai_accel_subsys_seq_item recipe_item;
+        int signed               a_full[];
+        int signed               b_full[];
+        int signed               tmp_a_part[];
+        int signed               tmp_b_part[];
+        int signed               tmp_partial_c[];
+        int signed               accum_prev[];
+        int signed               accum_next[];
+        int unsigned             dim_m;
+        int unsigned             dim_n;
+        int unsigned             k_total;
+        int unsigned             k_base;
+        int unsigned             k_part;
+        int unsigned             j;
+        bit                      accum_en;
+    begin
+        build_c_rmw_accum_full_matrices(case_id, recipe_item, a_full, b_full);
+
+        dim_m   = recipe_item.dim_m;
+        dim_n   = recipe_item.dim_n;
+        k_total = recipe_item.dim_k;
+
+        job_item = ai_accel_subsys_seq_item::type_id::create("c_rmw_accum_job_item");
+        job_item.apply_c_rmw_accum_job_case(case_id, job_idx);
+
+        get_c_rmw_accum_recipe_job_info(case_id, job_idx, k_base, k_part, accum_en);
+
+        extract_c_rmw_accum_job_payload(
+            a_full,
+            b_full,
+            dim_m,
+            dim_n,
+            k_total,
+            k_base,
+            k_part,
+            a_part,
+            b_part
+        );
+
+        compute_expected_c_compact(
+            a_part,
+            b_part,
+            dim_m,
+            dim_n,
+            k_part,
+            expected_partial_c
+        );
+
+        accum_prev = new[dim_m * dim_n];
+        zero_vector(accum_prev);
+
+        for (j = 0; j <= job_idx; j++) begin
+            get_c_rmw_accum_recipe_job_info(case_id, j, k_base, k_part, accum_en);
+
+            extract_c_rmw_accum_job_payload(
+                a_full,
+                b_full,
+                dim_m,
+                dim_n,
+                k_total,
+                k_base,
+                k_part,
+                tmp_a_part,
+                tmp_b_part
+            );
+
+            compute_expected_c_compact(
+                tmp_a_part,
+                tmp_b_part,
+                dim_m,
+                dim_n,
+                k_part,
+                tmp_partial_c
+            );
+
+            compute_expected_c_accumulate(
+                accum_prev,
+                tmp_partial_c,
+                accum_en,
+                accum_next
+            );
+
+            accum_prev = new[accum_next.size()];
+            for (int unsigned i = 0; i < accum_next.size(); i++) begin
+                accum_prev[i] = accum_next[i];
+            end
+        end
+
+        expected_accumulated_c = new[accum_prev.size()];
+        for (int unsigned i = 0; i < accum_prev.size(); i++) begin
+            expected_accumulated_c[i] = accum_prev[i];
+        end
     end
     endtask
 

@@ -22,6 +22,9 @@ module gemm_operand_buffer_write_adapter #(
     // ------------------------------------------------------------
     // Operand load configuration
     //
+    // This adapter is used only for Direct Stream A/B preload.
+    // C traffic does not use the operand buffer path.
+    //
     // operand_sel:
     //   0 = A
     //   1 = B
@@ -39,10 +42,10 @@ module gemm_operand_buffer_write_adapter #(
     // Linear write-request input
     //
     // Source:
-    //   axi_stream_loader wr_* output
+    //   axi_stream_loader wr_* output from direct_stream_preload_engine
     //
     // Addressing:
-    //   wr_addr is logical/full byte address.
+    //   wr_addr is the logical byte address for A or B.
     // ------------------------------------------------------------
     input  logic                         wr_valid,
     output logic                         wr_ready,
@@ -58,7 +61,7 @@ module gemm_operand_buffer_write_adapter #(
     //   gemm_operand_buffer write side
     //
     // Addressing:
-    //   buf_wr_addr is local byte offset inside selected operand.
+    //   buf_wr_addr is the local byte offset inside selected A/B buffer.
     // ------------------------------------------------------------
     output logic                         buf_wr_valid,
     input  logic                         buf_wr_ready,

@@ -14,39 +14,26 @@ module gemm_top #(
     parameter int GEMM_B_CACHE_MAX_K  = 4,
     parameter int GEMM_B_CACHE_MAX_N  = 4,
 
-    // P5 packed B-cache preload.
-    // Default-off so the current baseline behavior is unchanged unless explicitly enabled.
+    // Optional cache, tiling, and accumulation features.
+    // All features are default-off so the scalar baseline is preserved
+    // unless a run script explicitly enables a configuration.
     parameter bit GEMM_ENABLE_PACKED_BCACHE_PRELOAD = 1'b0,
 
-    // P6 safe parameter patch.
-    // Default-off so the current P5 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_A_ROW_CACHE = 1'b0,
     parameter int GEMM_A_ROW_CACHE_MAX_K  = 4,
 
-    // P7 safe parameter patch.
-    // Default-off so the current P6 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_PACKED_A_ROW_PRELOAD = 1'b0,
 
-    // P10 K-tiling parameterization.
-    // Default-off so the pre-P10 baseline behavior is unchanged.
     parameter bit GEMM_ENABLE_K_TILING = 1'b0,
     parameter int GEMM_K_TILE_SIZE     = 8,
 
-    // P11 N-dimension/output-column tiling parameterization.
-    // Default-off so the current P10 baseline behavior is unchanged.
-    // When enabled and the job exceeds the effective N tile size, P11D
-    // schedules output-column tiles on top of the P10 row-accumulator
-    // K-tile datapath.
     parameter bit GEMM_ENABLE_N_TILING = 1'b0,
     parameter int GEMM_N_TILE_SIZE     = 8,
 
-    // P12 M-dimension/multi-row tiling parameterization.
-    // Default-off so the current P11 baseline behavior is unchanged.
-    // P12D enables a conservative cache-backed multi-row tile scheduler
-    // when GEMM_ENABLE_M_TILING=1 and the job exceeds the effective M
-    // tile size.
     parameter bit GEMM_ENABLE_M_TILING = 1'b0,
-    parameter int GEMM_M_TILE_SIZE     = 2
+    parameter int GEMM_M_TILE_SIZE     = 2,
+
+    parameter bit GEMM_ENABLE_C_RMW_ACCUM = 1'b0
 )(
     input  logic                     clk,
     input  logic                     rst_n,
@@ -54,6 +41,12 @@ module gemm_top #(
     input  logic                     start,
     output logic                     busy,
     output logic                     done,
+
+    // Runtime C accumulation control.
+    // Active only when GEMM_ENABLE_C_RMW_ACCUM=1.
+    //   accumulate_enable=0: write C = partial_sum
+    //   accumulate_enable=1: write C = C_old + partial_sum
+    input  logic                     accumulate_enable,
 
     input  logic [ADDR_WIDTH-1:0]    base_addr_a,
     input  logic [ADDR_WIDTH-1:0]    base_addr_b,
@@ -122,9 +115,19 @@ module gemm_top #(
         S_WRITE_C,
         S_WAIT_C_WRITE,
 
+        S_C_RMW_READ,
+        S_C_RMW_WAIT,
+        S_C_RMW_WRITE,
+        S_C_RMW_WAIT_WRITE,
+
         S_KTILE_ACCUM_N,
         S_KTILE_WRITE_ROW,
         S_KTILE_WAIT_ROW_WRITE,
+
+        S_KTILE_C_RMW_READ,
+        S_KTILE_C_RMW_WAIT,
+        S_KTILE_C_RMW_WRITE,
+        S_KTILE_C_RMW_WAIT_WRITE,
 
         S_NEXT,
         S_DONE
@@ -242,12 +245,20 @@ module gemm_top #(
                 GEMM_M_TILE_SIZE_EFFECTIVE
             );
         end
+
+        if ((GEMM_ENABLE_C_RMW_ACCUM != 1'b0) &&
+            (GEMM_ENABLE_C_RMW_ACCUM != 1'b1)) begin
+            $fatal(1,
+                "Unsupported GEMM_ENABLE_C_RMW_ACCUM=%0d. Supported values are 0 and 1.",
+                GEMM_ENABLE_C_RMW_ACCUM
+            );
+        end
     end
 `endif
 
 `ifndef SYNTHESIS
     initial begin
-        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_MAC_LANES_EFFECTIVE=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_K_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_N_TILING=%0d GEMM_N_TILE_SIZE=%0d GEMM_N_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_M_TILING=%0d GEMM_M_TILE_SIZE=%0d GEMM_M_TILE_SIZE_EFFECTIVE=%0d",
+        $display("# [GEMM_TOP_CFG] GEMM_MAC_LANES=%0d GEMM_MAC_LANES_EFFECTIVE=%0d GEMM_ENABLE_B_CACHE=%0d GEMM_B_CACHE_MAX_K=%0d GEMM_B_CACHE_MAX_N=%0d GEMM_ENABLE_PACKED_BCACHE_PRELOAD=%0d GEMM_ENABLE_A_ROW_CACHE=%0d GEMM_A_ROW_CACHE_MAX_K=%0d GEMM_ENABLE_PACKED_A_ROW_PRELOAD=%0d GEMM_ENABLE_K_TILING=%0d GEMM_K_TILE_SIZE=%0d GEMM_K_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_N_TILING=%0d GEMM_N_TILE_SIZE=%0d GEMM_N_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_M_TILING=%0d GEMM_M_TILE_SIZE=%0d GEMM_M_TILE_SIZE_EFFECTIVE=%0d GEMM_ENABLE_C_RMW_ACCUM=%0d",
                  GEMM_MAC_LANES,
                  GEMM_MAC_LANES_EFFECTIVE,
                  GEMM_ENABLE_B_CACHE,
@@ -265,7 +276,8 @@ module gemm_top #(
                  GEMM_N_TILE_SIZE_EFFECTIVE,
                  GEMM_ENABLE_M_TILING,
                  GEMM_M_TILE_SIZE,
-                 GEMM_M_TILE_SIZE_EFFECTIVE);
+                 GEMM_M_TILE_SIZE_EFFECTIVE,
+                 GEMM_ENABLE_C_RMW_ACCUM);
 
         if (GEMM_MAC_LANES == 4) begin
             $display("# [GEMM_TOP_CFG] NOTE: GEMM_MAC_LANES=4 enables the P8C cache-backed true 4-lane MAC path when A-row cache and B-cache are active.");
@@ -281,6 +293,10 @@ module gemm_top #(
 
         if (GEMM_ENABLE_M_TILING) begin
             $display("# [GEMM_TOP_CFG] NOTE: GEMM_ENABLE_M_TILING=1 enables the P12D cache-backed multi-row tile scheduler when M exceeds the effective tile size.");
+        end
+
+        if (GEMM_ENABLE_C_RMW_ACCUM) begin
+            $display("# [GEMM_TOP_CFG] NOTE: GEMM_ENABLE_C_RMW_ACCUM=1 enables the P13D C read-modify-write accumulation datapath when accumulate_enable=1.");
         end
     end
 `endif
@@ -307,6 +323,13 @@ module gemm_top #(
     logic                           lane3_valid_q, lane3_valid_d;
 
     logic signed [ACC_WIDTH-1:0]    acc_q, acc_d;
+
+    // Runtime C RMW mode qualifier.
+    // The feature must be enabled at compile/elaboration time, and the
+    // current job must request accumulation through accumulate_enable.
+    logic                           c_rmw_accum_mode_active;
+
+    assign c_rmw_accum_mode_active = GEMM_ENABLE_C_RMW_ACCUM && accumulate_enable;
 
     logic                           busy_d;
     logic                           done_d;
@@ -386,6 +409,13 @@ module gemm_top #(
     // Each row in the active M tile owns one N-tile row-accumulator vector.
     logic signed [ACC_WIDTH-1:0]    c_tile_accum_q [0:GEMM_M_TILE_SIZE-1][0:GEMM_B_CACHE_MAX_N-1];
     logic signed [ACC_WIDTH-1:0]    c_tile_accum_d [0:GEMM_M_TILE_SIZE-1][0:GEMM_B_CACHE_MAX_N-1];
+
+    // C RMW accumulation staging.
+    // The old C value is read from scratchpad, added to the current
+    // partial sum, then written back through the same local-memory path.
+    logic signed [ACC_WIDTH-1:0]    c_rmw_write_data_q, c_rmw_write_data_d;
+    logic signed [ACC_WIDTH-1:0]    c_rmw_old_c_calc;
+    logic signed [ACC_WIDTH-1:0]    c_rmw_tiled_partial_calc;
 
     logic b_cache_dim_supported;
     logic b_cache_active_calc;
@@ -765,7 +795,9 @@ module gemm_top #(
     // Count one output only when the C write has completed.
     assign output_commit =
         ((state_q == S_WAIT_C_WRITE) ||
-         (state_q == S_KTILE_WAIT_ROW_WRITE)) &&
+         (state_q == S_C_RMW_WAIT_WRITE) ||
+         (state_q == S_KTILE_WAIT_ROW_WRITE) ||
+         (state_q == S_KTILE_C_RMW_WAIT_WRITE)) &&
         mem_wr_done;
 
     logic [ADDR_WIDTH-1:0] a_addr_calc;
@@ -894,6 +926,12 @@ module gemm_top #(
     assign c_addr_calc =
         base_addr_c + ((m_idx_q * dim_n) + global_n_idx) * C_BYTES;
 
+    assign c_rmw_old_c_calc = $signed(mem_rd_data);
+
+    assign c_rmw_tiled_partial_calc = m_tiling_active_job_q ?
+        c_tile_accum_q[int'(mtile_row_q)][int'(n_idx_q)] :
+        c_row_accum_q[int'(n_idx_q)];
+
     always_comb begin
         state_d       = state_q;
 
@@ -914,6 +952,7 @@ module gemm_top #(
         lane3_valid_d = lane3_valid_q;
 
         acc_d         = acc_q;
+        c_rmw_write_data_d = c_rmw_write_data_q;
 
         busy_d        = busy;
         done_d        = 1'b0;
@@ -1032,6 +1071,7 @@ module gemm_top #(
                     end
 
                     acc_d         = '0;
+                    c_rmw_write_data_d = '0;
                     busy_d        = 1'b1;
 
                     if (tile_schedule_active_calc) begin
@@ -1471,13 +1511,13 @@ module gemm_top #(
             end
 
             // ----------------------------------------------------
-            // P10D/P11D row-accumulator tiled path
+            // Tiled accumulator path
             //
-            // At this point acc_q contains the completed tile partial from
-            // the previous S_MAC cycle.
-            // Store the completed tile partial for the current local-n into
-            // c_row_accum[local_n].  Final C is written only after all K
-            // tiles for the active output-column tile have been accumulated.
+            // At this point acc_q contains the completed K-tile partial
+            // from the previous S_MAC cycle. Store it into the active
+            // row/tile accumulator. Final C is written only after all
+            // required K/N/M tile work for the active output element is
+            // complete.
             // ----------------------------------------------------
             S_KTILE_ACCUM_N: begin
                 if (m_tiling_active_job_q) begin
@@ -1554,19 +1594,50 @@ module gemm_top #(
             end
 
             S_KTILE_WRITE_ROW: begin
+                if (c_rmw_accum_mode_active) begin
+                    state_d = S_KTILE_C_RMW_READ;
+                end
+                else begin
+                    mem_wr_addr_d = c_addr_calc;
+                    mem_wr_data_d = c_rmw_tiled_partial_calc;
+                    mem_wr_strb_d = 4'b1111;
+
+                    if (mem_req_ready) begin
+                        mem_wr_en_d = 1'b1;
+                        state_d     = S_KTILE_WAIT_ROW_WRITE;
+                    end
+                end
+            end
+
+            S_KTILE_C_RMW_READ: begin
+                mem_rd_addr_d = c_addr_calc;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_KTILE_C_RMW_WAIT;
+                end
+            end
+
+            S_KTILE_C_RMW_WAIT: begin
+                if (mem_rd_valid) begin
+                    c_rmw_write_data_d = c_rmw_old_c_calc + c_rmw_tiled_partial_calc;
+                    state_d            = S_KTILE_C_RMW_WRITE;
+                end
+            end
+
+            S_KTILE_C_RMW_WRITE: begin
                 mem_wr_addr_d = c_addr_calc;
-                mem_wr_data_d = m_tiling_active_job_q ?
-                    c_tile_accum_q[int'(mtile_row_q)][int'(n_idx_q)] :
-                    c_row_accum_q[int'(n_idx_q)];
+                mem_wr_data_d = c_rmw_write_data_q;
                 mem_wr_strb_d = 4'b1111;
 
                 if (mem_req_ready) begin
                     mem_wr_en_d = 1'b1;
-                    state_d     = S_KTILE_WAIT_ROW_WRITE;
+                    state_d     = S_KTILE_C_RMW_WAIT_WRITE;
                 end
             end
 
-            S_KTILE_WAIT_ROW_WRITE: begin
+            S_KTILE_WAIT_ROW_WRITE,
+            S_KTILE_C_RMW_WAIT_WRITE: begin
                 if (mem_wr_done) begin
                     if (m_tiling_active_job_q) begin
                         if (n_idx_q != (active_n_limit_calc - 1'b1)) begin
@@ -1684,17 +1755,50 @@ module gemm_top #(
             end
 
             S_WRITE_C: begin
+                if (c_rmw_accum_mode_active) begin
+                    state_d = S_C_RMW_READ;
+                end
+                else begin
+                    mem_wr_addr_d = c_addr_calc;
+                    mem_wr_data_d = acc_q;
+                    mem_wr_strb_d = 4'b1111;
+
+                    if (mem_req_ready) begin
+                        mem_wr_en_d = 1'b1;
+                        state_d     = S_WAIT_C_WRITE;
+                    end
+                end
+            end
+
+            S_C_RMW_READ: begin
+                mem_rd_addr_d = c_addr_calc;
+
+                if (mem_req_ready) begin
+                    mem_rd_en_d = 1'b1;
+                    state_d     = S_C_RMW_WAIT;
+                end
+            end
+
+            S_C_RMW_WAIT: begin
+                if (mem_rd_valid) begin
+                    c_rmw_write_data_d = c_rmw_old_c_calc + acc_q;
+                    state_d            = S_C_RMW_WRITE;
+                end
+            end
+
+            S_C_RMW_WRITE: begin
                 mem_wr_addr_d = c_addr_calc;
-                mem_wr_data_d = acc_q;
+                mem_wr_data_d = c_rmw_write_data_q;
                 mem_wr_strb_d = 4'b1111;
 
                 if (mem_req_ready) begin
                     mem_wr_en_d = 1'b1;
-                    state_d     = S_WAIT_C_WRITE;
+                    state_d     = S_C_RMW_WAIT_WRITE;
                 end
             end
 
-            S_WAIT_C_WRITE: begin
+            S_WAIT_C_WRITE,
+            S_C_RMW_WAIT_WRITE: begin
                 if (mem_wr_done) begin
                     state_d = S_NEXT;
                 end
@@ -1752,6 +1856,7 @@ module gemm_top #(
                 lane1_valid_d            = 1'b0;
                 lane2_valid_d            = 1'b0;
                 lane3_valid_d            = 1'b0;
+                c_rmw_write_data_d    = '0;
                 b_cache_active_job_d     = 1'b0;
                 a_row_cache_active_job_d = 1'b0;
                 packed_a_row_preload_active_job_d = 1'b0;
@@ -1790,6 +1895,7 @@ module gemm_top #(
             lane3_valid_q<= 1'b0;
 
             acc_q        <= '0;
+            c_rmw_write_data_q <= '0;
 
             busy         <= 1'b0;
             done         <= 1'b0;
@@ -1866,6 +1972,7 @@ module gemm_top #(
             lane3_valid_q<= lane3_valid_d;
 
             acc_q        <= acc_d;
+            c_rmw_write_data_q <= c_rmw_write_data_d;
 
             busy         <= busy_d;
             done         <= done_d;

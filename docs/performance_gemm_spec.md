@@ -4,7 +4,7 @@
 
 This document defines the performance-oriented GEMM architecture milestone sequence on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the performance sequence through P12:
+The project has now completed the performance sequence through P13:
 
 ```text
 P0: GEMM performance counter baseline
@@ -20,13 +20,14 @@ P9: larger-dimension / cache-size scaling
 P10: K-dimension tiling with row-accumulator partial accumulation
 P11: N-dimension / output-column tiling with row-accumulator partial accumulation
 P12: M-dimension / multi-row output-tile scheduling
+P13: C read-modify-write accumulation for external partial-K jobs
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 74
-PASS  : 74
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -48,7 +49,7 @@ error/recovery flows
 scoreboard-based result compare
 ```
 
-The 71-item regression now also includes:
+The 82-item regression now also includes:
 
 ```text
 GEMM performance counter smoke
@@ -60,6 +61,7 @@ scaled cache8 larger-dimension representative regression
 K-tiling representative regression across DMA / AXI-Stream / Direct Stream
 N-tiling representative regression across DMA / AXI-Stream / Direct Stream
 M-tiling representative regression across DMA / AXI-Stream / Direct Stream
+C RMW accumulation focused DUT recipes and frontend representative regression
 ```
 
 ---
@@ -225,6 +227,55 @@ for each M tile:
 
 P12 does not use scratchpad C read-modify-write accumulation.
 
+
+
+### P13: C Read-Modify-Write Accumulation
+
+P13 extends the P12 tiled GEMM baseline from one complete GEMM job to external multi-job partial accumulation.
+
+Runtime behavior:
+
+```text
+if accumulate_enable=0:
+  C_new = partial_sum
+
+if accumulate_enable=1:
+  C_new = C_old + partial_sum
+```
+
+Feature enable condition:
+
+```text
+GEMM_ENABLE_C_RMW_ACCUM && accumulate_enable
+```
+
+P13 composes with the full P12 performance stack:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+GEMM_ENABLE_C_RMW_ACCUM=1
+```
+
+P13 does not change MAC counting semantics. Per partial job:
+
+```text
+gemm_perf_mac_count    = M * N * K_part
+gemm_perf_output_count = M * N
+```
+
 ---
 
 ## 4. P10 Validation
@@ -255,12 +306,10 @@ gemm_4lane_ktiling_axis_stream_load_store_case195
 gemm_4lane_ktiling_direct_stream_load_store_case195
 ```
 
-Final regression:
+Final regression at that milestone remained integrated into the current P13 baseline:
 
 ```text
-TOTAL : 74
-PASS  : 74
-FAIL  : 0
+Current full regression: 82/82 PASS
 ```
 
 ---
@@ -302,12 +351,10 @@ gemm_4lane_ntiling_axis_stream_load_store_case200
 gemm_4lane_ntiling_direct_stream_load_store_case200
 ```
 
-Final regression:
+Final regression at that milestone remained integrated into the current P13 baseline:
 
 ```text
-TOTAL : 74
-PASS  : 74
-FAIL  : 0
+Current full regression: 82/82 PASS
 ```
 
 ---
@@ -342,11 +389,53 @@ gemm_4lane_mtiling_axis_stream_load_store_case207
 gemm_4lane_mtiling_direct_stream_load_store_case207
 ```
 
+Final regression at that milestone remained integrated into the current P13 baseline:
+
+```text
+Current full regression: 82/82 PASS
+```
+
+---
+
+
+## 4C. P13 Validation
+
+Focused C RMW accumulation recipes:
+
+```text
+CASE_ID=208 : M=1, N=4,  K_total=16, parts 8+8  PASS
+CASE_ID=209 : M=4, N=4,  K_total=16, parts 8+8  PASS
+CASE_ID=210 : M=4, N=16, K_total=16, parts 8+8  PASS
+CASE_ID=211 : M=8, N=16, K_total=16, parts 8+8  PASS
+CASE_ID=212 : M=5, N=9,  K_total=9,  parts 8+1  PASS
+```
+
+Frontend compatibility sanity:
+
+```text
+DMA load-store        CASE_ID=211 PASS
+AXI-Stream load-store CASE_ID=211 PASS
+Direct Stream         CASE_ID=211 PASS
+```
+
+Regression integration:
+
+```text
+p13d_c_rmw_accum_case208
+p13d_c_rmw_accum_case209
+p13d_c_rmw_accum_case210
+p13d_c_rmw_accum_case211
+p13d_c_rmw_accum_case212
+gemm_4lane_c_rmw_dma_load_store_case211
+gemm_4lane_c_rmw_axis_stream_load_store_case211
+gemm_4lane_c_rmw_direct_stream_load_store_case211
+```
+
 Final regression:
 
 ```text
-TOTAL : 74
-PASS  : 74
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -368,9 +457,11 @@ scaled cache8 larger-dimension support                    DONE
 K-dimension tiling with row accumulator                    DONE
 N-dimension tiling with row accumulator                    DONE
 M-dimension tiling with multi-row output tile accumulator   DONE
+C read-modify-write partial accumulation                    DONE
 frontend compatibility for P10 representative case         DONE
 frontend compatibility for P11 representative case         DONE
 frontend compatibility for P12 representative case         DONE
+frontend compatibility for P13 representative case          DONE
 full regression integration                                DONE
 ```
 
@@ -378,11 +469,11 @@ full regression integration                                DONE
 
 ## 6. Future Work
 
-After P12, recommended directions are:
+After P13, recommended directions are:
 
 ```text
-C read-modify-write accumulation for external/multi-job tiling
 packed tile-preload optimization for K-tiled tails
 larger Direct Stream operand buffers
 coverage closure / constrained-random expansion
+external scheduler / descriptor support for multi-job GEMM recipes
 ```

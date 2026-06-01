@@ -23,8 +23,7 @@ module gemm_scratchpad_adapter #(
     input  logic [31:0]           mem_wr_data,
     input  logic [3:0]            mem_wr_strb,
 
-    // NEW:
-    // Adapter accepts a new local request only when idle
+    // Adapter accepts a new local request only when idle.
     output logic                  mem_req_ready,
 
     // ------------------------------------------------------------
@@ -94,19 +93,18 @@ module gemm_scratchpad_adapter #(
 
     assign extracted_byte = rdata_word_q >> (byte_offset * 8);
 
-    // P5 packed-read compatible local return data.
+    // Local read return data.
     //
-    // Historical scalar GEMM reads only consumed mem_rd_data[7:0].
-    // Returning a shifted 32-bit window preserves that scalar contract:
-    //   mem_rd_data[7:0] = byte at req_addr_q
-    // and also enables packed int8 reads when req_addr_q is 4-byte aligned:
+    // Scalar GEMM reads consume mem_rd_data[7:0]. Returning a shifted
+    // 32-bit window preserves that contract and also supports packed
+    // int8 reads when req_addr_q is 4-byte aligned:
     //   mem_rd_data[31:0] = bytes at req_addr_q + 0..3
     //
-    // Current DATA_WIDTH is 64, so P5 aligned 4-byte windows use byte_offset 0 or 4
-    // and do not cross the fetched AXI beat boundary.
+    // C RMW reads also use this path. They request aligned 32-bit C
+    // words and consume the full returned value.
     assign extracted_dword = rdata_word_q >> (byte_offset * 8);
 
-    // Adapter can accept a new request only when idle
+    // Adapter can accept a new request only when idle.
     assign mem_req_ready = (state_q == S_IDLE);
 
     // ============================================================
@@ -160,8 +158,8 @@ module gemm_scratchpad_adapter #(
 
             // ====================================================
             // IDLE
-            // Priority: read first if both come together
-            // Accept one new request only in this state
+            // Accept one new request only in this state. If a read
+            // and write arrive together, the read is accepted first.
             // ====================================================
             S_IDLE: begin
                 busy_d = 1'b0;

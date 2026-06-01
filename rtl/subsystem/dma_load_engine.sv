@@ -16,7 +16,11 @@ module dma_load_engine #(
     // ------------------------------------------------------------
     // Simple control interface
     //
-    // v1 behavior:
+    // Role:
+    //   Move a compact A/B payload from source memory into the
+    //   scratchpad through the DMA load path before GEMM starts.
+    //
+    // Behavior:
     //   - one load job at a time
     //   - load_beats must be non-zero
     //   - src_base_addr and dst_base_addr must be beat-aligned
@@ -52,6 +56,9 @@ module dma_load_engine #(
 
     // ------------------------------------------------------------
     // Source AXI-MM read master
+    //
+    // Reads the external/source-memory payload that will be written
+    // into scratchpad as A or B preload data.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  src_axi_arid,
     output logic [ADDR_WIDTH-1:0]    src_axi_araddr,
@@ -70,6 +77,9 @@ module dma_load_engine #(
 
     // ------------------------------------------------------------
     // Scratchpad AXI-MM write master
+    //
+    // Writes the loader output into scratchpad Port0 through the
+    // Port0 owner mux while DMA_LOAD owns the port.
     // ------------------------------------------------------------
     output logic [AXI_ID_WIDTH-1:0]  spad_axi_awid,
     output logic [ADDR_WIDTH-1:0]    spad_axi_awaddr,
@@ -140,7 +150,10 @@ module dma_load_engine #(
     logic load_req_valid;
 
     // ------------------------------------------------------------
-    // AXIS: DMA -> Loader
+    // Internal AXI-Stream: DMA -> Loader
+    //
+    // This stream is local to the load engine. The top-level
+    // AXI-Stream frontend uses axis_preload_engine instead.
     // ------------------------------------------------------------
     logic [DATA_WIDTH-1:0] axis_tdata;
     logic                  axis_tvalid;
@@ -148,7 +161,7 @@ module dma_load_engine #(
     logic                  axis_tlast;
 
     // ------------------------------------------------------------
-    // Loader -> Adapter linear write request
+    // Loader -> scratchpad write adapter linear write request
     // ------------------------------------------------------------
     logic                     loader_wr_valid;
     logic                     loader_wr_ready;

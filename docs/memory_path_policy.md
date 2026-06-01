@@ -2,121 +2,223 @@
 
 ## Overview
 
-目前 UVM testbench 的 memory access 採用固定策略：
+This document defines two related but separate policies:
 
-- 預設走 **host agent**
-- `helper` 只作為 **fallback / debug** 使用
+```text
+1. UVM memory setup/readback path
+2. GEMM runtime memory routing path
+```
 
-這個策略目前適用於：
+The UVM memory path controls how tests clear C, preload A/B, and read back C.
+The GEMM runtime memory path controls how `gemm_top` reads A/B/C and writes C during compute.
 
-- `ai_accel_subsys_smoke_test`
-- `ai_accel_subsys_back_to_back_test`
-- `ai_accel_subsys_reset_recovery_test`
+Both policies are part of the AI accelerator subsystem verification baseline.
 
 ---
 
-## Default behavior
+## 1. UVM Memory Setup / Readback Policy
 
-當開啟：
+The default UVM testbench memory access path is:
+
+```text
+host agent primary
+helper fallback/debug only
+```
+
+This policy currently applies to host-primary style tests such as:
+
+```text
+ai_accel_subsys_smoke_test
+ai_accel_subsys_back_to_back_test
+ai_accel_subsys_reset_recovery_test
+```
+
+### 1.1 Default Behavior
+
+When result checking is enabled:
 
 ```tcl
-+ENABLE_RESULT_CHECK=1
+set ENABLE_RESULT_CHECK 1
+```
 
-memory path 會預設走 host agent。
+the testbench uses the host agent by default for:
 
-包含以下操作：
-
+```text
 clear C
 preload A
 preload B
 readback C
+```
 
-這是目前主要的驗證路徑，也是 regression 預設應該使用的模式。
+This is the main verification path and should remain the default regression mode.
 
-Fallback behavior
+### 1.2 Helper Fallback
 
-如果另外加上：
+To force helper-based setup/readback:
 
-+FORCE_HELPER_MEM_PATH=1
+```tcl
+set FORCE_HELPER_MEM_PATH 1
+```
 
-則 memory path 會退回 helper。
+Use this mode only for:
 
-這個模式主要用在：
-
+```text
 debug
-快速確認 host-agent path 以外的基準行為
-檢查 fallback 機制本身沒有壞掉
+fallback sanity
+isolating host-agent issues
+quick comparison against the older helper path
+```
 
-一般 regression 不建議長期用 helper 當主路徑。
+General regression should not use helper as the primary memory path.
 
-Legacy override knobs
+### 1.3 Legacy Override Knobs
 
-下面這幾個 knob 目前還保留：
+These knobs are still supported for focused debug:
 
-+USE_HOST_AGENT_CLEAR_C=0/1
-+USE_HOST_AGENT_READBACK_C=0/1
-+USE_HOST_AGENT_PRELOAD_AB=0/1
+```tcl
+set USE_HOST_AGENT_CLEAR_C    0 ;# or 1
+set USE_HOST_AGENT_READBACK_C 0 ;# or 1
+set USE_HOST_AGENT_PRELOAD_AB 0 ;# or 1
+```
 
-這些主要是給局部 debug 用，不建議當成平常操作方式。
+Recommended usage:
 
-目前建議的使用習慣是：
+```text
+normal run       : ENABLE_RESULT_CHECK=1 only
+fallback run     : add FORCE_HELPER_MEM_PATH=1
+focused isolate  : use USE_HOST_AGENT_* only when debugging one operation
+```
 
-日常跑法：只用 +ENABLE_RESULT_CHECK=1
-需要 fallback：加 +FORCE_HELPER_MEM_PATH=1
-只有在要 isolate 單一路徑時，才去動 USE_HOST_AGENT_*
-Priority
+### 1.4 Priority
 
-目前 priority 如下：
+Priority is:
 
-明確指定的 USE_HOST_AGENT_*
-FORCE_HELPER_MEM_PATH
-default policy
+```text
+1. explicit USE_HOST_AGENT_* override
+2. FORCE_HELPER_MEM_PATH
+3. default host-agent policy
+```
 
-也就是說，如果同時設：
+Example:
 
-+FORCE_HELPER_MEM_PATH=1
-+USE_HOST_AGENT_CLEAR_C=1
+```tcl
+set FORCE_HELPER_MEM_PATH 1
+set USE_HOST_AGENT_CLEAR_C 1
+```
 
-那 clear C 仍然會走 host agent，因為 explicit override 優先。
+In this case, `clear C` still uses the host agent because the explicit override has the highest priority.
 
-Expected log behavior
-Host-agent mode
+### 1.5 Expected Log Behavior
 
-在 default host-agent mode 下，log 通常會看到：
+Host-agent mode usually shows:
 
+```text
 via host_agent
 Clearing C via host_agent
 Preloading A/B via host_agent
 Reading back C via host_agent
+```
 
-而且 host_agent 會是 active。
+and the host agent is active.
 
-Helper fallback mode
+Helper fallback mode usually shows:
 
-在 fallback mode 下，log 通常會看到：
-
+```text
 via helper
+```
 
-而且 host_agent 會是 passive。
+and the host agent is passive.
 
-Why host monitor still sees traffic in helper mode
+### 1.6 Why the Host Monitor Still Sees Traffic in Helper Mode
 
-這是正常現象。
+This is expected.
 
-即使 memory path 退回 helper，bus activity 仍然發生在同一條 axi0 路徑上，所以 passive host monitor 一樣會看到 write/read。
+Even when setup/readback uses helper, bus activity still appears on the same AXI0 path. A passive host monitor can still observe those writes and reads.
 
-差別在於：
+The difference is:
 
-host-agent primary mode
-會有完整的 sequencer / driver / response flow，metadata 也比較完整
-helper fallback mode
-monitor 仍然看得到 bus activity，但通常不會有完整的 host sequence context
+```text
+host-agent primary mode:
+  sequencer / driver / response flow is active
+  metadata is complete
 
-所以 fallback mode 下看到 AXI_HOST_MON 訊息，不代表 host agent 真的在主動送 transaction。
+helper fallback mode:
+  monitor can still see bus activity
+  host sequence context is not the source of the transaction
+```
 
-Recommended usage
-Smoke test
-default
+Therefore, seeing `AXI_HOST_MON` messages in helper mode does not mean the host agent actively drove the transaction.
+
+---
+
+## 2. GEMM Runtime Memory Routing Policy
+
+This policy describes the path used by the GEMM core while a job is running.
+
+### 2.1 Scratchpad Mode
+
+In scratchpad mode:
+
+```text
+GEMM A reads -> scratchpad adapter
+GEMM B reads -> scratchpad adapter
+GEMM C reads -> scratchpad adapter
+GEMM C writes -> scratchpad adapter
+```
+
+This is the baseline mode used by host-primary, DMA load-store, and AXI-Stream preload flows.
+
+### 2.2 Direct Stream Mode
+
+In Direct Stream mode, only A/B operand reads are redirected to the operand buffer:
+
+```text
+GEMM A reads -> operand buffer A
+GEMM B reads -> operand buffer B
+```
+
+C remains scratchpad-backed:
+
+```text
+GEMM C RMW old-C reads -> scratchpad adapter
+GEMM C writes          -> scratchpad adapter
+```
+
+This rule is required by P13 C read-modify-write accumulation.
+
+A valid Direct Stream P13 job sequence is:
+
+```text
+Direct Stream preload A_part/B_part into operand buffer
+GEMM reads A/B from operand buffer
+if accumulate_enable=1, GEMM reads old C from scratchpad
+GEMM writes updated C to scratchpad
+DMA store exports final C after the last partial job
+```
+
+### 2.3 Direct Stream Router Rule
+
+The router policy is:
+
+```text
+direct_stream_mode = 0:
+  all GEMM reads/writes pass through scratchpad
+
+direct_stream_mode = 1:
+  A/B reads route to operand buffer
+  non-A/B reads route to scratchpad
+  writes route to scratchpad
+```
+
+The non-A/B read path is used by P13 C RMW old-C reads.
+
+---
+
+## 3. Recommended Run Examples
+
+### 3.1 Smoke Test, Default Host-Agent Path
+
+```tcl
 catch {unset FORCE_HELPER_MEM_PATH}
 catch {unset USE_HOST_AGENT_CLEAR_C}
 catch {unset USE_HOST_AGENT_READBACK_C}
@@ -126,7 +228,11 @@ set UVM_TEST ai_accel_subsys_smoke_test
 set CASE_ID 101
 set ENABLE_RESULT_CHECK 1
 do run_uvm.tcl
-fallback
+```
+
+### 3.2 Smoke Test, Helper Fallback
+
+```tcl
 catch {unset USE_HOST_AGENT_CLEAR_C}
 catch {unset USE_HOST_AGENT_READBACK_C}
 catch {unset USE_HOST_AGENT_PRELOAD_AB}
@@ -136,8 +242,11 @@ set CASE_ID 101
 set ENABLE_RESULT_CHECK 1
 set FORCE_HELPER_MEM_PATH 1
 do run_uvm.tcl
-Back-to-back test
-default
+```
+
+### 3.3 Back-to-Back Test, Default Host-Agent Path
+
+```tcl
 catch {unset FORCE_HELPER_MEM_PATH}
 catch {unset USE_HOST_AGENT_CLEAR_C}
 catch {unset USE_HOST_AGENT_READBACK_C}
@@ -149,20 +258,11 @@ set JOB_COUNT 2
 set JOB0_CASE_ID 100
 set JOB1_CASE_ID 101
 do run_uvm.tcl
-fallback
-catch {unset USE_HOST_AGENT_CLEAR_C}
-catch {unset USE_HOST_AGENT_READBACK_C}
-catch {unset USE_HOST_AGENT_PRELOAD_AB}
+```
 
-set UVM_TEST ai_accel_subsys_back_to_back_test
-set ENABLE_RESULT_CHECK 1
-set FORCE_HELPER_MEM_PATH 1
-set JOB_COUNT 2
-set JOB0_CASE_ID 100
-set JOB1_CASE_ID 101
-do run_uvm.tcl
-Reset-recovery test
-default
+### 3.4 Reset-Recovery Test, Default Host-Agent Path
+
+```tcl
 catch {unset FORCE_HELPER_MEM_PATH}
 catch {unset USE_HOST_AGENT_CLEAR_C}
 catch {unset USE_HOST_AGENT_READBACK_C}
@@ -173,30 +273,27 @@ set ENABLE_RESULT_CHECK 1
 set PRE_RESET_CASE_ID 5
 set POST_RESET_CASE_ID 101
 do run_uvm.tcl
-fallback
-catch {unset USE_HOST_AGENT_CLEAR_C}
-catch {unset USE_HOST_AGENT_READBACK_C}
-catch {unset USE_HOST_AGENT_PRELOAD_AB}
+```
 
-set UVM_TEST ai_accel_subsys_reset_recovery_test
-set ENABLE_RESULT_CHECK 1
-set FORCE_HELPER_MEM_PATH 1
-set PRE_RESET_CASE_ID 5
-set POST_RESET_CASE_ID 101
-do run_uvm.tcl
-Regression guidance
+---
 
-建議目前把 regression 分成兩層：
+## 4. Regression Guidance
 
-Main path
+Use a two-layer policy:
 
-uvm_host_agent_regression.list
+```text
+main regression:
+  host-agent default path
 
-使用 host-agent default path
-作為主要 regression
-Sanity fallback
+fallback sanity:
+  small helper-based subset only
+```
 
-uvm_helper_fallback_sanity.list
+Recommended default:
 
-只保留少量 testcase
-用來確認 fallback 機制還正常
+```text
+Use host-agent memory setup/readback in main regression.
+Keep helper fallback for debug and sanity only.
+```
+
+P13 C RMW frontend representative items use frontend-specific A/B preload paths and keep C result export through the existing DMA store / result bridge path.

@@ -36,6 +36,9 @@ class ai_accel_subsys_direct_stream_smoke_test
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 return $sformatf("direct_stream_config_base_case_%0d", cid);
 
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                return $sformatf("direct_stream_c_rmw_accum_recipe_%0d", cid);
+
             default:
                 return $sformatf("direct_stream_case_%0d_kind_%0d", cid, kind);
         endcase
@@ -229,8 +232,8 @@ class ai_accel_subsys_direct_stream_smoke_test
         set_monitor_case_context(cid);
 
         `uvm_info("DIRECT_STREAM_SMOKE",
-            $sformatf("Starting GEMM in Direct Stream mode: case_id=%0d dim=(%0d,%0d,%0d)",
-                cid, dim_m_i, dim_n_i, dim_k_i),
+            $sformatf("Starting GEMM in Direct Stream mode: case_id=%0d dim=(%0d,%0d,%0d) accumulate_enable=%0d",
+                cid, dim_m_i, dim_n_i, dim_k_i, accumulate_enable_i),
             UVM_MEDIUM)
 
         @(vif.cb_drv);
@@ -243,6 +246,7 @@ class ai_accel_subsys_direct_stream_smoke_test
         vif.cb_drv.dim_m <= dim_m_i[DIM_WIDTH-1:0];
         vif.cb_drv.dim_n <= dim_n_i[DIM_WIDTH-1:0];
         vif.cb_drv.dim_k <= dim_k_i[DIM_WIDTH-1:0];
+        vif.cb_drv.accumulate_enable <= accumulate_enable_i;
 
         repeat (2) @(vif.cb_drv);
 
@@ -258,9 +262,10 @@ class ai_accel_subsys_direct_stream_smoke_test
             end
 
             timeout++;
-            if (timeout > 30000) begin
+            if (timeout > gemm_done_timeout_cycles) begin
                 `uvm_fatal("DIRECT_STREAM_SMOKE",
-                    "Timeout waiting for acc_done in Direct Stream GEMM")
+                    $sformatf("Timeout waiting for acc_done in Direct Stream GEMM after %0d cycles",
+                        gemm_done_timeout_cycles))
             end
         end
 
@@ -272,12 +277,62 @@ class ai_accel_subsys_direct_stream_smoke_test
     endtask
 
     // ------------------------------------------------------------
+    // C RMW accumulation frontend hooks
+    //
+    // Parent run_c_rmw_accum_frontend_recipe() owns the multi-job
+    // recipe flow.  These overrides only change how each compact
+    // partial A/B payload reaches the accelerator frontend and how
+    // GEMM is launched in Direct Stream input mode.
+    // ------------------------------------------------------------
+    virtual task automatic run_c_rmw_accum_frontend_preload_ab(
+        input int unsigned             cid,
+        input ai_accel_subsys_seq_item job_item
+    );
+    begin
+        @(vif.cb_drv);
+        vif.cb_drv.gemm_input_stream_mode <= 1'b0;
+
+        preload_dma_source_memory();
+
+        run_direct_stream_preload("A", OPERAND_A, dma_src_a, base_a, a_bytes);
+        run_direct_stream_preload("B", OPERAND_B, dma_src_b, base_b, b_bytes);
+    end
+    endtask
+
+    virtual task automatic run_c_rmw_accum_frontend_gemm(
+        input int unsigned             cid,
+        input ai_accel_subsys_seq_item job_item
+    );
+    begin
+        run_direct_stream_gemm(cid);
+
+        @(vif.cb_drv);
+        vif.cb_drv.gemm_input_stream_mode <= 1'b0;
+    end
+    endtask
+
+    virtual task automatic publish_frontend_result_to_scoreboard(
+        input int unsigned cid,
+        input int signed   expected_dyn[],
+        input int signed   actual_dyn[]
+    );
+    begin
+        publish_direct_stream_result_to_scoreboard(cid, expected_dyn, actual_dyn);
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Run one Direct Stream configured case
     // ------------------------------------------------------------
     task automatic run_direct_stream_one_case(input int unsigned cid);
         int signed expected_dyn[];
         int signed actual_dyn[];
     begin
+        if (is_c_rmw_accum_recipe_case(cid)) begin
+            run_c_rmw_accum_frontend_recipe(cid);
+            return;
+        end
+
         case_id = cid;
         configure_case(case_id);
 

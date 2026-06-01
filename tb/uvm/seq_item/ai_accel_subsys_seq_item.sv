@@ -12,7 +12,8 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
         TEST_KIND_VARIABLE_DIM_SMOKE    = 1,
         TEST_KIND_CONFIGURABLE_BASE     = 2,
         TEST_KIND_BACK_TO_BACK_SMOKE    = 3,
-        TEST_KIND_RESET_RECOVERY_SMOKE  = 4
+        TEST_KIND_RESET_RECOVERY_SMOKE  = 4,
+        TEST_KIND_C_RMW_ACCUM_RECIPE   = 5
     } test_kind_e;
 
     // ------------------------------------------------------------
@@ -56,6 +57,21 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // Optional metadata
     // ------------------------------------------------------------
     string test_name;
+
+    // ------------------------------------------------------------
+    // C RMW accumulation recipe metadata
+    //
+    // C RMW accumulation recipes are multi-job software/testbench recipes.  The
+    // recipe case_id describes the full logical GEMM shape, while
+    // each partial job uses compact A/B payloads with dim_k equal to
+    // the current K partition.
+    // ------------------------------------------------------------
+    rand bit          accumulate_enable;
+    rand int unsigned recipe_job_idx;
+    rand int unsigned recipe_job_count;
+    rand int unsigned recipe_k_total;
+    rand int unsigned recipe_k_base;
+    rand int unsigned recipe_k_part;
 
     // ------------------------------------------------------------
     // Control-event metadata
@@ -105,6 +121,13 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
 
         `uvm_field_string(test_name, UVM_DEFAULT)
 
+        `uvm_field_int(accumulate_enable, UVM_DEFAULT)
+        `uvm_field_int(recipe_job_idx, UVM_DEFAULT)
+        `uvm_field_int(recipe_job_count, UVM_DEFAULT)
+        `uvm_field_int(recipe_k_total, UVM_DEFAULT)
+        `uvm_field_int(recipe_k_base, UVM_DEFAULT)
+        `uvm_field_int(recipe_k_part, UVM_DEFAULT)
+
         `uvm_field_enum(ctrl_event_kind_e, ctrl_event_kind, UVM_DEFAULT)
         `uvm_field_int(done_seen, UVM_DEFAULT)
         `uvm_field_int(start_cycle, UVM_DEFAULT)
@@ -131,7 +154,96 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
 
         test_name = "";
 
+        clear_c_rmw_accum_metadata();
         clear_ctrl_event();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Clear C RMW accumulation metadata
+    // ------------------------------------------------------------
+    function void clear_c_rmw_accum_metadata();
+        accumulate_enable = 1'b0;
+        recipe_job_idx    = 0;
+        recipe_job_count  = 1;
+        recipe_k_total    = 0;
+        recipe_k_base     = 0;
+        recipe_k_part     = 0;
+    endfunction
+
+    // ------------------------------------------------------------
+    // C RMW accumulation recipe shape helpers
+    // ------------------------------------------------------------
+    function bit is_c_rmw_accum_recipe_case(int unsigned id);
+        return ((id >= 208) && (id <= 212));
+    endfunction
+
+    function void get_c_rmw_accum_recipe_shape(
+        input  int unsigned id,
+        output int unsigned m_out,
+        output int unsigned n_out,
+        output int unsigned k_total_out
+    );
+        case (id)
+            208: begin m_out = 1; n_out = 4;  k_total_out = 16; end
+            209: begin m_out = 4; n_out = 4;  k_total_out = 16; end
+            210: begin m_out = 4; n_out = 16; k_total_out = 16; end
+            211: begin m_out = 8; n_out = 16; k_total_out = 16; end
+            212: begin m_out = 5; n_out = 9;  k_total_out = 9;  end
+            default: begin m_out = 1; n_out = 1;  k_total_out = 1;  end
+        endcase
+    endfunction
+
+    function int unsigned get_c_rmw_accum_recipe_job_count(int unsigned id);
+        if (is_c_rmw_accum_recipe_case(id))
+            return 2;
+        return 1;
+    endfunction
+
+    function void get_c_rmw_accum_recipe_job_info(
+        input  int unsigned id,
+        input  int unsigned job_idx,
+        output int unsigned k_base_out,
+        output int unsigned k_part_out,
+        output bit          accumulate_enable_out
+    );
+        int unsigned k_total_local;
+        int unsigned m_unused;
+        int unsigned n_unused;
+    begin
+        get_c_rmw_accum_recipe_shape(id, m_unused, n_unused, k_total_local);
+
+        accumulate_enable_out = (job_idx != 0);
+
+        case (id)
+            208, 209, 210, 211: begin
+                if (job_idx == 0) begin
+                    k_base_out = 0;
+                    k_part_out = 8;
+                end
+                else begin
+                    k_base_out = 8;
+                    k_part_out = 8;
+                end
+            end
+
+            212: begin
+                if (job_idx == 0) begin
+                    k_base_out = 0;
+                    k_part_out = 8;
+                end
+                else begin
+                    k_base_out = 8;
+                    k_part_out = 1;
+                end
+            end
+
+            default: begin
+                k_base_out = 0;
+                k_part_out = k_total_local;
+                accumulate_enable_out = 1'b0;
+            end
+        endcase
+    end
     endfunction
 
     // ------------------------------------------------------------
@@ -207,6 +319,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
         dim_n = 4;
         dim_k = 4;
 
+        clear_c_rmw_accum_metadata();
         clear_ctrl_event();
     endfunction
 
@@ -269,6 +382,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             default: begin dim_m = 1; dim_n = 1; dim_k = 1; end
         endcase
 
+        clear_c_rmw_accum_metadata();
         clear_ctrl_event();
     endfunction
 
@@ -309,6 +423,83 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             end
         endcase
 
+        clear_c_rmw_accum_metadata();
+        clear_ctrl_event();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Apply C RMW accumulation recipe profile
+    // ------------------------------------------------------------
+    function void apply_c_rmw_accum_recipe_case(int unsigned id);
+        int unsigned m_tmp;
+        int unsigned n_tmp;
+        int unsigned k_tmp;
+
+        case_id   = id;
+        test_kind = TEST_KIND_C_RMW_ACCUM_RECIPE;
+        test_name = $sformatf("c_rmw_accum_recipe_%0d", id);
+
+        base_addr_a = 32'h0000_0000;
+        base_addr_b = 32'h0000_0100;
+        base_addr_c = 32'h0000_0200;
+
+        get_c_rmw_accum_recipe_shape(id, m_tmp, n_tmp, k_tmp);
+
+        dim_m = m_tmp;
+        dim_n = n_tmp;
+        dim_k = k_tmp;
+
+        clear_c_rmw_accum_metadata();
+        recipe_job_count = get_c_rmw_accum_recipe_job_count(id);
+        recipe_k_total   = k_tmp;
+        recipe_k_part    = k_tmp;
+
+        clear_ctrl_event();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Apply one C RMW accumulation partial-job profile
+    // ------------------------------------------------------------
+    function void apply_c_rmw_accum_job_case(
+        int unsigned id,
+        int unsigned job_idx_in
+    );
+        int unsigned m_tmp;
+        int unsigned n_tmp;
+        int unsigned k_total_tmp;
+        int unsigned k_base_tmp;
+        int unsigned k_part_tmp;
+        bit          accum_tmp;
+
+        case_id   = id;
+        test_kind = TEST_KIND_C_RMW_ACCUM_RECIPE;
+
+        base_addr_a = 32'h0000_0000;
+        base_addr_b = 32'h0000_0100;
+        base_addr_c = 32'h0000_0200;
+
+        get_c_rmw_accum_recipe_shape(id, m_tmp, n_tmp, k_total_tmp);
+        get_c_rmw_accum_recipe_job_info(id, job_idx_in, k_base_tmp, k_part_tmp, accum_tmp);
+
+        dim_m = m_tmp;
+        dim_n = n_tmp;
+        dim_k = k_part_tmp;
+
+        accumulate_enable = accum_tmp;
+        recipe_job_idx    = job_idx_in;
+        recipe_job_count  = get_c_rmw_accum_recipe_job_count(id);
+        recipe_k_total    = k_total_tmp;
+        recipe_k_base     = k_base_tmp;
+        recipe_k_part     = k_part_tmp;
+
+        test_name = $sformatf("c_rmw_accum_recipe_%0d_job_%0d_of_%0d_kbase_%0d_kpart_%0d_accum_%0d",
+            id,
+            recipe_job_idx,
+            recipe_job_count,
+            recipe_k_base,
+            recipe_k_part,
+            accumulate_enable);
+
         clear_ctrl_event();
     endfunction
 
@@ -317,7 +508,7 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     virtual function string convert2string();
         return $sformatf(
-            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d ctrl_event_kind=%0d done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
+            "test_name=%s case_id=%0d kind=%0d base_a=0x%08h base_b=0x%08h base_c=0x%08h dim_m=%0d dim_n=%0d dim_k=%0d accumulate_enable=%0d recipe_job_idx=%0d recipe_job_count=%0d recipe_k_total=%0d recipe_k_base=%0d recipe_k_part=%0d ctrl_event_kind=%0d done_seen=%0d start_cycle=%0d done_cycle=%0d latency_cycles=%0d",
             test_name,
             case_id,
             test_kind,
@@ -327,6 +518,12 @@ class ai_accel_subsys_seq_item extends uvm_sequence_item;
             dim_m,
             dim_n,
             dim_k,
+            accumulate_enable,
+            recipe_job_idx,
+            recipe_job_count,
+            recipe_k_total,
+            recipe_k_base,
+            recipe_k_part,
             ctrl_event_kind,
             done_seen,
             start_cycle,

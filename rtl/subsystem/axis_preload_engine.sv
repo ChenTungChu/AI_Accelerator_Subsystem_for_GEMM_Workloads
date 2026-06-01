@@ -32,18 +32,10 @@ module axis_preload_engine #(
     // ============================================================
     // Control interface, dma_clk domain
     //
-    // Semantics:
-    //   axis_load_start:
-    //     one dma_clk pulse
-    //
-    //   axis_src_base_addr:
-    //     AXI-MM source address for axi_mm2s_dma
-    //
-    //   axis_dst_base_addr:
-    //     scratchpad destination address for axi_stream_loader
-    //
-    //   axis_load_beats:
-    //     number of DATA_WIDTH beats to stream
+    // AXI-Stream preload moves a linear DATA_WIDTH-beat payload from
+    // source memory into scratchpad through the core-clock stream loader.
+    // It is used for A/B preload; C writeback and C RMW remain on the
+    // normal GEMM scratchpad path.
     // ============================================================
     input  logic                     axis_load_start,
     input  logic [ADDR_WIDTH-1:0]    axis_src_base_addr,
@@ -78,8 +70,9 @@ module axis_preload_engine #(
     // ============================================================
     // Scratchpad Port1 write master side, core_clk domain
     //
-    // Target:
-    //   scratchpad_port1_owner_mux STREAM_LOAD input
+    // Drives the STREAM_LOAD input of scratchpad_port1_owner_mux while
+    // AXI-Stream preload is active. GEMM may use Port1 again only after
+    // stream_load_active deasserts.
     // ============================================================
     output logic [ID_WIDTH-1:0]      sp_axi_awid,
     output logic [ADDR_WIDTH-1:0]    sp_axi_awaddr,
@@ -103,8 +96,8 @@ module axis_preload_engine #(
     // ============================================================
     // Core-domain owner/activity indication
     //
-    // stream_load_active:
-    //   intended to drive scratchpad_port1_owner_mux.stream_load_active
+    // stream_load_active covers the loader-start and write-drain window
+    // so Port1 ownership is assigned before the first stream write.
     // ============================================================
     output logic                     stream_load_active,
 
@@ -178,8 +171,8 @@ module axis_preload_engine #(
     logic                  mm2s_error;
 
     // Poison beat injection.
-    // Used to terminate the core-side loader deterministically if
-    // axi_mm2s_dma reports an error before normal TLAST delivery.
+    // If MM2S fails before normal TLAST delivery, inject one zero TLAST
+    // beat so the core-side loader can terminate instead of hanging.
     logic                  poison_valid_q;
     logic                  poison_sent_q;
 
@@ -548,7 +541,8 @@ module axis_preload_engine #(
             end
 
             C_START: begin
-                // Now dst_addr_core_q / beats_core_q are valid and stable.
+                // Start one cycle after config latch so the loader samples
+                // stable dst_addr_core_q / beats_core_q values.
                 loader_start_pulse   = 1'b1;
                 adapter_clear_status = 1'b1;
                 core_state_n         = C_ACTIVE;
@@ -797,6 +791,9 @@ module axis_preload_engine #(
 
     // ============================================================
     // Submodule: scratchpad write adapter
+    //
+    // Converts linear stream-loader writes into single-beat AXI-MM
+    // scratchpad writes. This adapter only handles preload writes.
     // ============================================================
     axis_scratchpad_write_adapter #(
         .ADDR_WIDTH (ADDR_WIDTH),

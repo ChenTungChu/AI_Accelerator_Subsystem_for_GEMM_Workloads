@@ -23,6 +23,11 @@ module scratchpad_port0_owner_mux #(
     //   - No arbitration / outstanding tracking is done here.
     //   - Owner select must only change when Port0 is idle.
     //   - Host traffic must not be issued while DMA load/store owns Port0.
+    //
+    // P13 note:
+    //   DMA_STORE may be used after a C RMW accumulation sequence, but this
+    //   mux only sees the final store transaction. It does not participate
+    //   in GEMM partial accumulation.
     // ------------------------------------------------------------
     input  logic select_dma,
     input  logic select_dma_store = 1'b0,
@@ -45,6 +50,7 @@ module scratchpad_port0_owner_mux #(
     // DMA_LOAD:
     //   - uses AW/W/B channels
     //   - read channel is disabled
+    //   - intended for A/B preload into scratchpad before GEMM starts
     // ------------------------------------------------------------
     input  logic [ID_WIDTH-1:0]      dma_awid,
     input  logic [ADDR_WIDTH-1:0]    dma_awaddr,
@@ -71,6 +77,7 @@ module scratchpad_port0_owner_mux #(
     // DMA_STORE:
     //   - uses AR/R channels
     //   - write channel is disabled
+    //   - intended for final C export after GEMM completion
     //
     // Default values keep legacy top-level instantiations safe until
     // ai_accel_subsys.sv is updated to connect the store path.
@@ -106,6 +113,11 @@ module scratchpad_port0_owner_mux #(
 
     // ============================================================
     // BRAM-facing request mux
+    //
+    // The mux is intentionally simple and phase-based:
+    //   HOST      : full external AXI0 access
+    //   DMA_LOAD  : write-only scratchpad preload
+    //   DMA_STORE : read-only scratchpad export
     // ============================================================
 
     // ------------------------------------------------------------

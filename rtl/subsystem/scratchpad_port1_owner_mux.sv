@@ -22,6 +22,11 @@ module scratchpad_port1_owner_mux #(
     // gemm_active:
     //   Observational/debug input from GEMM side.
     //   Used only for illegal overlap detection.
+    //
+    // Direct Stream note:
+    //   Direct Stream A/B preload writes the operand buffer, not Port1.
+    //   GEMM C writes and P13 C RMW old-C reads still use the GEMM
+    //   scratchpad path through this mux when GEMM owns Port1.
     // ------------------------------------------------------------
     input  logic                    stream_load_active,
     input  logic                    gemm_active,
@@ -36,7 +41,8 @@ module scratchpad_port1_owner_mux #(
     // Source:
     //   axis_scratchpad_write_adapter
     //
-    // V1 stream preload only uses AXI write channels.
+    // AXI-Stream preload only uses AXI write channels and is used
+    // to place A/B payloads into scratchpad before GEMM starts.
     // ============================================================
 
     // STREAM AW
@@ -67,7 +73,8 @@ module scratchpad_port1_owner_mux #(
     // Source:
     //   existing GEMM scratchpad adapter
     //
-    // GEMM may use both read and write channels.
+    // GEMM may use both read and write channels. In P13 C RMW mode,
+    // old-C reads and C writeback both use this GEMM owner path.
     // ============================================================
 
     // GEMM AW
@@ -159,7 +166,7 @@ module scratchpad_port1_owner_mux #(
     // ------------------------------------------------------------
     // Owner select
     //
-    // V1 policy:
+    // Phase policy:
     //   stream_load_active == 1 -> STREAM_LOAD owns Port1
     //   otherwise               -> GEMM owns Port1
     //

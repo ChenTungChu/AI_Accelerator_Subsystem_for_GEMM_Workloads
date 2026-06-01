@@ -1,4 +1,5 @@
 // File: tb/uvm/checker/ai_accel_subsys_host_traffic_checker.sv
+// C_RMW_ACCUM_SANITY: binds C RMW accumulation monitor ctrl fallback names to open partial-job host traffic identities.
 `ifndef AI_ACCEL_SUBSYS_HOST_TRAFFIC_CHECKER_SV
 `define AI_ACCEL_SUBSYS_HOST_TRAFFIC_CHECKER_SV
 
@@ -55,6 +56,18 @@ class ai_accel_subsys_host_traffic_job extends uvm_object;
     // Host-side completion
     bit host_readback_complete;
 
+    // C RMW accumulation recipe classification
+    //
+    // C RMW accumulation uses a mixed recipe/job host flow:
+    //   - recipe-level identity owns C clear and final C readback
+    //   - partial-job identity owns A/B preload and START/DONE
+    // This metadata lets the checker keep strict checking enabled
+    // without forcing recipe-level C traffic into a normal one-job
+    // A/B/C-clear/compute/readback lifecycle.
+    bit          c_rmw_accum_recipe_level;
+    bit          c_rmw_accum_partial_job;
+    int unsigned c_rmw_accum_job_idx;
+
     // Phase
     host_job_phase_e phase;
 
@@ -93,6 +106,10 @@ class ai_accel_subsys_host_traffic_job extends uvm_object;
         ctrl_profile_checked = 1'b0;
 
         host_readback_complete = 1'b0;
+
+        c_rmw_accum_recipe_level     = 1'b0;
+        c_rmw_accum_partial_job      = 1'b0;
+        c_rmw_accum_job_idx          = 0;
 
         phase                = HOST_JOB_PHASE_PRESTART;
 
@@ -298,8 +315,48 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     end
     endfunction
 
+    function bit is_c_rmw_accum_kind(
+        input ai_accel_subsys_seq_item::test_kind_e test_kind
+    );
+        return (test_kind == ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE);
+    endfunction
+
+    function bit is_c_rmw_accum_recipe_level_identity(
+        input int unsigned case_id,
+        input string       test_name
+    );
+        return (test_name == $sformatf("c_rmw_accum_recipe_%0d", case_id));
+    endfunction
+
+    function bit try_get_c_rmw_accum_job_idx_from_name(
+        input  int unsigned case_id,
+        input  string       test_name,
+        output int unsigned job_idx
+    );
+        ai_accel_subsys_seq_item profile_item;
+    begin
+        profile_item = ai_accel_subsys_seq_item::type_id::create("c_rmw_accum_host_chk_job_name_item");
+
+        profile_item.apply_c_rmw_accum_job_case(case_id, 0);
+        if (test_name == profile_item.test_name) begin
+            job_idx = 0;
+            return 1'b1;
+        end
+
+        profile_item.apply_c_rmw_accum_job_case(case_id, 1);
+        if (test_name == profile_item.test_name) begin
+            job_idx = 1;
+            return 1'b1;
+        end
+
+        job_idx = 0;
+        return 1'b0;
+    end
+    endfunction
+
     function void fill_expected_profile(ref ai_accel_subsys_host_traffic_job job);
         ai_accel_subsys_seq_item profile_item;
+        int unsigned             c_rmw_accum_job_idx;
     begin
         profile_item = ai_accel_subsys_seq_item::type_id::create("host_chk_profile_item");
 
@@ -316,6 +373,26 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
                 profile_item.apply_configurable_base_case(job.case_id);
             end
 
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE: begin
+                if (is_c_rmw_accum_recipe_level_identity(job.case_id, job.test_name)) begin
+                    profile_item.apply_c_rmw_accum_recipe_case(job.case_id);
+                    job.c_rmw_accum_recipe_level = 1'b1;
+                    job.c_rmw_accum_partial_job  = 1'b0;
+                    job.c_rmw_accum_job_idx      = 0;
+                end
+                else if (try_get_c_rmw_accum_job_idx_from_name(job.case_id, job.test_name, c_rmw_accum_job_idx)) begin
+                    profile_item.apply_c_rmw_accum_job_case(job.case_id, c_rmw_accum_job_idx);
+                    job.c_rmw_accum_recipe_level = 1'b0;
+                    job.c_rmw_accum_partial_job  = 1'b1;
+                    job.c_rmw_accum_job_idx      = c_rmw_accum_job_idx;
+                end
+                else begin
+                    `uvm_fatal("HOST_CHK/C_RMW_ACCUM_BAD_NAME",
+                        $sformatf("Unsupported C RMW accumulation host identity: case_id=%0d test_name=%s",
+                            job.case_id, job.test_name))
+                end
+            end
+
             default: begin
                 `uvm_fatal("HOST_CHK/BAD_KIND",
                     $sformatf("Unsupported test_kind=%0d for case_id=%0d",
@@ -323,7 +400,13 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
             end
         endcase
 
-        job.test_name   = profile_item.test_name;
+        // Preserve the observed identity for C RMW accumulation, because recipe-level
+        // traffic and partial-job traffic intentionally use different
+        // test_name values under the same case_id/test_kind.
+        if (!is_c_rmw_accum_kind(job.test_kind)) begin
+            job.test_name = profile_item.test_name;
+        end
+
         job.base_addr_a = profile_item.base_addr_a;
         job.base_addr_b = profile_item.base_addr_b;
         job.base_addr_c = profile_item.base_addr_c;
@@ -332,10 +415,30 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         job.dim_n = profile_item.dim_n;
         job.dim_k = profile_item.dim_k;
 
-        job.exp_a_write_count = profile_item.dim_m * profile_item.dim_k;
-        job.exp_b_write_count = profile_item.dim_k * profile_item.dim_n;
-        job.exp_c_clear_count = profile_item.dim_m * profile_item.dim_n;
-        job.exp_c_read_count  = profile_item.dim_m * profile_item.dim_n;
+        if (job.c_rmw_accum_recipe_level) begin
+            // Recipe-level host traffic owns only C initialization and
+            // final C readback. A/B preload and START/DONE belong to
+            // the partial-job identities.
+            job.exp_a_write_count = 0;
+            job.exp_b_write_count = 0;
+            job.exp_c_clear_count = profile_item.dim_m * profile_item.dim_n;
+            job.exp_c_read_count  = profile_item.dim_m * profile_item.dim_n;
+        end
+        else if (job.c_rmw_accum_partial_job) begin
+            // Partial-job host traffic owns only compact A/B preload.
+            // There is no per-partial-job C clear or readback in the
+            // focused C RMW accumulation DUT recipe.
+            job.exp_a_write_count = profile_item.dim_m * profile_item.dim_k;
+            job.exp_b_write_count = profile_item.dim_k * profile_item.dim_n;
+            job.exp_c_clear_count = 0;
+            job.exp_c_read_count  = 0;
+        end
+        else begin
+            job.exp_a_write_count = profile_item.dim_m * profile_item.dim_k;
+            job.exp_b_write_count = profile_item.dim_k * profile_item.dim_n;
+            job.exp_c_clear_count = profile_item.dim_m * profile_item.dim_n;
+            job.exp_c_read_count  = profile_item.dim_m * profile_item.dim_n;
+        end
     end
     endfunction
 
@@ -377,9 +480,49 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     end
     endfunction
 
+    function ai_accel_subsys_host_traffic_job find_open_c_rmw_accum_partial_job_for_ctrl(
+        input ai_accel_subsys_seq_item t
+    );
+        ai_accel_subsys_host_traffic_job job;
+    begin
+        if (t == null) begin
+            return null;
+        end
+
+        if (!is_c_rmw_accum_kind(t.test_kind)) begin
+            return null;
+        end
+
+        foreach (active_jobs[i]) begin
+            job = active_jobs[i];
+
+            if (job.closed ||
+                !job.c_rmw_accum_partial_job ||
+                (job.case_id   != t.case_id) ||
+                (job.test_kind != t.test_kind)) begin
+                continue;
+            end
+
+            if (is_ctrl_start_event(t)) begin
+                if (!job.ctrl_start_seen && !job.ctrl_done_seen) begin
+                    return job;
+                end
+            end
+            else if (is_ctrl_done_event(t)) begin
+                if (job.ctrl_start_seen && !job.ctrl_done_seen) begin
+                    return job;
+                end
+            end
+        end
+
+        return null;
+    end
+    endfunction
+
     function ai_accel_subsys_host_traffic_job create_job_from_identity(
         input int unsigned case_id,
-        input ai_accel_subsys_seq_item::test_kind_e test_kind
+        input ai_accel_subsys_seq_item::test_kind_e test_kind,
+        input string test_name
     );
         ai_accel_subsys_host_traffic_job job;
     begin
@@ -390,6 +533,7 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
 
         job.case_id   = case_id;
         job.test_kind = test_kind;
+        job.test_name = test_name;
 
         fill_expected_profile(job);
 
@@ -398,14 +542,21 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
 
         if (log_enable) begin
             `uvm_info("HOST_CHK",
-                $sformatf("Created host traffic job #%0d: case_id=%0d test_kind=%0d test_name=%s dim=(%0d,%0d,%0d)",
+                $sformatf("Created host traffic job #%0d: case_id=%0d test_kind=%0d test_name=%s dim=(%0d,%0d,%0d) c_rmw_accum_recipe=%0d c_rmw_accum_partial=%0d c_rmw_accum_job_idx=%0d exp(A=%0d B=%0d Cclr=%0d Crd=%0d)",
                     total_jobs_created,
                     job.case_id,
                     job.test_kind,
                     job.test_name,
                     job.dim_m,
                     job.dim_n,
-                    job.dim_k),
+                    job.dim_k,
+                    job.c_rmw_accum_recipe_level,
+                    job.c_rmw_accum_partial_job,
+                    job.c_rmw_accum_job_idx,
+                    job.exp_a_write_count,
+                    job.exp_b_write_count,
+                    job.exp_c_clear_count,
+                    job.exp_c_read_count),
                 UVM_MEDIUM)
         end
 
@@ -503,8 +654,27 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
             (t.dim_k      != job.dim_k)) begin
             job.mark_failed();
             `uvm_error("HOST_CHK/CTRL_PROFILE_MISMATCH",
-                $sformatf("Ctrl profile mismatch for case_id=%0d test_kind=%0d",
-                    t.case_id, t.test_kind))
+                $sformatf("Ctrl profile mismatch for case_id=%0d test_kind=%0d job=%s ctrl_dim=(%0d,%0d,%0d) exp_dim=(%0d,%0d,%0d)",
+                    t.case_id, t.test_kind, job.test_name,
+                    t.dim_m, t.dim_n, t.dim_k,
+                    job.dim_m, job.dim_n, job.dim_k))
+        end
+
+        // C RMW accumulation note:
+        //   Host preloads use the exact partial-job test_name, but the
+        //   control monitor may publish a fallback name such as
+        //   observed_case_<id>_kind_<kind>.  In that path, the checker
+        //   already binds the control event to the currently-open partial
+        //   job, so recipe_job_idx from the monitor-side item is not a
+        //   reliable identity source.  Only enforce job_idx when the
+        //   ctrl-side name matches the partial-job identity exactly.
+        if (job.c_rmw_accum_partial_job &&
+            (t.test_name == job.test_name) &&
+            (t.recipe_job_idx != job.c_rmw_accum_job_idx)) begin
+            job.mark_failed();
+            `uvm_error("HOST_CHK/C_RMW_ACCUM_JOB_IDX_MISMATCH",
+                $sformatf("C RMW accumulation ctrl job_idx mismatch: case_id=%0d test_name=%s ctrl_job_idx=%0d exp_job_idx=%0d",
+                    t.case_id, job.test_name, t.recipe_job_idx, job.c_rmw_accum_job_idx))
         end
     end
     endfunction
@@ -557,6 +727,24 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         input host_access_kind_e               kind
     );
     begin
+        if (job.c_rmw_accum_recipe_level) begin
+            case (kind)
+                HOST_ACCESS_C_CLEAR,
+                HOST_ACCESS_C_READ: begin
+                    // allowed: C RMW accumulation recipe-level traffic owns C clear
+                    // before job0 and final C readback after the last job.
+                end
+
+                default: begin
+                    job.mark_failed();
+                    `uvm_error("HOST_CHK/C_RMW_ACCUM_RECIPE_TRAFFIC",
+                        $sformatf("Unexpected C RMW accumulation recipe-level host access: case_id=%0d test_name=%s kind=%0d addr=0x%08h bytes_per_element=%0d",
+                            job.case_id, job.test_name, kind, t.addr, t.bytes_per_element))
+                end
+            endcase
+            return;
+        end
+
         case (job.phase)
             HOST_JOB_PHASE_PRESTART: begin
                 case (kind)
@@ -733,12 +921,26 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
     endfunction
 
     function void maybe_finalize_job(ref ai_accel_subsys_host_traffic_job job);
+        bit ready_to_close;
     begin
         if (job.closed) begin
             return;
         end
 
-        if (!(job.ctrl_done_seen && job.host_readback_complete)) begin
+        ready_to_close = 1'b0;
+
+        if (job.c_rmw_accum_recipe_level) begin
+            ready_to_close = (job.obs_c_clear_count == job.exp_c_clear_count) &&
+                             job.host_readback_complete;
+        end
+        else if (job.c_rmw_accum_partial_job) begin
+            ready_to_close = job.ctrl_done_seen;
+        end
+        else begin
+            ready_to_close = job.ctrl_done_seen && job.host_readback_complete;
+        end
+
+        if (!ready_to_close) begin
             return;
         end
 
@@ -748,8 +950,9 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         if (job.all_expected_counts_match() && !job.failed) begin
             total_jobs_passed++;
             `uvm_info("HOST_CHK",
-                $sformatf("PASS job: case_id=%0d test_kind=%0d A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d",
-                    job.case_id, job.test_kind,
+                $sformatf("PASS job: case_id=%0d test_kind=%0d test_name=%s c_rmw_accum_recipe=%0d c_rmw_accum_partial=%0d A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d",
+                    job.case_id, job.test_kind, job.test_name,
+                    job.c_rmw_accum_recipe_level, job.c_rmw_accum_partial_job,
                     job.obs_a_write_count, job.exp_a_write_count,
                     job.obs_b_write_count, job.exp_b_write_count,
                     job.obs_c_clear_count, job.exp_c_clear_count,
@@ -759,8 +962,9 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         else begin
             total_jobs_failed++;
             `uvm_error("HOST_CHK/JOB_FAIL",
-                $sformatf("FAIL job: case_id=%0d test_kind=%0d phase=%s A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d other=%0d start_seen=%0d done_seen=%0d",
-                    job.case_id, job.test_kind, phase_name(job.phase),
+                $sformatf("FAIL job: case_id=%0d test_kind=%0d test_name=%s phase=%s c_rmw_accum_recipe=%0d c_rmw_accum_partial=%0d A=%0d/%0d B=%0d/%0d Cclr=%0d/%0d Crd=%0d/%0d other=%0d start_seen=%0d done_seen=%0d",
+                    job.case_id, job.test_kind, job.test_name, phase_name(job.phase),
+                    job.c_rmw_accum_recipe_level, job.c_rmw_accum_partial_job,
                     job.obs_a_write_count, job.exp_a_write_count,
                     job.obs_b_write_count, job.exp_b_write_count,
                     job.obs_c_clear_count, job.exp_c_clear_count,
@@ -792,7 +996,15 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
 
         job = find_open_job_by_identity(t.case_id, t.test_kind, t.test_name);
         if (job == null) begin
-            job = find_open_job_by_case_kind(t.case_id, t.test_kind);
+            if (is_c_rmw_accum_kind(t.test_kind)) begin
+                // C RMW accumulation control monitor items may use a generic observed_*
+                // test_name.  Bind them to the currently-open partial-job
+                // host traffic job created by the A/B preload sequence.
+                job = find_open_c_rmw_accum_partial_job_for_ctrl(t);
+            end
+            else begin
+                job = find_open_job_by_case_kind(t.case_id, t.test_kind);
+            end
         end
 
         // If a stale open job from a prior aborted run is being reused
@@ -804,7 +1016,14 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         end
 
         if (job == null) begin
-            job = create_job_from_identity(t.case_id, t.test_kind);
+            if (is_c_rmw_accum_kind(t.test_kind)) begin
+                `uvm_fatal("HOST_CHK/C_RMW_ACCUM_NO_PARTIAL_JOB",
+                    $sformatf("C RMW accumulation ctrl event could not be matched to an open partial-job host traffic identity: case_id=%0d test_name=%s event=%s",
+                        t.case_id, t.test_name, ctrl_event_name(t)))
+            end
+            else begin
+                job = create_job_from_identity(t.case_id, t.test_kind, t.test_name);
+            end
         end
 
         check_ctrl_profile_against_expected(job, t);
@@ -931,7 +1150,7 @@ class ai_accel_subsys_host_traffic_checker extends uvm_component;
         end
 
         if (job == null) begin
-            job = create_job_from_identity(t.case_id, t.test_kind);
+            job = create_job_from_identity(t.case_id, t.test_kind, t.test_name);
         end
 
         kind = classify_host_access(job, t);

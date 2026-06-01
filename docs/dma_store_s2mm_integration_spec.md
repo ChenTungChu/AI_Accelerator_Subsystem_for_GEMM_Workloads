@@ -40,10 +40,16 @@ This milestone does **not** change the GEMM compute microarchitecture and does *
 
 ## 2. Current Baseline
 
-Current verified baseline:
+Historical S2MM closure baseline:
 
 ```text
 Full UVM regression: 25 / 25 PASS
+```
+
+Current project baseline after P13G:
+
+```text
+Full UVM regression: 82 / 82 PASS
 ```
 
 Implemented and verified:
@@ -490,6 +496,39 @@ This keeps the scratchpad model and replaces host readback C with DMA store C fo
 
 ---
 
+
+## 12A. P13 C RMW Store Semantics
+
+P13 does not change the DMA store protocol.
+
+For C read-modify-write accumulation recipes, DMA store is launched only after the final partial-K GEMM job completes:
+
+```text
+Job 0: accumulate_enable=0, writes first partial C to scratchpad
+Job 1: accumulate_enable=1, reads old C and writes accumulated C to scratchpad
+DMA store: exports final accumulated C from scratchpad
+```
+
+The stored payload is the final accumulated C matrix, not an intermediate partial result.
+
+Representative P13 store-backed frontend coverage:
+
+```text
+DMA load-store CASE_ID=211         PASS
+AXI-Stream load-store CASE_ID=211  PASS
+Direct Stream load-store CASE_ID=211 PASS
+Full regression after P13G         82/82 PASS
+```
+
+The key ordering rule remains:
+
+```text
+DMA store starts after acc_done from the final partial job.
+acc_done means all C RMW reads and final C writes for that job are complete.
+```
+
+---
+
 ## 13. Verification Status
 
 ### 13.1 Compile
@@ -612,11 +651,19 @@ Verified status:
 
 ### 13.5 Full Regression
 
-Current full regression:
+Historical full regression at S2MM closure:
 
 ```text
 TOTAL : 25
 PASS  : 25
+FAIL  : 0
+```
+
+Current full regression after P13G:
+
+```text
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -753,8 +800,9 @@ The S2MM milestone is complete when:
 Current status:
 
 ```text
-All acceptance criteria met.
-Full UVM regression: 25 / 25 PASS
+All S2MM acceptance criteria met.
+S2MM closure regression: 25 / 25 PASS
+Current P13G full regression: 82 / 82 PASS
 ```
 
 ---

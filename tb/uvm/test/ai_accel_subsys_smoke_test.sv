@@ -1,4 +1,5 @@
 // File: tb/uvm/test/ai_accel_subsys_smoke_test.sv
+// C_RMW_ACCUM_SANITY: this replacement file contains class ai_accel_subsys_c_rmw_accum_dut_test and its factory registration.
 `ifndef AI_ACCEL_SUBSYS_SMOKE_TEST_SV
 `define AI_ACCEL_SUBSYS_SMOKE_TEST_SV
 
@@ -98,6 +99,9 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         end
         else if ((case_id >= 100) && (case_id <= 207)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_VARIABLE_DIM_SMOKE;
+        end
+        else if ((case_id >= 208) && (case_id <= 212)) begin
+            return ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
         end
         else if ((case_id >= 400) && (case_id <= 499)) begin
             return ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE;
@@ -355,6 +359,9 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 item.apply_configurable_base_case(selected_case_id);
+
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                item.apply_c_rmw_accum_recipe_case(selected_case_id);
 
             default:
                 `uvm_fatal("TEST/BAD_KIND",
@@ -983,7 +990,15 @@ class ai_accel_subsys_smoke_test extends uvm_test;
     // Build phase
     // ------------------------------------------------------------
     function void build_phase(uvm_phase phase);
+        string uvm_testname;
+        bit    c_rmw_accum_dut_test_selected;
+
         super.build_phase(phase);
+
+        c_rmw_accum_dut_test_selected = 1'b0;
+        if ($value$plusargs("UVM_TESTNAME=%s", uvm_testname)) begin
+            c_rmw_accum_dut_test_selected = (uvm_testname == "ai_accel_subsys_c_rmw_accum_dut_test");
+        end
 
         if (!uvm_config_db#(virtual ai_accel_subsys_ctrl_if)::get(
                 this, "", "vif", vif)) begin
@@ -998,6 +1013,24 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         parse_host_agent_clear_c_enable();
         parse_host_agent_readback_c_enable();
         parse_host_agent_preload_ab_enable();
+
+        if (c_rmw_accum_dut_test_selected) begin
+            if (selected_case_id == 0) begin
+                selected_case_id = 208;
+            end
+
+            selected_test_kind        = ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
+            enable_result_check       = 1'b1;
+            force_helper_mem_path     = 1'b0;
+            use_host_agent_clear_c    = 1'b1;
+            use_host_agent_readback_c = 1'b1;
+            use_host_agent_preload_ab = 1'b1;
+
+            `uvm_info("SMOKE_TEST",
+                $sformatf("C RMW accumulation DUT test selected: CASE_ID=%0d, forcing recipe test_kind, result_check=1, host-agent memory path",
+                    selected_case_id),
+                UVM_MEDIUM)
+        end
 
         if (!uvm_config_db#(axi0_vif_t)::get(
                 this, "", "axi0_vif", axi0_vif)) begin
@@ -1028,6 +1061,10 @@ class ai_accel_subsys_smoke_test extends uvm_test;
 
         uvm_config_db#(bit)::set(
             this, "env.scoreboard", "result_check_enable", enable_result_check);
+
+        uvm_config_db#(bit)::set(
+            this, "env.scoreboard", "c_rmw_accum_final_result_only_mode",
+            (selected_test_kind == ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE));
 
         env = ai_accel_subsys_env::type_id::create("env", this);
 
@@ -1177,6 +1214,438 @@ class ai_accel_subsys_smoke_test extends uvm_test;
         phase.drop_objection(this);
     endtask
 
+endclass
+
+
+// ------------------------------------------------------------
+// C RMW accumulation partial-job sequence
+// ------------------------------------------------------------
+class ai_accel_subsys_c_rmw_accum_job_seq extends uvm_sequence #(ai_accel_subsys_seq_item);
+    `uvm_object_utils(ai_accel_subsys_c_rmw_accum_job_seq)
+
+    int unsigned case_id;
+    int unsigned job_idx;
+
+    function new(string name = "ai_accel_subsys_c_rmw_accum_job_seq");
+        super.new(name);
+    endfunction
+
+    task body();
+        ai_accel_subsys_seq_item req;
+    begin
+        req = ai_accel_subsys_seq_item::type_id::create("req");
+
+        start_item(req);
+        req.apply_c_rmw_accum_job_case(case_id, job_idx);
+        finish_item(req);
+    end
+    endtask
+endclass
+
+
+// ------------------------------------------------------------
+// C RMW accumulation DUT focused test
+//
+// This test drives the real subsystem with a two-job partial-K
+// accumulation recipe:
+//   job0: accumulate_enable=0, write first partial C
+//   job1: accumulate_enable=1, read old C and accumulate second partial C
+//
+// Only the final C result is read back and compared against the
+// full-K software reference payload.
+// ------------------------------------------------------------
+class ai_accel_subsys_c_rmw_accum_dut_test extends ai_accel_subsys_smoke_test;
+    `uvm_component_utils(ai_accel_subsys_c_rmw_accum_dut_test)
+
+    bit run_all;
+
+    function new(string name = "ai_accel_subsys_c_rmw_accum_dut_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        int unsigned tmp;
+        super.build_phase(phase);
+
+        run_all = 1'b0;
+        if ($value$plusargs("RUN_ALL=%d", tmp)) begin
+            run_all = (tmp != 0);
+        end
+
+        if (selected_case_id == 0) begin
+            selected_case_id = 208;
+        end
+
+        selected_test_kind = ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
+
+        uvm_config_db#(int unsigned)::set(
+            this, "env.agent.monitor", "selected_case_id", selected_case_id);
+
+        uvm_config_db#(ai_accel_subsys_seq_item::test_kind_e)::set(
+            this, "env.agent.monitor", "selected_test_kind", selected_test_kind);
+
+        uvm_config_db#(bit)::set(
+            this, "env.scoreboard", "c_rmw_accum_final_result_only_mode", 1'b1);
+    endfunction
+
+    task automatic set_c_rmw_accum_monitor_context(input int unsigned case_id_in);
+    begin
+        if ((env != null) &&
+            (env.agent != null) &&
+            (env.agent.monitor != null)) begin
+            env.agent.monitor.selected_case_id   = case_id_in;
+            env.agent.monitor.selected_test_kind = ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
+        end
+    end
+    endtask
+
+    task automatic run_one_recipe(input int unsigned case_id_in);
+        ai_accel_subsys_seq_item recipe_item;
+        ai_accel_subsys_seq_item job_item;
+        ai_accel_subsys_c_rmw_accum_job_seq seq;
+
+        int signed   a_full[];
+        int signed   b_full[];
+        int signed   expected_final_c[];
+
+        int signed   a_part[];
+        int signed   b_part[];
+        int signed   expected_partial_c[];
+        int signed   expected_accumulated_c[];
+        int signed   actual_c[];
+
+        bit          have_actual_payload;
+        int unsigned job_count;
+        int unsigned c_elems;
+    begin
+        if (!case_helper.is_c_rmw_accum_recipe_case(case_id_in)) begin
+            `uvm_fatal("C_RMW_ACCUM_DUT/BAD_CASE",
+                $sformatf("Unsupported C RMW accumulation DUT recipe CASE_ID=%0d", case_id_in))
+        end
+
+        selected_case_id   = case_id_in;
+        selected_test_kind = ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE;
+        set_c_rmw_accum_monitor_context(case_id_in);
+
+        case_helper.build_c_rmw_accum_recipe_expected_payload(
+            case_id_in,
+            recipe_item,
+            a_full,
+            b_full,
+            expected_final_c
+        );
+
+        job_count = case_helper.get_c_rmw_accum_recipe_job_count(case_id_in);
+        c_elems   = recipe_item.dim_m * recipe_item.dim_n;
+
+        `uvm_info("C_RMW_ACCUM_DUT",
+            $sformatf("Starting CASE_ID=%0d two-job DUT accumulation recipe dim=(%0d,%0d,%0d) jobs=%0d C_words=%0d",
+                case_id_in,
+                recipe_item.dim_m,
+                recipe_item.dim_n,
+                recipe_item.dim_k,
+                job_count,
+                c_elems),
+            UVM_MEDIUM)
+
+        clear_c_region_pre_start(recipe_item, c_elems);
+
+        for (int unsigned job_idx = 0; job_idx < job_count; job_idx++) begin
+            case_helper.build_c_rmw_accum_job_payload(
+                case_id_in,
+                job_idx,
+                job_item,
+                a_part,
+                b_part,
+                expected_partial_c,
+                expected_accumulated_c
+            );
+
+            `uvm_info("C_RMW_ACCUM_DUT",
+                $sformatf("CASE_ID=%0d launching job=%0d/%0d dim=(%0d,%0d,%0d) k_base=%0d k_part=%0d accumulate_enable=%0d A_part=%0d B_part=%0d partial_C=%0d",
+                    case_id_in,
+                    job_item.recipe_job_idx,
+                    job_item.recipe_job_count,
+                    job_item.dim_m,
+                    job_item.dim_n,
+                    job_item.dim_k,
+                    job_item.recipe_k_base,
+                    job_item.recipe_k_part,
+                    job_item.accumulate_enable,
+                    a_part.size(),
+                    b_part.size(),
+                    expected_partial_c.size()),
+                UVM_MEDIUM)
+
+            preload_ab_pre_start(job_item, a_part, b_part);
+
+            seq = ai_accel_subsys_c_rmw_accum_job_seq::type_id::create(
+                $sformatf("c_rmw_accum_job_seq_case_%0d_job_%0d", case_id_in, job_idx));
+            seq.case_id = case_id_in;
+            seq.job_idx = job_idx;
+
+            seq.start(env.agent.sequencer);
+            wait_for_acc_done_rearmed(done_timeout_cycles);
+
+            `uvm_info("C_RMW_ACCUM_DUT",
+                $sformatf("CASE_ID=%0d completed job=%0d/%0d accumulate_enable=%0d",
+                    case_id_in,
+                    job_item.recipe_job_idx,
+                    job_item.recipe_job_count,
+                    job_item.accumulate_enable),
+                UVM_MEDIUM)
+        end
+
+        readback_c_region_post_done(
+            recipe_item,
+            c_elems,
+            actual_c,
+            have_actual_payload
+        );
+
+        if (!have_actual_payload) begin
+            `uvm_fatal("C_RMW_ACCUM_DUT/NO_ACTUAL_PAYLOAD",
+                "C RMW accumulation DUT test did not collect final actual C payload")
+        end
+
+        publish_result_to_scoreboard(expected_final_c, actual_c);
+
+        `uvm_info("C_RMW_ACCUM_DUT",
+            $sformatf("CASE_ID=%0d DUT accumulation recipe completed and final result was published", case_id_in),
+            UVM_LOW)
+    end
+    endtask
+
+    task run_phase(uvm_phase phase);
+        int unsigned case_id_to_run;
+    begin
+        phase.raise_objection(this);
+
+        `uvm_info("C_RMW_ACCUM_DUT",
+            "Starting C RMW accumulation DUT focused test",
+            UVM_MEDIUM)
+
+        wait_for_reset_release();
+
+        if (run_all) begin
+            for (int unsigned cid = 208; cid <= 212; cid++) begin
+                run_one_recipe(cid);
+            end
+        end
+        else begin
+            case_id_to_run = selected_case_id;
+
+            if (case_id_to_run == 0) begin
+                case_id_to_run = 208;
+            end
+
+            run_one_recipe(case_id_to_run);
+        end
+
+        `uvm_info("C_RMW_ACCUM_DUT",
+            "C RMW accumulation DUT focused test completed",
+            UVM_MEDIUM)
+
+        phase.drop_objection(this);
+    end
+    endtask
+endclass
+
+
+// ------------------------------------------------------------
+// C RMW accumulation reference-model self-check
+//
+// This test does not drive the DUT.  It validates the C RMW accumulation software
+// recipe database and reference-model decomposition:
+//   full-K expected C == accumulated compact partial-job C vectors.
+//
+// It is intended for the C RMW accumulation reference-model flow before DUT-focused validation.
+// ------------------------------------------------------------
+class ai_accel_subsys_c_rmw_accum_ref_model_test extends uvm_test;
+    `uvm_component_utils(ai_accel_subsys_c_rmw_accum_ref_model_test)
+
+    ai_accel_subsys_case_helper case_helper;
+
+    int unsigned selected_case_id;
+    bit          run_all;
+
+    function new(string name = "ai_accel_subsys_c_rmw_accum_ref_model_test", uvm_component parent = null);
+        super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        int unsigned tmp;
+        super.build_phase(phase);
+
+        case_helper = ai_accel_subsys_case_helper::type_id::create("case_helper");
+
+        selected_case_id = 208;
+        if ($value$plusargs("CASE_ID=%d", tmp)) begin
+            if (tmp != 0) begin
+                selected_case_id = tmp;
+            end
+        end
+
+        run_all = 1'b0;
+        if ($value$plusargs("RUN_ALL=%d", tmp)) begin
+            run_all = (tmp != 0);
+        end
+    endfunction
+
+    task automatic compare_vectors(
+        input string       tag,
+        input int signed   exp[],
+        input int signed   act[]
+    );
+        int unsigned i;
+    begin
+        if (exp.size() != act.size()) begin
+            `uvm_fatal("C_RMW_ACCUM_REF/SIZE",
+                $sformatf("%s size mismatch exp=%0d act=%0d",
+                    tag, exp.size(), act.size()))
+        end
+
+        for (i = 0; i < exp.size(); i++) begin
+            if (exp[i] !== act[i]) begin
+                `uvm_fatal("C_RMW_ACCUM_REF/MISMATCH",
+                    $sformatf("%s mismatch idx=%0d exp=%0d act=%0d",
+                        tag, i, exp[i], act[i]))
+            end
+        end
+    end
+    endtask
+
+    task automatic copy_vector(
+        input  int signed src[],
+        output int signed dst[]
+    );
+        int unsigned i;
+    begin
+        dst = new[src.size()];
+        for (i = 0; i < src.size(); i++) begin
+            dst[i] = src[i];
+        end
+    end
+    endtask
+
+    task automatic run_one_recipe(input int unsigned case_id);
+        ai_accel_subsys_seq_item recipe_item;
+        ai_accel_subsys_seq_item job_item;
+        int signed               a_full[];
+        int signed               b_full[];
+        int signed               expected_final_c[];
+        int signed               a_part[];
+        int signed               b_part[];
+        int signed               expected_partial_c[];
+        int signed               expected_accumulated_c[];
+        int signed               running_accum[];
+        int signed               running_next[];
+        int unsigned             job_idx;
+        int unsigned             job_count;
+    begin
+        if (!case_helper.is_c_rmw_accum_recipe_case(case_id)) begin
+            `uvm_fatal("C_RMW_ACCUM_REF/BAD_CASE",
+                $sformatf("Unsupported C RMW accumulation reference recipe CASE_ID=%0d", case_id))
+        end
+
+        case_helper.build_c_rmw_accum_recipe_expected_payload(
+            case_id,
+            recipe_item,
+            a_full,
+            b_full,
+            expected_final_c
+        );
+
+        job_count = case_helper.get_c_rmw_accum_recipe_job_count(case_id);
+        running_accum = new[recipe_item.dim_m * recipe_item.dim_n];
+        case_helper.zero_vector(running_accum);
+
+        `uvm_info("C_RMW_ACCUM_REF",
+            $sformatf("Checking CASE_ID=%0d recipe dim=(%0d,%0d,%0d) jobs=%0d full_A=%0d full_B=%0d C_words=%0d",
+                case_id,
+                recipe_item.dim_m,
+                recipe_item.dim_n,
+                recipe_item.dim_k,
+                job_count,
+                a_full.size(),
+                b_full.size(),
+                expected_final_c.size()),
+            UVM_MEDIUM)
+
+        for (job_idx = 0; job_idx < job_count; job_idx++) begin
+            case_helper.build_c_rmw_accum_job_payload(
+                case_id,
+                job_idx,
+                job_item,
+                a_part,
+                b_part,
+                expected_partial_c,
+                expected_accumulated_c
+            );
+
+            case_helper.compute_expected_c_accumulate(
+                running_accum,
+                expected_partial_c,
+                job_item.accumulate_enable,
+                running_next
+            );
+
+            compare_vectors(
+                $sformatf("case%0d_job%0d_accumulated", case_id, job_idx),
+                expected_accumulated_c,
+                running_next
+            );
+
+            copy_vector(running_next, running_accum);
+
+            `uvm_info("C_RMW_ACCUM_REF",
+                $sformatf("CASE_ID=%0d job=%0d/%0d k_base=%0d k_part=%0d accum=%0d A_part=%0d B_part=%0d partial_C=%0d",
+                    case_id,
+                    job_item.recipe_job_idx,
+                    job_item.recipe_job_count,
+                    job_item.recipe_k_base,
+                    job_item.recipe_k_part,
+                    job_item.accumulate_enable,
+                    a_part.size(),
+                    b_part.size(),
+                    expected_partial_c.size()),
+                UVM_MEDIUM)
+        end
+
+        compare_vectors(
+            $sformatf("case%0d_final", case_id),
+            expected_final_c,
+            running_accum
+        );
+
+        `uvm_info("C_RMW_ACCUM_REF",
+            $sformatf("CASE_ID=%0d reference recipe PASS: final C matches accumulated partial jobs", case_id),
+            UVM_LOW)
+    end
+    endtask
+
+    task run_phase(uvm_phase phase);
+        phase.raise_objection(this);
+
+        `uvm_info("C_RMW_ACCUM_REF",
+            "Starting C RMW accumulation reference-model self-check",
+            UVM_MEDIUM)
+
+        if (run_all) begin
+            for (int unsigned cid = 208; cid <= 212; cid++) begin
+                run_one_recipe(cid);
+            end
+        end
+        else begin
+            run_one_recipe(selected_case_id);
+        end
+
+        `uvm_info("C_RMW_ACCUM_REF",
+            "C RMW accumulation reference-model self-check completed",
+            UVM_MEDIUM)
+
+        phase.drop_objection(this);
+    endtask
 endclass
 
 `endif

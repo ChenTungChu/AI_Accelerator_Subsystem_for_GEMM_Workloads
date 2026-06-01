@@ -33,6 +33,9 @@ class ai_accel_subsys_axis_stream_preload_smoke_test
             ai_accel_subsys_seq_item::TEST_KIND_CONFIGURABLE_BASE:
                 return $sformatf("axis_stream_preload_config_base_case_%0d", cid);
 
+            ai_accel_subsys_seq_item::TEST_KIND_C_RMW_ACCUM_RECIPE:
+                return $sformatf("axis_stream_c_rmw_accum_recipe_%0d", cid);
+
             default:
                 return $sformatf("axis_stream_preload_case_%0d_kind_%0d", cid, kind);
         endcase
@@ -206,12 +209,46 @@ class ai_accel_subsys_axis_stream_preload_smoke_test
     endtask
 
     // ------------------------------------------------------------
+    // C RMW accumulation frontend hook
+    //
+    // Parent run_c_rmw_accum_frontend_recipe() owns the multi-job
+    // recipe flow.  This override only changes how each compact
+    // partial A/B payload reaches the accelerator frontend.
+    // ------------------------------------------------------------
+    virtual task automatic run_c_rmw_accum_frontend_preload_ab(
+        input int unsigned             cid,
+        input ai_accel_subsys_seq_item job_item
+    );
+    begin
+        preload_dma_source_memory();
+
+        run_axis_preload("A", dma_src_a, base_a, a_bytes);
+        run_axis_preload("B", dma_src_b, base_b, b_bytes);
+    end
+    endtask
+
+    virtual task automatic publish_frontend_result_to_scoreboard(
+        input int unsigned cid,
+        input int signed   expected_dyn[],
+        input int signed   actual_dyn[]
+    );
+    begin
+        publish_axis_result_to_scoreboard(cid, expected_dyn, actual_dyn);
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Run one AXIS-preload configured case
     // ------------------------------------------------------------
     task automatic run_axis_one_case(input int unsigned cid);
         int signed expected_dyn[];
         int signed actual_dyn[];
     begin
+        if (is_c_rmw_accum_recipe_case(cid)) begin
+            run_c_rmw_accum_frontend_recipe(cid);
+            return;
+        end
+
         case_id = cid;
         configure_case(case_id);
 

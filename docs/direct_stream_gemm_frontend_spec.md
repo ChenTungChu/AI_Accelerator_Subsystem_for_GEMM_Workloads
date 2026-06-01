@@ -46,11 +46,11 @@ FAIL  : 0
 ```
 
 
-Current project status after P11 N-dimension tiling closure:
+Current project status after P13 C RMW accumulation closure:
 
 ```text
-Performance GEMM P12: M-Dimension Tiling Completed
-Full regression: 74/74 PASS
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
 ```
 
 Direct Stream B1 remains compatible with:
@@ -67,6 +67,7 @@ GEMM_MAC_LANES=4 + scaled cache8 larger-dimension datapath
 GEMM_MAC_LANES=4 + K-dimension tiling datapath, CASE_ID=195
 GEMM_MAC_LANES=4 + N-dimension tiling datapath, CASE_ID=200
 GEMM_MAC_LANES=4 + M-dimension tiling datapath, CASE_ID=207
+GEMM_MAC_LANES=4 + C RMW accumulation datapath, CASE_ID=211
 ```
 
 
@@ -106,13 +107,17 @@ AXI Stream
     -> GEMM reads A/B from operand buffer
 ```
 
-In this first direct-stream milestone, C still goes through scratchpad:
+In this first direct-stream milestone, C remains scratchpad-backed:
 
 ```text
 GEMM C writes
     -> scratchpad C
     -> DMA store C
     -> destination memory compare
+
+P13 C RMW old-C reads
+    -> scratchpad C
+    -> GEMM accumulation writeback
 ```
 
 ### 2.3 B1: Stream-Backed Operand Buffer
@@ -122,7 +127,7 @@ B1 means:
 ```text
 AXI stream fills local operand buffers for A and B.
 Existing GEMM then reads A/B from those local operand buffers.
-C still writes to scratchpad.
+C still reads and writes through scratchpad when needed by the GEMM datapath.
 ```
 
 This is not yet a fully cycle-by-cycle streaming systolic frontend. It is the safest first step because it removes A/B scratchpad dependency without rewriting the whole GEMM compute datapath.
@@ -217,8 +222,8 @@ P10 K-dimension tiling, P11 N-dimension tiling, and P12 M-dimension tiling are i
 │           ▼                                                    │
 │  gemm_input_mem_router                                         │
 │     - A/B reads from operand buffer in direct-stream mode       │
-│     - transparent scratchpad bypass in scratchpad mode          │
-│     - C writes to existing scratchpad adapter                  │
+│     - C RMW reads and C writes to scratchpad adapter            │
+│     - transparent scratchpad bypass in scratchpad mode                  │
 │                                                                │
 │  existing GEMM compute                                         │
 │           │                                                    │
@@ -259,8 +264,9 @@ GEMM C writes  -> scratchpad
 In direct-stream mode:
 
 ```text
-GEMM A/B reads -> operand buffer
-GEMM C writes  -> scratchpad
+GEMM A/B reads        -> operand buffer
+GEMM C RMW old-C read -> scratchpad
+GEMM C writes         -> scratchpad
 ```
 
 The router is intentionally transparent in scratchpad mode. This preserves the existing host, DMA load/store, and AXI-Stream scratchpad-preload regression baseline.
@@ -305,6 +311,7 @@ New B1 behavior:
 direct stream preload A into operand buffer
 direct stream preload B into operand buffer
 GEMM reads A/B from operand buffer
+GEMM reads old C from scratchpad when C RMW is enabled
 GEMM writes C to scratchpad
 DMA store exports C
 ```
@@ -723,7 +730,7 @@ Role:
 ```text
 routes GEMM local memory requests to:
     operand buffer for A/B reads in direct-stream mode
-    scratchpad adapter for C writes and scratchpad-mode A/B reads
+    scratchpad adapter for C RMW reads, C writes, and scratchpad-mode reads
 ```
 
 Backend 0:
@@ -749,7 +756,7 @@ Behavior in direct-stream mode:
 ```text
 A/B reads route to operand buffer
 C writes route to gemm_scratchpad_adapter
-unexpected non-A/B reads return zero and flag router error
+non-A/B reads route to scratchpad; this supports P13 C RMW old-C reads
 ```
 
 ### 11.5 Direct Stream Status
@@ -1103,11 +1110,11 @@ PASS  : 33
 FAIL  : 0
 ```
 
-Current subsystem regression baseline after P12 closure:
+Current subsystem regression baseline after P13 closure:
 
 ```text
-TOTAL : 74
-PASS  : 74
+TOTAL : 82
+PASS  : 82
 FAIL  : 0
 ```
 
@@ -1148,6 +1155,7 @@ The Direct Stream GEMM Frontend B1 milestone is complete because:
 17. P10 Direct Stream representative regression passes with `CASE_ID=195`, `GEMM_ENABLE_K_TILING=1`, and `GEMM_K_TILE_SIZE=8`.
 18. P11 Direct Stream representative regression passes with `CASE_ID=200`, K/N tiling enabled.
 19. P12 Direct Stream representative regression passes with `CASE_ID=207`, K/N/M tiling enabled.
+20. P13 Direct Stream C RMW representative regression passes with `CASE_ID=211`, K/N/M tiling and C RMW enabled.
 
 ---
 
@@ -1177,11 +1185,11 @@ v3.4.3 Direct Stream GEMM Frontend B1 Completed
 Regression: 33/33 PASS
 ```
 
-Current subsystem milestone after P12:
+Current subsystem milestone after P13:
 
 ```text
-Performance GEMM P12: M-Dimension Tiling Completed
-Regression: 74/74 PASS
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Regression: 82/82 PASS
 ```
 
 ---
@@ -1593,6 +1601,59 @@ Full regression after P12G                               74/74 PASS
 ```
 
 
+
+## 17J. P13 C RMW Accumulation Compatibility
+
+Direct Stream B1 was validated with the P13 C read-modify-write accumulation datapath.
+
+Validated P13 Direct Stream configuration:
+
+```text
+GEMM_MAC_LANES=4
+GEMM_ENABLE_B_CACHE=1
+GEMM_B_CACHE_MAX_K=8
+GEMM_B_CACHE_MAX_N=8
+GEMM_ENABLE_PACKED_BCACHE_PRELOAD=1
+GEMM_ENABLE_A_ROW_CACHE=1
+GEMM_A_ROW_CACHE_MAX_K=8
+GEMM_ENABLE_PACKED_A_ROW_PRELOAD=1
+GEMM_ENABLE_K_TILING=1
+GEMM_K_TILE_SIZE=8
+GEMM_ENABLE_N_TILING=1
+GEMM_N_TILE_SIZE=8
+GEMM_ENABLE_M_TILING=1
+GEMM_M_TILE_SIZE=2
+GEMM_ENABLE_C_RMW_ACCUM=1
+ACCUMULATE_ENABLE=0
+```
+
+P13 Direct Stream representative recipe:
+
+```text
+CASE_ID=211 : M=8, N=16, K_total=16
+External K partition: 8 + 8
+Job 0: accumulate_enable=0
+Job 1: accumulate_enable=1
+```
+
+Direct Stream P13 routing policy:
+
+```text
+A/B reads       -> operand buffer
+C RMW old-C read -> scratchpad
+C writes        -> scratchpad
+```
+
+This policy is required because the second partial job must read the C values produced by the first partial job before writing the accumulated result.
+
+P13 Direct Stream validation completed:
+
+```text
+Direct Stream load-store CASE_ID=211 C RMW focused sanity PASS
+Representative full-regression C RMW Direct Stream item   PASS
+Full regression after P13G                                82/82 PASS
+```
+
 ## 18. Useful Single-Test Runs
 
 ### Direct Stream smoke RUN_ALL
@@ -1864,3 +1925,36 @@ Open questions:
 - what is the tile-level ordering contract?
 
 B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P12 subsystem checkpoint is `74/74 PASS`.
+
+
+### Direct Stream load-store, 4-lane + C RMW CASE_ID=211
+
+```tcl
+set UVM_TEST ai_accel_subsys_direct_stream_load_store_stress_test
+set ENABLE_RESULT_CHECK 1
+set CASE_ID 211
+set DS_STRESS_JOB_COUNT 1
+set DS_STRESS_RANDOM 0
+set DS_STRESS_GAP_CYCLES 10
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set SMOKE_DONE_TIMEOUT_CYCLES 300000
+set GEMM_MAC_LANES 4
+set GEMM_ENABLE_B_CACHE 1
+set GEMM_B_CACHE_MAX_K 8
+set GEMM_B_CACHE_MAX_N 8
+set GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1
+set GEMM_ENABLE_A_ROW_CACHE 1
+set GEMM_A_ROW_CACHE_MAX_K 8
+set GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1
+set GEMM_ENABLE_K_TILING 1
+set GEMM_K_TILE_SIZE 8
+set GEMM_ENABLE_N_TILING 1
+set GEMM_N_TILE_SIZE 8
+set GEMM_ENABLE_M_TILING 1
+set GEMM_M_TILE_SIZE 2
+set GEMM_ENABLE_C_RMW_ACCUM 1
+set ACCUMULATE_ENABLE 0
+do run_uvm.tcl
+```

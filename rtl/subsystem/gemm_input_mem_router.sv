@@ -19,8 +19,9 @@ module gemm_input_mem_router #(
     // Mode/config
     //
     // direct_stream_mode:
-    //   0 = transparent scratchpad bypass mode
-    //   1 = direct-stream operand-buffer mode
+    //   0 = scratchpad mode; all GEMM local reads/writes use scratchpad
+    //   1 = direct-stream mode; A/B reads use operand buffer, while
+    //       C RMW reads and all writes use scratchpad
     // ------------------------------------------------------------
     input  logic                              direct_stream_mode,
 
@@ -98,7 +99,8 @@ module gemm_input_mem_router #(
 
     typedef enum logic [1:0] {
         RD_ROUTE_OP  = 2'd0,
-        RD_ROUTE_ERR = 2'd1
+        RD_ROUTE_SP  = 2'd1,
+        RD_ROUTE_ERR = 2'd2
     } ds_rd_route_e;
 
     // ------------------------------------------------------------
@@ -122,16 +124,24 @@ module gemm_input_mem_router #(
     logic [ADDR_WIDTH-1:0] ds_op_local_addr;
 
     logic                  ds_read_not_loaded;
+    // Non-A/B reads are legal scratchpad reads in direct-stream mode.
+    // Keep this status bit only for diagnostics.
     logic                  ds_read_outside_ab;
 
     // ------------------------------------------------------------
     // Direct-stream read pending tracking
     //
-    // Important:
-    //   These are only used when direct_stream_mode = 1.
-    //   In scratchpad mode, this router is a transparent bypass.
+    // These flags are used only in direct-stream mode. Scratchpad mode
+    // remains a transparent bypass.
+    //
+    // Direct-stream routing policy:
+    //   - A/B reads route to the operand buffer.
+    //   - Non-A/B reads route to the scratchpad adapter. This covers
+    //     C RMW old-C reads because C remains in scratchpad.
+    //   - Writes always route to the scratchpad adapter.
     // ------------------------------------------------------------
     logic pending_op_read_q;
+    logic pending_sp_read_q;
     logic pending_err_read_q;
 
     logic any_pending;
@@ -173,10 +183,9 @@ module gemm_input_mem_router #(
 
         rd_addr_end  = gemm_mem_rd_addr + ADDR_WIDTH'(LOCAL_BYTES);
 
-        // GEMM operand reads use byte-addressed int8 element addresses.
-        // The 32-bit rd_data is only a container; GEMM consumes the
-        // selected low-byte operand value. Therefore routing should be
-        // based on the read start address, not on the full 32-bit window.
+        // GEMM operand reads are byte-addressed int8 accesses.
+        // The 32-bit rd_data is only the local-memory container.
+        // Route by the read start address, not by the full 32-bit window.
         rd_in_a_region =
             (a_region_bytes != 0) &&
             (gemm_mem_rd_addr >= base_addr_a) &&
@@ -195,7 +204,7 @@ module gemm_input_mem_router #(
     // Direct-stream read route decode
     // ------------------------------------------------------------
     always_comb begin
-        ds_rd_route        = RD_ROUTE_ERR;
+        ds_rd_route        = RD_ROUTE_SP;
         ds_op_sel          = OPERAND_A;
         ds_op_local_addr   = '0;
 
@@ -227,7 +236,9 @@ module gemm_input_mem_router #(
             end
         end
         else begin
-            ds_rd_route        = RD_ROUTE_ERR;
+            // Non-A/B reads are legal scratchpad reads in direct-stream
+            // mode. This includes C RMW old-C reads.
+            ds_rd_route        = RD_ROUTE_SP;
             ds_read_outside_ab = 1'b1;
         end
     end
@@ -242,10 +253,11 @@ module gemm_input_mem_router #(
     //
     //   direct_stream_mode = 1:
     //     A/B reads go to operand buffer.
+    //     Non-A/B reads go to scratchpad adapter.
     //     writes go to scratchpad adapter.
     // ------------------------------------------------------------
     always_comb begin
-        any_pending = pending_op_read_q || pending_err_read_q;
+        any_pending = pending_op_read_q || pending_sp_read_q || pending_err_read_q;
         any_req     = gemm_mem_rd_en || gemm_mem_wr_en;
 
         ds_read_ready  = 1'b1;
@@ -254,6 +266,7 @@ module gemm_input_mem_router #(
         if (gemm_mem_rd_en) begin
             case (ds_rd_route)
                 RD_ROUTE_OP:  ds_read_ready = op_rd_ready;
+                RD_ROUTE_SP:  ds_read_ready = sp_mem_req_ready;
                 RD_ROUTE_ERR: ds_read_ready = 1'b1;
                 default:      ds_read_ready = 1'b1;
             endcase
@@ -262,6 +275,8 @@ module gemm_input_mem_router #(
         if (gemm_mem_wr_en) begin
             ds_write_ready = sp_mem_req_ready;
         end
+
+        ds_ready_comb = ds_read_ready && ds_write_ready;
 
         if (!direct_stream_mode) begin
             gemm_mem_req_ready = sp_mem_req_ready;
@@ -274,7 +289,9 @@ module gemm_input_mem_router #(
             // different backends:
             //   read A/B -> operand buffer
             //   write C  -> scratchpad adapter
-            gemm_mem_req_ready = ds_read_ready && ds_write_ready;
+            // P13 C RMW reads are non-A/B reads and use the scratchpad
+            // read path.
+            gemm_mem_req_ready = ds_ready_comb;
         end
 
         req_fire    = any_req && gemm_mem_req_ready;
@@ -290,7 +307,7 @@ module gemm_input_mem_router #(
     //   transparent pass-through.
     //
     // direct-stream mode:
-    //   only writes go to scratchpad.
+    //   C/non-A-B reads and all writes go to scratchpad.
     // ------------------------------------------------------------
     always_comb begin
         sp_mem_rd_en   = 1'b0;
@@ -306,6 +323,10 @@ module gemm_input_mem_router #(
             sp_mem_wr_en = gemm_mem_wr_en;
         end
         else begin
+            if (rd_req_fire && (ds_rd_route == RD_ROUTE_SP)) begin
+                sp_mem_rd_en = 1'b1;
+            end
+
             if (wr_req_fire) begin
                 sp_mem_wr_en = 1'b1;
             end
@@ -334,8 +355,9 @@ module gemm_input_mem_router #(
     //   transparent pass-through from scratchpad adapter.
     //
     // direct-stream mode:
-    //   operand-buffer read response or synthetic zero response
-    //   for invalid direct-stream read.
+    //   operand-buffer read response for A/B, scratchpad read response
+    //   for non-A/B reads such as C RMW, or synthetic zero response for
+    //   invalid direct-stream reads.
     // ------------------------------------------------------------
     always_comb begin
         if (!direct_stream_mode) begin
@@ -352,6 +374,10 @@ module gemm_input_mem_router #(
             end
             else if (pending_op_read_q && op_rd_data_valid) begin
                 gemm_mem_rd_data  = op_rd_data;
+                gemm_mem_rd_valid = 1'b1;
+            end
+            else if (pending_sp_read_q && sp_mem_rd_valid) begin
+                gemm_mem_rd_data  = sp_mem_rd_data;
                 gemm_mem_rd_valid = 1'b1;
             end
         end
@@ -372,6 +398,7 @@ module gemm_input_mem_router #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pending_op_read_q        <= 1'b0;
+            pending_sp_read_q        <= 1'b0;
             pending_err_read_q       <= 1'b0;
 
             router_error_pulse_q     <= 1'b0;
@@ -399,6 +426,7 @@ module gemm_input_mem_router #(
             // direct-stream pending state.
             if (!direct_stream_mode) begin
                 pending_op_read_q  <= 1'b0;
+                pending_sp_read_q  <= 1'b0;
                 pending_err_read_q <= 1'b0;
             end
             else begin
@@ -416,6 +444,11 @@ module gemm_input_mem_router #(
                         RD_ROUTE_OP: begin
                             pending_op_read_q <= 1'b1;
                             op_read_count     <= op_read_count + 32'd1;
+                        end
+
+                        RD_ROUTE_SP: begin
+                            pending_sp_read_q <= 1'b1;
+                            sp_read_count     <= sp_read_count + 32'd1;
                         end
 
                         RD_ROUTE_ERR: begin
@@ -442,13 +475,18 @@ module gemm_input_mem_router #(
                     pending_op_read_q <= 1'b0;
                 end
 
+                if (pending_sp_read_q && sp_mem_rd_valid) begin
+                    pending_sp_read_q <= 1'b0;
+                end
+
                 if (pending_err_read_q) begin
                     pending_err_read_q <= 1'b0;
                 end
             end
 
-            // Optional scratchpad-mode counters only. These counters
-            // are not used for functional behavior.
+            // Optional scratchpad-mode counters only. Direct-stream
+            // scratchpad C reads are counted when RD_ROUTE_SP is accepted.
+            // These counters are not used for functional behavior.
             if (!direct_stream_mode) begin
                 if (gemm_mem_rd_en && sp_mem_req_ready) begin
                     sp_read_count <= sp_read_count + 32'd1;

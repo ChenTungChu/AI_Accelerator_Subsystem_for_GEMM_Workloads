@@ -1,4 +1,4 @@
-// File: tb/uvm/driver/ai_accel_subsys_smoke_seq.sv
+// File: tb/uvm/driver/ai_accel_subsys_driver.sv
 
 `ifndef AI_ACCEL_SUBSYS_DRIVER_SV
 `define AI_ACCEL_SUBSYS_DRIVER_SV
@@ -75,18 +75,27 @@ class ai_accel_subsys_driver extends uvm_driver #(ai_accel_subsys_seq_item);
     task drive_configuration(ai_accel_subsys_seq_item req);
         @vif.cb_drv;
 
-        vif.cb_drv.base_addr_a <= req.base_addr_a;
-        vif.cb_drv.base_addr_b <= req.base_addr_b;
-        vif.cb_drv.base_addr_c <= req.base_addr_c;
+        vif.cb_drv.base_addr_a       <= req.base_addr_a;
+        vif.cb_drv.base_addr_b       <= req.base_addr_b;
+        vif.cb_drv.base_addr_c       <= req.base_addr_c;
 
-        vif.cb_drv.dim_m       <= req.dim_m;
-        vif.cb_drv.dim_n       <= req.dim_n;
-        vif.cb_drv.dim_k       <= req.dim_k;
+        vif.cb_drv.dim_m             <= req.dim_m;
+        vif.cb_drv.dim_n             <= req.dim_n;
+        vif.cb_drv.dim_k             <= req.dim_k;
+
+        // C RMW accumulation runtime control.
+        //
+        // This must be driven per job, not only through the top-level
+        // ACCUMULATE_ENABLE plusarg, because the C RMW accumulation two-job recipe uses:
+        //   job0: accumulate_enable = 0
+        //   job1: accumulate_enable = 1
+        vif.cb_drv.accumulate_enable <= req.accumulate_enable;
 
         `uvm_info("DRV",
-            $sformatf("Applied config: base_a=0x%08h base_b=0x%08h base_c=0x%08h dim=(%0d,%0d,%0d)",
+            $sformatf("Applied config: base_a=0x%08h base_b=0x%08h base_c=0x%08h dim=(%0d,%0d,%0d) accumulate_enable=%0d",
                 req.base_addr_a, req.base_addr_b, req.base_addr_c,
-                req.dim_m, req.dim_n, req.dim_k),
+                req.dim_m, req.dim_n, req.dim_k,
+                req.accumulate_enable),
             UVM_MEDIUM)
     endtask
 
