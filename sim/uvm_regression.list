@@ -1,64 +1,34 @@
 # ============================================================
 # AI Accelerator Subsystem UVM Regression List
 #
+# Current milestone:
+#   CSR Control Plane P14E: CSR-Controlled Host-Primary GEMM Smoke
+#
 # Current baseline:
-#   TOTAL : 82
-#   PASS  : 82
+#   TOTAL : 84
+#   PASS  : 84
 #   FAIL  : 0
+#   84/84 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
-#   - DMA load path
-#   - DMA load error/recovery
-#   - DMA load stress
-#   - DMA load CDC clock-ratio sanity
-#   - DMA store / S2MM smoke
-#   - DMA store / S2MM error/recovery
-#   - DMA load + GEMM + DMA store stress
-#   - AXI-Stream preload smoke
-#   - AXI-Stream preload error/recovery
-#   - AXI-Stream load-store stress
-#   - AXI-Stream CDC clock-ratio sanity
-#   - Direct Stream GEMM frontend smoke
-#   - Direct Stream GEMM frontend error/recovery
-#   - Direct Stream load-store stress
-#   - Direct Stream CDC clock-ratio sanity
-#   - GEMM performance counter smoke
-#   - GEMM performance profile
-#   - 2-lane GEMM performance and frontend stress coverage
-#   - B-cache / packed B-cache / A-row cache / packed A-row representative regression
-#   - cache-backed 4-lane MAC representative regression
-#   - P9 scaled-cache large-dimension representative regression
-#   - P10 K-tiling representative regression
-#   - P11 N-tiling representative regression
-#   - P12 M-tiling representative regression
-#   - P13 C RMW focused DUT recipe regression
-#   - P13 C RMW frontend representative regression
-#   - back-to-back jobs
-#   - reset recovery
-#   - corner recipe
-#   - mid-run reset / abort recovery
+#   - DMA load / store / load-store paths
+#   - AXI-Stream preload and load-store paths
+#   - Direct Stream operand-buffer load-store path
+#   - CDC clock-ratio sanity
+#   - error / recovery flows
+#   - performance counter / profile checks
+#   - 2-lane, 4-lane, cache, packed preload coverage
+#   - P9 scaled-cache large-dimension representative coverage
+#   - P10 K-tiling representative coverage
+#   - P11 N-tiling representative coverage
+#   - P12 M-tiling representative coverage
+#   - P13 C RMW focused DUT recipe coverage
+#   - P13 C RMW frontend representative coverage
+#   - AXI-Lite CSR control-plane register smoke
+#   - CSR-controlled host-primary GEMM smoke
+#   - back-to-back, reset, corner, mid-run reset coverage
 #   - helper fallback sanity
-#
-# P9 representative additions:
-#   - gemm_4lane_scaled_fullcache_dma_load_store_case190
-#   - gemm_4lane_scaled_fullcache_axis_stream_load_store_case191
-#   - gemm_4lane_scaled_fullcache_direct_stream_load_store_case192
-#
-# P10 representative additions:
-#   - gemm_4lane_ktiling_dma_load_store_case195
-#   - gemm_4lane_ktiling_axis_stream_load_store_case195
-#   - gemm_4lane_ktiling_direct_stream_load_store_case195
-#
-# P11 representative additions:
-#   - gemm_4lane_ntiling_dma_load_store_case200
-#   - gemm_4lane_ntiling_axis_stream_load_store_case200
-#   - gemm_4lane_ntiling_direct_stream_load_store_case200
-#
-# P12 representative additions:
-#   - gemm_4lane_mtiling_dma_load_store_case207
-#   - gemm_4lane_mtiling_axis_stream_load_store_case207
-#   - gemm_4lane_mtiling_direct_stream_load_store_case207
 #
 # P13D focused DUT additions:
 #   - p13d_c_rmw_accum_case208
@@ -71,192 +41,182 @@
 #   - gemm_4lane_c_rmw_dma_load_store_case211
 #   - gemm_4lane_c_rmw_axis_stream_load_store_case211
 #   - gemm_4lane_c_rmw_direct_stream_load_store_case211
+#
+# P14E CSR control-plane additions:
+#   - csr_host_smoke_case100
+#   - csr_host_smoke_case102
 # ============================================================
 
 
+# ------------------------------------------------------------
+# Regression items, in run_full_uvm_regression.tcl order
+# ------------------------------------------------------------
 
-# ------------------------------------------------------------
-# Smoke test (primary host path)
-# ------------------------------------------------------------
+# 001: smoke CASE_ID=5
 ai_accel_subsys_smoke_test CASE_ID 5 +ENABLE_RESULT_CHECK=1
+# 002: smoke CASE_ID=100
 ai_accel_subsys_smoke_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
+# 003: smoke CASE_ID=101
 ai_accel_subsys_smoke_test CASE_ID 101 +ENABLE_RESULT_CHECK=1
+# 004: smoke CASE_ID=105
 ai_accel_subsys_smoke_test CASE_ID 105 +ENABLE_RESULT_CHECK=1
+# 005: smoke CASE_ID=400
 ai_accel_subsys_smoke_test CASE_ID 400 +ENABLE_RESULT_CHECK=1
+# 006: smoke CASE_ID=401
 ai_accel_subsys_smoke_test CASE_ID 401 +ENABLE_RESULT_CHECK=1
+# 007: smoke CASE_ID=402
 ai_accel_subsys_smoke_test CASE_ID 402 +ENABLE_RESULT_CHECK=1
+# 008: smoke CASE_ID=403
 ai_accel_subsys_smoke_test CASE_ID 403 +ENABLE_RESULT_CHECK=1
-
-
-# ------------------------------------------------------------
-# DMA load smoke / error / stress / CDC
-# ------------------------------------------------------------
+# 009: dma_load_smoke RUN_ALL
 ai_accel_subsys_dma_load_smoke_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1
+# 010: dma_load_error invalid_launch_and_recovery
 ai_accel_subsys_dma_load_error_test +ENABLE_RESULT_CHECK=0
+# 011: back_to_back 100->101
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
+# 012: back_to_back 5->0
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=2 +JOB0_CASE_ID=5 +JOB1_CASE_ID=0
-
-
-# ------------------------------------------------------------
-# DMA store / S2MM smoke / error / load-store stress
-# ------------------------------------------------------------
+# 013: back_to_back 5->101->400
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +JOB_COUNT=3 +JOB0_CASE_ID=5 +JOB1_CASE_ID=101 +JOB2_CASE_ID=400
+# 014: reset_recovery 5->101
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
+# 015: reset_recovery 5->400
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=400
-
-
-# ------------------------------------------------------------
-# AXI-Stream preload / load-store / CDC
-# ------------------------------------------------------------
+# 016: corner default 5->101->105->403
 ai_accel_subsys_corner_test +ENABLE_RESULT_CHECK=1
+# 017: midrun_reset abort=5 recovery=101
 ai_accel_subsys_midrun_reset_test +ENABLE_RESULT_CHECK=1 +RESET_HOLD_CYCLES=5 +POST_RESET_SETTLE_CYCLES=5 +ABORT_CASE_ID=5 +RECOVERY_CASE_ID=101 +RESET_TRIGGER_CYCLES_AFTER_BUSY=8
+# 018: dma_load_stress 8 jobs
 ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10
+# 019: dma_load_stress cdc 8 jobs clk10_13
 ai_accel_subsys_dma_load_stress_test +ENABLE_RESULT_CHECK=1 +STRESS_JOB_COUNT=8 +STRESS_SEED=20260502 +STRESS_RANDOM=1 +STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
-
-
-# ------------------------------------------------------------
-# Direct Stream smoke / error / load-store / CDC
-# ------------------------------------------------------------
+# 020: dma_store_smoke RUN_ALL
 ai_accel_subsys_dma_store_smoke_test +ENABLE_RESULT_CHECK=1 +RUN_ALL=1
+# 021: dma_store_error default
 ai_accel_subsys_dma_store_error_test +ENABLE_RESULT_CHECK=0
+# 022: dma_load_store_stress 8 jobs
 ai_accel_subsys_dma_load_store_stress_test +ENABLE_RESULT_CHECK=1 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10
+# 023: axis_stream_preload_smoke_run_all
 ai_accel_subsys_axis_stream_preload_smoke_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1
-
-
-# ------------------------------------------------------------
-# Performance counter/profile baseline
-# ------------------------------------------------------------
+# 024: axis_stream_preload_error_recovery
 ai_accel_subsys_axis_stream_preload_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
+# 025: axis_stream_load_store_stress 8 jobs
 ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10
-
-
-# ------------------------------------------------------------
-# Helper fallback sanity
-# ------------------------------------------------------------
+# 026: axis_stream_load_store_stress_cdc_10_13
 ai_accel_subsys_axis_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+# 027: direct_stream_error_recovery
 ai_accel_subsys_direct_stream_error_test CASE_ID 100 +ENABLE_RESULT_CHECK=1
+# 028: direct_stream_smoke_run_all
 ai_accel_subsys_direct_stream_smoke_test +ENABLE_RESULT_CHECK=1 +RUN_ALL=1
-
-
-# ------------------------------------------------------------
-# 2-lane GEMM subset regression
-# ------------------------------------------------------------
+# 029: direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10
+# 030: direct_stream_load_store_stress_cdc_10_13
 ai_accel_subsys_direct_stream_load_store_stress_test +ENABLE_RESULT_CHECK=1 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+# 031: perf_counter_smoke
 ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1
-
-
-# ------------------------------------------------------------
-# 2-lane GEMM P3 stress / CDC hardening regression
-# ------------------------------------------------------------
+# 032: perf_profile
 ai_accel_subsys_perf_profile_test CASE_ID 100 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 033: helper smoke CASE_ID=101
 ai_accel_subsys_smoke_test CASE_ID 101 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1
+# 034: helper back_to_back 100->101
 ai_accel_subsys_back_to_back_test +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1 +JOB_COUNT=2 +JOB0_CASE_ID=100 +JOB1_CASE_ID=101
+# 035: helper reset_recovery 5->101
 ai_accel_subsys_reset_recovery_test +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=1 +PRE_RESET_CASE_ID=5 +POST_RESET_CASE_ID=101
+# 036: gemm_2lane_perf_counter_smoke
 ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 037: gemm_2lane_perf_profile
 ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +RUN_ALL=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P4 B-cache representative regression
-# ------------------------------------------------------------
+# 038: gemm_2lane_direct_stream_smoke
 ai_accel_subsys_direct_stream_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 039: gemm_2lane_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 040: gemm_2lane_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P5 packed B-cache representative regression
-# ------------------------------------------------------------
+# 041: gemm_2lane_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 042: gemm_2lane_dma_load_store_cdc
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+# 043: gemm_2lane_axis_stream_load_store_cdc
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
-
-
-# ------------------------------------------------------------
-# P6 A-row cache representative regression
-# ------------------------------------------------------------
+# 044: gemm_2lane_direct_stream_load_store_cdc
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+# 045: gemm_2lane_bcache_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 046: gemm_2lane_bcache_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 047: gemm_2lane_bcache_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 048: gemm_2lane_packed_bcache_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 049: gemm_2lane_packed_bcache_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P7 packed A-row preload representative regression
-# ------------------------------------------------------------
+# 050: gemm_2lane_packed_bcache_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 051: gemm_2lane_arow_cache_perf_counter_smoke
 ai_accel_subsys_perf_counter_smoke_test CASE_ID 100 GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +RUN_ALL=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 052: gemm_2lane_arow_cache_perf_profile
 ai_accel_subsys_perf_profile_test CASE_ID 100 GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +RUN_ALL=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P8 cache-backed 4-lane MAC representative regression
-# ------------------------------------------------------------
+# 053: gemm_2lane_packed_bcache_arow_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 054: gemm_2lane_packed_bcache_arow_direct_stream_load_store_cdc_10_13
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=13
+# 055: gemm_2lane_packed_bcache_arow_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P9 scaled-cache larger-dimension representative regression
-# ------------------------------------------------------------
+# 056: gemm_2lane_packed_bcache_arow_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 057: gemm_2lane_packed_bcache_packed_arow_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 058: gemm_2lane_packed_bcache_packed_arow_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P10 K-tiling representative regression
-# ------------------------------------------------------------
+# 059: gemm_2lane_packed_bcache_packed_arow_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 2 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 060: gemm_4lane_fullcache_dma_load_store_stress
 ai_accel_subsys_dma_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=8 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=1 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 061: gemm_4lane_fullcache_axis_stream_load_store_stress
 ai_accel_subsys_axis_stream_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=8 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=1 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P11 N-tiling representative regression
-# ------------------------------------------------------------
+# 062: gemm_4lane_fullcache_direct_stream_load_store_stress
 ai_accel_subsys_direct_stream_load_store_stress_test GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 4 GEMM_B_CACHE_MAX_N 4 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 4 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=8 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=1 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 063: gemm_4lane_scaled_fullcache_dma_load_store_case190
 ai_accel_subsys_dma_load_store_stress_test CASE_ID 190 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 064: gemm_4lane_scaled_fullcache_axis_stream_load_store_case191
 ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 191 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P12 M-tiling representative regression
-# ------------------------------------------------------------
+# 065: gemm_4lane_scaled_fullcache_direct_stream_load_store_case192
 ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 192 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 066: gemm_4lane_ktiling_dma_load_store_case195
 ai_accel_subsys_dma_load_store_stress_test CASE_ID 195 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 067: gemm_4lane_ktiling_axis_stream_load_store_case195
 ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 195 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# Back-to-back / reset / corner / mid-run reset
-# ------------------------------------------------------------
+# 068: gemm_4lane_ktiling_direct_stream_load_store_case195
 ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 195 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 069: gemm_4lane_ntiling_dma_load_store_case200
 ai_accel_subsys_dma_load_store_stress_test CASE_ID 200 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=100000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 070: gemm_4lane_ntiling_axis_stream_load_store_case200
 ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 200 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=100000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 071: gemm_4lane_ntiling_direct_stream_load_store_case200
 ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 200 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=100000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 072: gemm_4lane_mtiling_dma_load_store_case207
 ai_accel_subsys_dma_load_store_stress_test CASE_ID 207 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=200000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 073: gemm_4lane_mtiling_axis_stream_load_store_case207
 ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 207 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=200000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 074: gemm_4lane_mtiling_direct_stream_load_store_case207
 ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 207 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=200000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P13D C RMW focused DUT recipes
-# ------------------------------------------------------------
+# 075: p13d_c_rmw_accum_case208
 ai_accel_subsys_c_rmw_accum_dut_test CASE_ID 208 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 076: p13d_c_rmw_accum_case209
 ai_accel_subsys_c_rmw_accum_dut_test CASE_ID 209 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 077: p13d_c_rmw_accum_case210
 ai_accel_subsys_c_rmw_accum_dut_test CASE_ID 210 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 078: p13d_c_rmw_accum_case211
 ai_accel_subsys_c_rmw_accum_dut_test CASE_ID 211 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 079: p13d_c_rmw_accum_case212
 ai_accel_subsys_c_rmw_accum_dut_test CASE_ID 212 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
-
-# ------------------------------------------------------------
-# P13G C RMW frontend representatives
-# ------------------------------------------------------------
+# 080: gemm_4lane_c_rmw_dma_load_store_case211
 ai_accel_subsys_dma_load_store_stress_test CASE_ID 211 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +STORE_STRESS_JOB_COUNT=1 +STORE_STRESS_SEED=20260502 +STORE_STRESS_RANDOM=0 +STORE_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 081: gemm_4lane_c_rmw_axis_stream_load_store_case211
 ai_accel_subsys_axis_stream_load_store_stress_test CASE_ID 211 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +AXIS_STRESS_JOB_COUNT=1 +AXIS_STRESS_SEED=20260502 +AXIS_STRESS_RANDOM=0 +AXIS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 082: gemm_4lane_c_rmw_direct_stream_load_store_case211
 ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 211 GEMM_MAC_LANES 4 GEMM_ENABLE_B_CACHE 1 GEMM_B_CACHE_MAX_K 8 GEMM_B_CACHE_MAX_N 8 GEMM_ENABLE_PACKED_BCACHE_PRELOAD 1 GEMM_ENABLE_A_ROW_CACHE 1 GEMM_A_ROW_CACHE_MAX_K 8 GEMM_ENABLE_PACKED_A_ROW_PRELOAD 1 GEMM_ENABLE_K_TILING 1 GEMM_K_TILE_SIZE 8 GEMM_ENABLE_N_TILING 1 GEMM_N_TILE_SIZE 8 GEMM_ENABLE_M_TILING 1 GEMM_M_TILE_SIZE 2 GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DS_STRESS_JOB_COUNT=1 +DS_STRESS_SEED=20260502 +DS_STRESS_RANDOM=0 +DS_STRESS_GAP_CYCLES=10 +SMOKE_DONE_TIMEOUT_CYCLES=300000 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 083: csr_host_smoke_case100
+ai_accel_subsys_csr_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 084: csr_host_smoke_case102
+ai_accel_subsys_csr_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

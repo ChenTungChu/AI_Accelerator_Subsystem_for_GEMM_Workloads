@@ -51,6 +51,7 @@ if {($STOP_ON_FIRST_FAIL != 0) && ($STOP_ON_FIRST_FAIL != 1)} {
 proc clear_uvm_run_vars {} {
     foreach v {
         UVM_TEST
+        UVM_TOP
         TESTNAME
         CASE_ID
 
@@ -528,7 +529,7 @@ run_reg_item "helper reset_recovery 5->101" {
 }
 
 # ============================================================
-# 2-lane focused smoke
+# P2: 2-lane focused smoke
 #
 # Regression total through this section: 38.
 # ============================================================
@@ -575,10 +576,10 @@ run_reg_item "gemm_2lane_direct_stream_smoke" {
 }
 
 # ============================================================
-# 2-lane frontend stress and CDC
+# P3: 2-lane frontend stress and CDC
 #
 # Covers DMA, AXI-Stream, and Direct Stream load-store paths.
-# Expected total after this section: 44.
+# Expected total after P3: 44.
 # ============================================================
 run_reg_item "gemm_2lane_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -683,10 +684,10 @@ run_reg_item "gemm_2lane_direct_stream_load_store_cdc" {
 }
 
 # ============================================================
-# 2-lane B-cache frontend representatives
+# P4: 2-lane B-cache frontend representatives
 #
 # Default-clock representatives only.
-# Expected total after this section: 47.
+# Expected total after P4: 47.
 # ============================================================
 run_reg_item "gemm_2lane_bcache_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -749,10 +750,10 @@ run_reg_item "gemm_2lane_bcache_direct_stream_load_store_stress" {
 }
 
 # ============================================================
-# Packed B-cache frontend representatives
+# P5: packed B-cache frontend representatives
 #
 # Default-clock representatives only.
-# Expected total after this section: 50.
+# Expected total after P5: 50.
 # ============================================================
 run_reg_item "gemm_2lane_packed_bcache_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -818,10 +819,10 @@ run_reg_item "gemm_2lane_packed_bcache_direct_stream_load_store_stress" {
 }
 
 # ============================================================
-# A-row cache focused and frontend representatives
+# P6: A-row cache focused and frontend representatives
 #
 # Covers perf/profile plus DMA, AXI-Stream, and Direct Stream paths.
-# Expected total after this section: 56.
+# Expected total after P6: 56.
 # ============================================================
 run_reg_item "gemm_2lane_arow_cache_perf_counter_smoke" {
     set UVM_TEST ai_accel_subsys_perf_counter_smoke_test
@@ -956,10 +957,10 @@ run_reg_item "gemm_2lane_packed_bcache_arow_axis_stream_load_store_stress" {
 }
 
 # ============================================================
-# Packed A-row preload frontend representatives
+# P7: packed A-row preload frontend representatives
 #
 # Default-clock representatives only.
-# Expected total after this section: 59.
+# Expected total after P7: 59.
 # ============================================================
 run_reg_item "gemm_2lane_packed_bcache_packed_arow_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1034,10 +1035,10 @@ run_reg_item "gemm_2lane_packed_bcache_packed_arow_direct_stream_load_store_stre
 }
 
 # ============================================================
-# 4-lane full-cache frontend representatives
+# P8: 4-lane full-cache frontend representatives
 #
 # Enables the cache-backed true 4-lane MAC path.
-# Expected total after this section: 62.
+# Expected total after P8: 62.
 # ============================================================
 run_reg_item "gemm_4lane_fullcache_dma_load_store_stress" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1112,10 +1113,10 @@ run_reg_item "gemm_4lane_fullcache_direct_stream_load_store_stress" {
 }
 
 # ============================================================
-# Scaled 4-lane cache representatives
+# P9: scaled 4-lane cache representatives
 #
 # Forced larger-dimension CASE_ID per frontend path.
-# Expected total after this section: 65.
+# Expected total after P9: 65.
 # ============================================================
 run_reg_item "gemm_4lane_scaled_fullcache_dma_load_store_case190" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1193,16 +1194,16 @@ run_reg_item "gemm_4lane_scaled_fullcache_direct_stream_load_store_case192" {
 }
 
 # ============================================================
-# K-tiling parameter plumbing
+# P10B: K-tiling parameter plumbing
 #
 # No full-regression item here; total remains 65.
 # ============================================================
 
 # ============================================================
-# K-tiling frontend representatives
+# P10F: K-tiling frontend representatives
 #
 # Forced CASE_ID=195, dim=(4,4,16), two K=8 tiles.
-# Expected total after this section: 68.
+# Expected total after P10: 68.
 # ============================================================
 run_reg_item "gemm_4lane_ktiling_dma_load_store_case195" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1289,16 +1290,16 @@ run_reg_item "gemm_4lane_ktiling_direct_stream_load_store_case195" {
 }
 
 # ============================================================
-# N-tiling parameter plumbing
+# P11B: N-tiling parameter plumbing
 #
 # No full-regression item here; total remains 68.
 # ============================================================
 
 # ============================================================
-# N-tiling frontend representatives
+# P11G: N-tiling frontend representatives
 #
 # Forced CASE_ID=200, combined K/N tiling.
-# Expected total after this section: 71.
+# Expected total after P11: 71.
 # ============================================================
 run_reg_item "gemm_4lane_ntiling_dma_load_store_case200" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1397,16 +1398,16 @@ run_reg_item "gemm_4lane_ntiling_direct_stream_load_store_case200" {
 }
 
 # ============================================================
-# M-tiling parameter plumbing
+# P12B: M-tiling parameter plumbing
 #
 # No full-regression item here; total remains 71.
 # ============================================================
 
 # ============================================================
-# M-tiling frontend representatives
+# P12G: M-tiling frontend representatives
 #
 # Forced CASE_ID=207, combined M/N/K tiling with ragged tails.
-# Expected total after this section: 74.
+# Expected total after P12: 74.
 # ============================================================
 run_reg_item "gemm_4lane_mtiling_dma_load_store_case207" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1511,20 +1512,20 @@ run_reg_item "gemm_4lane_mtiling_direct_stream_load_store_case207" {
 }
 
 # ============================================================
-# C RMW parameter plumbing
+# P13B: C RMW parameter plumbing
 #
 # Adds GEMM_ENABLE_C_RMW_ACCUM and ACCUMULATE_ENABLE.
 # No full-regression item here; total remains 74.
 # ============================================================
 
 # ============================================================
-# C RMW focused DUT recipes
+# P13D: C RMW focused DUT recipes
 #
 # Two-job partial-K recipes: job0 direct write, job1 RMW accumulate.
 # ACCUMULATE_ENABLE stays 0; the test drives per-job control through UVM.
-# Expected total after this section: 79.
+# Expected total after P13D: 79.
 # ============================================================
-run_reg_item "c_rmw_accum_dut_case208" {
+run_reg_item "p13d_c_rmw_accum_case208" {
     set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 208
@@ -1540,7 +1541,7 @@ run_reg_item "c_rmw_accum_dut_case208" {
     set ACCUMULATE_ENABLE 0
 }
 
-run_reg_item "c_rmw_accum_dut_case209" {
+run_reg_item "p13d_c_rmw_accum_case209" {
     set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 209
@@ -1556,7 +1557,7 @@ run_reg_item "c_rmw_accum_dut_case209" {
     set ACCUMULATE_ENABLE 0
 }
 
-run_reg_item "c_rmw_accum_dut_case210" {
+run_reg_item "p13d_c_rmw_accum_case210" {
     set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 210
@@ -1572,7 +1573,7 @@ run_reg_item "c_rmw_accum_dut_case210" {
     set ACCUMULATE_ENABLE 0
 }
 
-run_reg_item "c_rmw_accum_dut_case211" {
+run_reg_item "p13d_c_rmw_accum_case211" {
     set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 211
@@ -1588,7 +1589,7 @@ run_reg_item "c_rmw_accum_dut_case211" {
     set ACCUMULATE_ENABLE 0
 }
 
-run_reg_item "c_rmw_accum_dut_case212" {
+run_reg_item "p13d_c_rmw_accum_case212" {
     set UVM_TEST ai_accel_subsys_c_rmw_accum_dut_test
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 212
@@ -1605,12 +1606,12 @@ run_reg_item "c_rmw_accum_dut_case212" {
 }
 
 # ============================================================
-# C RMW frontend representatives
+# P13G: C RMW frontend representatives
 #
 # Forced CASE_ID=211 on DMA, AXI-Stream, and Direct Stream load-store paths.
-# Uses the full cache/tile stack plus GEMM_ENABLE_C_RMW_ACCUM=1.
-# ACCUMULATE_ENABLE stays 0; the C RMW recipe drives per-job control.
-# Expected total after this section: 82.
+# Uses the full P12 cache/tile stack plus GEMM_ENABLE_C_RMW_ACCUM=1.
+# ACCUMULATE_ENABLE stays 0; the P13 recipe drives per-job control.
+# Expected total after P13G: 82.
 # ============================================================
 run_reg_item "gemm_4lane_c_rmw_dma_load_store_case211" {
     set UVM_TEST ai_accel_subsys_dma_load_store_stress_test
@@ -1721,6 +1722,142 @@ run_reg_item "gemm_4lane_c_rmw_direct_stream_load_store_case211" {
 
     set GEMM_ENABLE_C_RMW_ACCUM 1
     set ACCUMULATE_ENABLE 0
+}
+
+
+# ============================================================
+# P14E: CSR-controlled host-primary GEMM smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items use the host AXI agent for scratchpad setup/readback and
+# the AXI-Lite CSR path for GEMM configuration/start/done polling.
+# Expected total after P14E: 84.
+# ============================================================
+run_reg_item "csr_host_smoke_case100" {
+    set UVM_TEST ai_accel_subsys_csr_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_host_smoke_case102" {
+    set UVM_TEST ai_accel_subsys_csr_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
+# P14F1: CSR-controlled DMA load + GEMM + DMA store smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items preload A/B through CSR-controlled DMA load commands,
+# launch GEMM through CSR, store C through CSR-controlled DMA
+# store, and compare the DMA destination memory against the
+# software reference.
+# Expected total after P14F1: 86.
+# ============================================================
+run_reg_item "csr_dma_load_store_case100" {
+    set UVM_TEST ai_accel_subsys_csr_dma_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_dma_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_dma_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
+# P14F2: CSR-controlled AXI-Stream preload + GEMM + DMA store smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items preload A/B through CSR-controlled AXI-Stream preload
+# commands, launch GEMM through CSR, store C through
+# CSR-controlled DMA store, and compare the DMA destination
+# memory against the software reference.
+# Expected total after P14F2: 88.
+# ============================================================
+run_reg_item "csr_axis_stream_load_store_case100" {
+    set UVM_TEST ai_accel_subsys_csr_axis_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_axis_stream_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_axis_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
+# P14F3: CSR-controlled Direct Stream preload + GEMM + DMA store smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items preload A/B through CSR-controlled Direct Stream preload
+# commands into the GEMM operand buffers, launch GEMM through CSR
+# with GEMM input stream mode enabled, store C through
+# CSR-controlled DMA store, and compare the DMA destination
+# memory against the software reference.
+# Expected total after P14F3: 90.
+# ============================================================
+run_reg_item "csr_direct_stream_load_store_case100" {
+    set UVM_TEST ai_accel_subsys_csr_direct_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_direct_stream_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_direct_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
 }
 
 # ============================================================

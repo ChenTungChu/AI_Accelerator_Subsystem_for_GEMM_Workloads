@@ -1,11 +1,16 @@
 // File: tb/top/ai_accel_subsys_csr_uvm_top.sv
 `timescale 1ns/1ps
 
-module ai_accel_subsys_csr_uvm_top;
+import uvm_pkg::*;
+import ai_accel_subsys_uvm_pkg::*;
+`include "uvm_macros.svh"
+`include "ai_accel_csr_access_helper.sv"
+`include "ai_accel_subsys_csr_smoke_test.sv"
+`include "ai_accel_subsys_csr_dma_load_store_smoke_test.sv"
+`include "ai_accel_subsys_csr_axis_stream_load_store_smoke_test.sv"
+`include "ai_accel_subsys_csr_direct_stream_load_store_smoke_test.sv"
 
-    import uvm_pkg::*;
-    import ai_accel_subsys_uvm_pkg::*;
-    `include "uvm_macros.svh"
+module ai_accel_subsys_csr_uvm_top;
 
     // ============================================================
     // Parameters

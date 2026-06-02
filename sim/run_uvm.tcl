@@ -63,7 +63,12 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_perf_counter_smoke_test \
     ai_accel_subsys_perf_profile_test \
     ai_accel_subsys_c_rmw_accum_ref_model_test \
+    ai_accel_subsys_c_rmw_accum_dut_test \
     ai_accel_csr_regs_smoke_test \
+    ai_accel_subsys_csr_smoke_test \
+    ai_accel_subsys_csr_dma_load_store_smoke_test \
+    ai_accel_subsys_csr_axis_stream_load_store_smoke_test \
+    ai_accel_subsys_csr_direct_stream_load_store_smoke_test \
 ]
 
 # --------------------------------------------------
@@ -110,6 +115,11 @@ set SUPPORTED_UVM_TOPS [list \
 if {![info exists UVM_TOP]} {
     if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
         set UVM_TOP ai_accel_csr_regs_uvm_top
+    } elseif {($UVM_TEST eq "ai_accel_subsys_csr_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_dma_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_direct_stream_load_store_smoke_test")} {
+        set UVM_TOP ai_accel_subsys_csr_uvm_top
     } else {
         set UVM_TOP ai_accel_subsys_uvm_top
     }
@@ -126,6 +136,10 @@ if {![info exists CASE_ID]} {
     set CASE_ID 0
 }
 
+if {($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test") && ($CASE_ID == 0)} {
+    set CASE_ID 208
+}
+
 # --------------------------------------------------
 # Result checking
 #
@@ -135,6 +149,10 @@ if {![info exists CASE_ID]} {
 # --------------------------------------------------
 if {![info exists ENABLE_RESULT_CHECK]} {
     set ENABLE_RESULT_CHECK 0
+}
+
+if {$UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test"} {
+    set ENABLE_RESULT_CHECK 1
 }
 
 # --------------------------------------------------
@@ -271,10 +289,7 @@ set EXTRA_ARGS [list]
 # --------------------------------------------------
 set JOB_ARG_LIST [list]
 
-if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
-    set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}.log
-
-} elseif {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
+if {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     if {![info exists JOB_COUNT]} {
         set JOB_COUNT 2
     }
@@ -339,7 +354,8 @@ if {($UVM_TEST eq "ai_accel_subsys_dma_load_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
     ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
-    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test")} {
+    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
 
     if {![info exists RUN_ALL]} {
         set RUN_ALL 0
@@ -843,8 +859,12 @@ if {![info exists EXTRA_PLUSARGS]} {
 # --------------------------------------------------
 set LOG_DATE_PREFIX [clock format [clock seconds] -format "%Y%m%d_%H%M%S"]
 
-if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
-    set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}.log
+if {($UVM_TEST eq "ai_accel_csr_regs_smoke_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_csr_smoke_test") ||
+    ($UVM_TEST eq "ai_accel_subsys_csr_dma_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_direct_stream_load_store_smoke_test")} {
+    set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
     set LOG_BASENAME ${UVM_TEST}_jobs_${JOB_COUNT}_${JOB0_CASE_ID}_${JOB1_CASE_ID}_${JOB2_CASE_ID}_${JOB3_CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
@@ -864,7 +884,8 @@ if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
           ($UVM_TEST eq "ai_accel_subsys_axis_stream_preload_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_direct_stream_smoke_test") ||
           ($UVM_TEST eq "ai_accel_subsys_perf_counter_smoke_test") ||
-          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test")} {
+          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_ref_model_test") ||
+          ($UVM_TEST eq "ai_accel_subsys_c_rmw_accum_dut_test")} {
     if {$RUN_ALL} {
         set LOG_BASENAME ${UVM_TEST}_run_all_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
     } else {
@@ -900,6 +921,10 @@ if {$UVM_TEST eq "ai_accel_csr_regs_smoke_test"} {
 set LOG_BASENAME [string map [list \
     "ai_accel_subsys_" "aas_" \
     "ai_accel_csr_regs_smoke_test" "csr_regs_smoke" \
+    "ai_accel_subsys_csr_dma_load_store_smoke_test" "csr_dma_ls_smoke" \
+    "ai_accel_subsys_csr_axis_stream_load_store_smoke_test" "csr_axis_ls_smoke" \
+    "ai_accel_subsys_csr_direct_stream_load_store_smoke_test" "csr_ds_ls_smoke" \
+    "ai_accel_subsys_csr_smoke_test" "csr_subsys_smoke" \
     "ai_accel_csr_regs_uvm_top" "csr_regs_top" \
     "ai_accel_subsys_csr_uvm_top" "aas_csr_top" \
     "axis_stream_load_store_stress_test" "axis_ls_stress" \
@@ -917,6 +942,7 @@ set LOG_BASENAME [string map [list \
     "perf_counter_smoke_test" "perf_cnt" \
     "perf_profile_test" "perf_prof" \
     "c_rmw_accum_ref_model_test" "c_rmw_ref" \
+    "c_rmw_accum_dut_test" "c_rmw_dut" \
     "back_to_back_test" "b2b" \
     "reset_recovery_test" "rst_rec" \
     "corner_test" "corner" \

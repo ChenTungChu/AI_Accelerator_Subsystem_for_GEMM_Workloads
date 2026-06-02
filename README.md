@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, and performance-oriented GEMM datapath upgrades.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, and AXI-Lite CSR control-plane integration.
 
 Current milestone:
 
 ```text
-Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+CSR Control Plane P14E2: CSR-Controlled Host-Primary GEMM Regression Integration Completed
 
 Regression:
-  TOTAL : 82
-  PASS  : 82
+  TOTAL : 84
+  PASS  : 84
   FAIL  : 0
 ```
 
@@ -44,6 +44,7 @@ GEMM_MAC_LANES=4 + K-tiling representative regression across DMA / AXI-Stream / 
 GEMM_MAC_LANES=4 + N-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + M-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + C RMW accumulation focused and frontend representative regression
+AXI-Lite CSR standalone smoke and CSR-controlled host-primary GEMM representative regression
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -87,11 +88,25 @@ K/N/M tiling composes with C RMW accumulation
 Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchpad
 ```
 
+P14 extends the validated sideband-controlled subsystem with an AXI-Lite CSR control-plane wrapper.  The existing datapath top remains intact, while the CSR wrapper lets software or UVM program base addresses, dimensions, modes, command pulses, sticky status, and performance snapshots through registers.
+
+P14E2 validated the first CSR-controlled host-primary GEMM regression entries:
+
+```text
+CSR standalone register smoke through integrated run_uvm.tcl
+CSR-controlled host-primary GEMM CASE_ID=100
+CSR-controlled host-primary GEMM CASE_ID=102
+Full regression: 84/84 PASS
+```
+
 ---
 
 ## Main RTL Blocks
 
 - `ai_accel_subsys`
+- `ai_accel_subsys_csr_top`
+- `ai_accel_csr_regs`
+- `axi_lite_if`
 - `gemm_top`
 - `gemm_scratchpad_adapter`
 - `gemm_input_mem_router`
@@ -110,6 +125,8 @@ Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchp
 - `axi_mm_dual_port_bram`
 
 The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline.
+
+`ai_accel_subsys_csr_top` is a CSR wrapper around the existing `ai_accel_subsys` datapath top.  It is used by CSR-controlled tests and does not replace the legacy sideband UVM top.
 
 `gemm_top` supports:
 
@@ -479,6 +496,18 @@ host readback C
 scoreboard compare
 ```
 
+### CSR-controlled host-primary path
+
+```text
+host clear C
+host preload A/B
+CSR writes GEMM base/dim/mode
+CSR writes START_GEMM command
+CSR polls GEMM_DONE and reads performance snapshot
+host readback C
+CSR smoke test compares C against software reference
+```
+
 ### DMA load-store path
 
 ```text
@@ -592,6 +621,8 @@ Current UVM regression covers:
 - P12 M-tiling DMA / AXI-Stream / Direct Stream representative regression
 - P13 C RMW accumulation focused cases
 - P13 C RMW DMA / AXI-Stream / Direct Stream representative regression
+- AXI-Lite CSR standalone register smoke
+- CSR-controlled host-primary GEMM representative regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -602,11 +633,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 82 items and is passing:
+The current full UVM regression contains 84 items and is passing:
 
 ```text
-TOTAL : 82
-PASS  : 82
+TOTAL : 84
+PASS  : 84
 FAIL  : 0
 ```
 
@@ -640,6 +671,37 @@ gemm_4lane_mtiling_direct_stream_load_store_case207
 
 These all use forced single-case mode with `CASE_ID=207`, `GEMM_ENABLE_K_TILING=1`, `GEMM_K_TILE_SIZE=8`, `GEMM_ENABLE_N_TILING=1`, `GEMM_N_TILE_SIZE=8`, `GEMM_ENABLE_M_TILING=1`, and `GEMM_M_TILE_SIZE=2`.
 
+P13D added these focused C RMW DUT recipe items:
+
+```text
+p13d_c_rmw_accum_case208
+p13d_c_rmw_accum_case209
+p13d_c_rmw_accum_case210
+p13d_c_rmw_accum_case211
+p13d_c_rmw_accum_case212
+```
+
+These all use `GEMM_ENABLE_C_RMW_ACCUM=1` and `ACCUMULATE_ENABLE=0`. The test drives per-job `accumulate_enable` through the UVM control interface.
+
+P13G added these representative C RMW frontend items:
+
+```text
+gemm_4lane_c_rmw_dma_load_store_case211
+gemm_4lane_c_rmw_axis_stream_load_store_case211
+gemm_4lane_c_rmw_direct_stream_load_store_case211
+```
+
+These use forced single-recipe mode with `CASE_ID=211`, the full P12 cache/tile stack, and `GEMM_ENABLE_C_RMW_ACCUM=1`.
+
+P14E2 added these CSR-controlled host-primary items:
+
+```text
+csr_host_smoke_case100
+csr_host_smoke_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, program the GEMM job through AXI-Lite CSR writes, poll sticky GEMM done status, read the CSR performance snapshot, and compare host-readback C against the software reference.
+
 ---
 
 ## Running Regression
@@ -668,8 +730,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 82
-PASS  : 82
+TOTAL : 84
+PASS  : 84
 FAIL  : 0
 ```
 
@@ -1076,6 +1138,45 @@ Direct Stream:
 
 ---
 
+
+## Useful P14 Single-Test Runs
+
+### P14D standalone CSR register smoke
+
+```tcl
+set UVM_TEST ai_accel_csr_regs_smoke_test
+set UVM_TOP ai_accel_csr_regs_uvm_top
+do run_uvm.tcl
+```
+
+### P14E CSR-controlled host-primary GEMM smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 100
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P14E CSR-controlled host-primary representative case
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+---
+
 ## Known Warning
 
 Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
@@ -1093,7 +1194,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+CSR Control Plane P14E2: CSR-Controlled Host-Primary GEMM Regression Integration Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -1133,15 +1234,23 @@ Completed:
   P13F: frontend compatibility sanity                      PASS
   P13G: regression integration                             PASS
   P13H: documentation / closure update                     PASS
+  P14A: AXI-Lite CSR control-plane spec                     PASS
+  P14B: standalone AXI-Lite CSR register block              PASS
+  P14C: CSR wrapper around existing subsystem               PASS
+  P14D: CSR access helper and integrated run flow           PASS
+  P14E: CSR-controlled host-primary GEMM smoke              PASS
+  P14E2: CSR regression integration                         PASS
 
 Regression:
-  82/82 PASS
+  84/84 PASS
 ```
 
 ---
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, and C read-modify-write partial accumulation.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, and an AXI-Lite CSR control-plane wrapper.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
+
+P14E2 proves that the subsystem can also be launched through a software-visible CSR control plane. The CSR-controlled host-primary regression programs GEMM base addresses and dimensions through AXI-Lite registers, issues a START_GEMM command, polls sticky done status, reads performance snapshots, and compares host-readback C against the software reference.
