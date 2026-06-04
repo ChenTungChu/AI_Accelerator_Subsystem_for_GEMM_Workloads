@@ -9,8 +9,10 @@ module ai_accel_csr_regs #(
     parameter int CSR_ADDR_WIDTH  = 12,
     parameter int CSR_DATA_WIDTH  = 32,
 
-    parameter logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014,
-    parameter logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015
+    parameter logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014,
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015,
+    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016,
+    parameter int          P16_RECIPE_QUEUE_DEPTH   = 4
 )(
     input  logic clk,
     input  logic rst_n,
@@ -99,6 +101,40 @@ module ai_accel_csr_regs #(
     output logic [31:0]           job_store_byte_count,
 
     // ------------------------------------------------------------
+    // P16 recipe descriptor / queue control outputs
+    // ------------------------------------------------------------
+    output logic                  recipe_start_pulse,
+    output logic                  recipe_clear_done_pulse,
+    output logic                  recipe_clear_error_pulse,
+    output logic                  recipe_clear_perf_pulse,
+    output logic                  recipe_clear_slot_status_pulse,
+
+    output logic [3:0]            recipe_count,
+    output logic [3:0]            recipe_start_slot,
+    output logic                  recipe_stop_on_error,
+    output logic                  recipe_clear_job_sticky_each_slot,
+    output logic                  recipe_accumulate_perf,
+    output logic                  recipe_allow_slot_writes_while_busy,
+
+    output logic [31:0]           recipe_slot_control          [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_a      [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_b      [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_c      [P16_RECIPE_QUEUE_DEPTH],
+    output logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_m        [P16_RECIPE_QUEUE_DEPTH],
+    output logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_n        [P16_RECIPE_QUEUE_DEPTH],
+    output logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_k        [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_a_src_base_addr  [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_a_dst_base_addr  [P16_RECIPE_QUEUE_DEPTH],
+    output logic [31:0]           recipe_slot_a_load_beats     [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_b_src_base_addr  [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_b_dst_base_addr  [P16_RECIPE_QUEUE_DEPTH],
+    output logic [31:0]           recipe_slot_b_load_beats     [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_store_src_base_addr [P16_RECIPE_QUEUE_DEPTH],
+    output logic [ADDR_WIDTH-1:0] recipe_slot_store_dst_base_addr [P16_RECIPE_QUEUE_DEPTH],
+    output logic [31:0]           recipe_slot_store_byte_count [P16_RECIPE_QUEUE_DEPTH],
+    output logic [31:0]           recipe_slot_user_tag         [P16_RECIPE_QUEUE_DEPTH],
+
+    // ------------------------------------------------------------
     // Live status inputs from the future P15 job sequencer
     // ------------------------------------------------------------
     input  logic                  job_busy,
@@ -116,6 +152,30 @@ module ai_accel_csr_regs #(
     input  logic [31:0]           job_perf_busy_cycles,
     input  logic [31:0]           job_perf_mac_count,
     input  logic [31:0]           job_perf_output_count,
+
+    // ------------------------------------------------------------
+    // Live status inputs from the future P16 recipe sequencer
+    // ------------------------------------------------------------
+    input  logic                  recipe_busy,
+    input  logic                  recipe_done,
+    input  logic                  recipe_all_slots_done,
+    input  logic                  recipe_final_store_done,
+
+    input  logic                  recipe_slot_job_error,
+    input  logic                  recipe_slot_job_reject,
+    input  logic                  recipe_sequence_error,
+    input  logic                  recipe_slot_range_error,
+    input  logic                  recipe_slot_descriptor_error,
+
+    input  logic [31:0]           recipe_state,
+    input  logic [31:0]           recipe_current_slot,
+    input  logic [31:0]           recipe_completed_count,
+    input  logic [31:0]           recipe_slot_done_mask,
+    input  logic [31:0]           recipe_slot_error_mask,
+    input  logic [31:0]           recipe_slot_reject_mask,
+    input  logic [31:0]           recipe_perf_busy_cycles,
+    input  logic [31:0]           recipe_perf_mac_count,
+    input  logic [31:0]           recipe_perf_output_count,
 
     // ------------------------------------------------------------
     // Live status inputs from the existing subsystem
@@ -238,6 +298,49 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_PERF_OUTPUT_COUNT_ADDR= 12'h188;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_RESERVED_18C_ADDR     = 12'h18C;
 
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_VERSION_ADDR       = 12'h200;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_COMMAND_ADDR       = 12'h204;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_STATUS_ADDR        = 12'h208;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_DONE_STATUS_ADDR   = 12'h20C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_ERROR_STATUS_ADDR  = 12'h210;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_CONTROL_ADDR       = 12'h214;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_REJECT_STATUS_ADDR = 12'h218;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_STATE_ADDR         = 12'h21C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_CURRENT_SLOT_ADDR  = 12'h220;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_COMPLETED_COUNT_ADDR = 12'h224;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_SLOT_DONE_MASK_ADDR  = 12'h228;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_SLOT_ERROR_MASK_ADDR = 12'h22C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_SLOT_REJECT_MASK_ADDR= 12'h230;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_RESERVED_234_ADDR  = 12'h234;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_PERF_BUSY_CYCLES_ADDR = 12'h280;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_PERF_MAC_COUNT_ADDR   = 12'h284;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_PERF_OUTPUT_COUNT_ADDR= 12'h288;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_RESERVED_28C_ADDR     = 12'h28C;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RECIPE_SLOT_BASE_ADDR = 12'h300;
+    localparam int unsigned CSR_RECIPE_SLOT_STRIDE = 128;
+
+    localparam logic [6:0] SLOT_CONTROL_OFFSET          = 7'h00;
+    localparam logic [6:0] SLOT_BASE_ADDR_A_OFFSET      = 7'h04;
+    localparam logic [6:0] SLOT_BASE_ADDR_B_OFFSET      = 7'h08;
+    localparam logic [6:0] SLOT_BASE_ADDR_C_OFFSET      = 7'h0C;
+    localparam logic [6:0] SLOT_DIM_M_OFFSET            = 7'h10;
+    localparam logic [6:0] SLOT_DIM_N_OFFSET            = 7'h14;
+    localparam logic [6:0] SLOT_DIM_K_OFFSET            = 7'h18;
+    localparam logic [6:0] SLOT_A_SRC_BASE_OFFSET       = 7'h1C;
+    localparam logic [6:0] SLOT_A_DST_BASE_OFFSET       = 7'h20;
+    localparam logic [6:0] SLOT_A_LOAD_BEATS_OFFSET     = 7'h24;
+    localparam logic [6:0] SLOT_B_SRC_BASE_OFFSET       = 7'h28;
+    localparam logic [6:0] SLOT_B_DST_BASE_OFFSET       = 7'h2C;
+    localparam logic [6:0] SLOT_B_LOAD_BEATS_OFFSET     = 7'h30;
+    localparam logic [6:0] SLOT_STORE_SRC_BASE_OFFSET   = 7'h34;
+    localparam logic [6:0] SLOT_STORE_DST_BASE_OFFSET   = 7'h38;
+    localparam logic [6:0] SLOT_STORE_BYTE_COUNT_OFFSET = 7'h3C;
+    localparam logic [6:0] SLOT_USER_TAG_OFFSET         = 7'h40;
+    localparam logic [6:0] SLOT_RESERVED_44_OFFSET      = 7'h44;
+    localparam logic [6:0] SLOT_RESERVED_48_OFFSET      = 7'h48;
+    localparam logic [6:0] SLOT_RESERVED_4C_OFFSET      = 7'h4C;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -313,6 +416,40 @@ module ai_accel_csr_regs #(
     localparam logic [1:0] JOB_OUTPUT_DMA_STORE     = 2'd1;
 
     localparam logic [31:0] JOB_MODE_MASK = 32'h0000_003F;
+
+    // ------------------------------------------------------------
+    // P16 recipe command / sticky status bit positions
+    // ------------------------------------------------------------
+    localparam int RECIPE_CMD_START_BIT             = 0;
+    localparam int RECIPE_CMD_CLEAR_DONE_BIT        = 8;
+    localparam int RECIPE_CMD_CLEAR_ERROR_BIT       = 9;
+    localparam int RECIPE_CMD_CLEAR_PERF_BIT        = 10;
+    localparam int RECIPE_CMD_CLEAR_SLOT_STATUS_BIT = 11;
+
+    localparam int RECIPE_DONE_BIT             = 0;
+    localparam int RECIPE_ALL_SLOTS_DONE_BIT   = 1;
+    localparam int RECIPE_FINAL_STORE_DONE_BIT = 2;
+
+    localparam int RECIPE_ERR_SLOT_JOB_ERROR_BIT        = 0;
+    localparam int RECIPE_ERR_SLOT_JOB_REJECT_BIT       = 1;
+    localparam int RECIPE_ERR_SEQUENCE_BIT              = 2;
+    localparam int RECIPE_ERR_SLOT_RANGE_BIT            = 3;
+    localparam int RECIPE_ERR_SLOT_DESCRIPTOR_BIT       = 4;
+    localparam int RECIPE_ERR_TIMEOUT_RSVD_BIT          = 8;
+
+    localparam int RECIPE_REJ_BUSY_BIT          = 0;
+    localparam int RECIPE_REJ_JOB_BUSY_BIT      = 1;
+    localparam int RECIPE_REJ_MICRO_OP_BUSY_BIT = 2;
+    localparam int RECIPE_REJ_ZERO_COUNT_BIT    = 3;
+    localparam int RECIPE_REJ_SLOT_RANGE_BIT    = 4;
+    localparam int RECIPE_REJ_SLOT_INVALID_BIT  = 5;
+    localparam int RECIPE_REJ_SLOT_DESC_BIT     = 6;
+    localparam int RECIPE_REJ_MANUAL_CMD_BIT    = 7;
+    localparam int RECIPE_REJ_UNSUPPORTED_COMBO = 8;
+
+    localparam logic [31:0] RECIPE_CONTROL_MASK = 32'h0000_0FFF;
+    localparam logic [31:0] RECIPE_SLOT_CONTROL_MASK = 32'h0000_007F;
+    localparam logic [3:0]  P16_RECIPE_QUEUE_DEPTH_U4 = P16_RECIPE_QUEUE_DEPTH;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -415,6 +552,37 @@ module ai_accel_csr_regs #(
     logic [31:0] job_perf_mac_count_q;
     logic [31:0] job_perf_output_count_q;
 
+    logic [31:0] recipe_control_q;
+
+    logic [31:0] recipe_done_status_q;
+    logic [31:0] recipe_error_status_q;
+    logic [31:0] recipe_reject_status_q;
+    logic [31:0] recipe_slot_done_mask_q;
+    logic [31:0] recipe_slot_error_mask_q;
+    logic [31:0] recipe_slot_reject_mask_q;
+
+    logic [31:0] recipe_perf_busy_cycles_q;
+    logic [31:0] recipe_perf_mac_count_q;
+    logic [31:0] recipe_perf_output_count_q;
+
+    logic [31:0] recipe_slot_control_q          [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_base_addr_a_q      [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_base_addr_b_q      [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_base_addr_c_q      [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_dim_m_q            [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_dim_n_q            [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_dim_k_q            [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_a_src_base_q       [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_a_dst_base_q       [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_a_load_beats_q     [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_b_src_base_q       [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_b_dst_base_q       [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_b_load_beats_q     [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_store_src_base_q   [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_store_dst_base_q   [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_store_byte_count_q [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_user_tag_q         [P16_RECIPE_QUEUE_DEPTH];
+
     // ------------------------------------------------------------
     // Internal command decode helpers
     // ------------------------------------------------------------
@@ -430,12 +598,24 @@ module ai_accel_csr_regs #(
     logic        job_command_has_start;
     logic        job_command_unsupported_combo;
 
+    logic [31:0] recipe_command_masked;
+    logic        recipe_command_has_active_strobe;
+    logic        recipe_command_has_start;
+    logic        recipe_command_unsupported_combo;
+
     logic [31:0] status_read_data;
     logic [31:0] job_status_read_data;
+    logic [31:0] recipe_status_read_data;
     logic        micro_op_busy;
     logic        job_preload_required;
     logic        job_store_required;
     logic        job_output_mode_supported;
+
+    logic [3:0]  recipe_count_comb;
+    logic [3:0]  recipe_start_slot_comb;
+    logic        recipe_range_valid;
+    logic        recipe_selected_slots_valid;
+    logic        recipe_selected_desc_valid;
 
     // ------------------------------------------------------------
     // Parameter sanity
@@ -460,6 +640,10 @@ module ai_accel_csr_regs #(
 
         if (ADDR_WIDTH > 32) begin
             $fatal(1, "ai_accel_csr_regs: ADDR_WIDTH above 32 is not supported by 32-bit CSR registers");
+        end
+
+        if (P16_RECIPE_QUEUE_DEPTH != 4) begin
+            $fatal(1, "ai_accel_csr_regs: P16_RECIPE_QUEUE_DEPTH must be 4 for the P16B CSR map");
         end
 
         if (GEMM_DIM_WIDTH > 32) begin
@@ -502,6 +686,189 @@ module ai_accel_csr_regs #(
     begin
         mask = strobe_to_mask(strb);
         return (old_value & ~mask) | (new_value & mask);
+    end
+    endfunction
+
+
+    function automatic bit recipe_slot_addr_is_valid(
+        input logic [CSR_ADDR_WIDTH-1:0] addr
+    );
+        int unsigned slot_idx;
+        logic [CSR_ADDR_WIDTH-1:0] rel_addr;
+        logic [6:0] slot_offset;
+    begin
+        if (addr < CSR_RECIPE_SLOT_BASE_ADDR) begin
+            return 1'b0;
+        end
+
+        rel_addr    = addr - CSR_RECIPE_SLOT_BASE_ADDR;
+        slot_idx    = rel_addr >> 7;
+        slot_offset = rel_addr[6:0];
+
+        if (slot_idx >= P16_RECIPE_QUEUE_DEPTH) begin
+            return 1'b0;
+        end
+
+        if (slot_offset[1:0] != 2'b00) begin
+            return 1'b0;
+        end
+
+        return 1'b1;
+    end
+    endfunction
+
+    function automatic int unsigned recipe_slot_index(
+        input logic [CSR_ADDR_WIDTH-1:0] addr
+    );
+        logic [CSR_ADDR_WIDTH-1:0] rel_addr;
+    begin
+        rel_addr = addr - CSR_RECIPE_SLOT_BASE_ADDR;
+        return (rel_addr >> 7);
+    end
+    endfunction
+
+    function automatic logic [6:0] recipe_slot_offset(
+        input logic [CSR_ADDR_WIDTH-1:0] addr
+    );
+        logic [CSR_ADDR_WIDTH-1:0] rel_addr;
+    begin
+        rel_addr = addr - CSR_RECIPE_SLOT_BASE_ADDR;
+        return rel_addr[6:0];
+    end
+    endfunction
+
+    function automatic bit recipe_slot_descriptor_valid(
+        input int unsigned slot_idx
+    );
+        logic [1:0] slot_input_mode;
+        logic [1:0] slot_output_mode;
+    begin
+        if (slot_idx >= P16_RECIPE_QUEUE_DEPTH) begin
+            return 1'b0;
+        end
+
+        slot_input_mode  = recipe_slot_control_q[slot_idx][2:1];
+        slot_output_mode = recipe_slot_control_q[slot_idx][4:3];
+
+        if (!recipe_slot_control_q[slot_idx][0]) begin
+            return 1'b0;
+        end
+
+        if (slot_output_mode > JOB_OUTPUT_DMA_STORE) begin
+            return 1'b0;
+        end
+
+        if ((recipe_slot_dim_m_q[slot_idx] == 32'h0000_0000) ||
+            (recipe_slot_dim_n_q[slot_idx] == 32'h0000_0000) ||
+            (recipe_slot_dim_k_q[slot_idx] == 32'h0000_0000)) begin
+            return 1'b0;
+        end
+
+        if ((slot_input_mode != JOB_INPUT_HOST_PRELOADED) &&
+            (recipe_slot_a_load_beats_q[slot_idx] == 32'h0000_0000)) begin
+            return 1'b0;
+        end
+
+        if ((slot_input_mode != JOB_INPUT_HOST_PRELOADED) &&
+            (recipe_slot_b_load_beats_q[slot_idx] == 32'h0000_0000)) begin
+            return 1'b0;
+        end
+
+        if ((slot_output_mode == JOB_OUTPUT_DMA_STORE) &&
+            (recipe_slot_store_byte_count_q[slot_idx] == 32'h0000_0000)) begin
+            return 1'b0;
+        end
+
+        return 1'b1;
+    end
+    endfunction
+
+    function automatic logic [31:0] recipe_slot_read_data(
+        input logic [CSR_ADDR_WIDTH-1:0] addr
+    );
+        int unsigned slot_idx;
+        logic [6:0]  slot_offset;
+    begin
+        slot_idx    = recipe_slot_index(addr);
+        slot_offset = recipe_slot_offset(addr);
+
+        if (slot_idx >= P16_RECIPE_QUEUE_DEPTH) begin
+            return 32'h0000_0000;
+        end
+
+        unique case (slot_offset)
+            SLOT_CONTROL_OFFSET: begin
+                return recipe_slot_control_q[slot_idx];
+            end
+
+            SLOT_BASE_ADDR_A_OFFSET: begin
+                return recipe_slot_base_addr_a_q[slot_idx];
+            end
+
+            SLOT_BASE_ADDR_B_OFFSET: begin
+                return recipe_slot_base_addr_b_q[slot_idx];
+            end
+
+            SLOT_BASE_ADDR_C_OFFSET: begin
+                return recipe_slot_base_addr_c_q[slot_idx];
+            end
+
+            SLOT_DIM_M_OFFSET: begin
+                return recipe_slot_dim_m_q[slot_idx];
+            end
+
+            SLOT_DIM_N_OFFSET: begin
+                return recipe_slot_dim_n_q[slot_idx];
+            end
+
+            SLOT_DIM_K_OFFSET: begin
+                return recipe_slot_dim_k_q[slot_idx];
+            end
+
+            SLOT_A_SRC_BASE_OFFSET: begin
+                return recipe_slot_a_src_base_q[slot_idx];
+            end
+
+            SLOT_A_DST_BASE_OFFSET: begin
+                return recipe_slot_a_dst_base_q[slot_idx];
+            end
+
+            SLOT_A_LOAD_BEATS_OFFSET: begin
+                return recipe_slot_a_load_beats_q[slot_idx];
+            end
+
+            SLOT_B_SRC_BASE_OFFSET: begin
+                return recipe_slot_b_src_base_q[slot_idx];
+            end
+
+            SLOT_B_DST_BASE_OFFSET: begin
+                return recipe_slot_b_dst_base_q[slot_idx];
+            end
+
+            SLOT_B_LOAD_BEATS_OFFSET: begin
+                return recipe_slot_b_load_beats_q[slot_idx];
+            end
+
+            SLOT_STORE_SRC_BASE_OFFSET: begin
+                return recipe_slot_store_src_base_q[slot_idx];
+            end
+
+            SLOT_STORE_DST_BASE_OFFSET: begin
+                return recipe_slot_store_dst_base_q[slot_idx];
+            end
+
+            SLOT_STORE_BYTE_COUNT_OFFSET: begin
+                return recipe_slot_store_byte_count_q[slot_idx];
+            end
+
+            SLOT_USER_TAG_OFFSET: begin
+                return recipe_slot_user_tag_q[slot_idx];
+            end
+
+            default: begin
+                return 32'h0000_0000;
+            end
+        endcase
     end
     endfunction
 
@@ -587,12 +954,31 @@ module ai_accel_csr_regs #(
             CSR_JOB_PERF_BUSY_CYCLES_ADDR,
             CSR_JOB_PERF_MAC_COUNT_ADDR,
             CSR_JOB_PERF_OUTPUT_COUNT_ADDR,
-            CSR_JOB_RESERVED_18C_ADDR: begin
+            CSR_JOB_RESERVED_18C_ADDR,
+
+            CSR_RECIPE_VERSION_ADDR,
+            CSR_RECIPE_COMMAND_ADDR,
+            CSR_RECIPE_STATUS_ADDR,
+            CSR_RECIPE_DONE_STATUS_ADDR,
+            CSR_RECIPE_ERROR_STATUS_ADDR,
+            CSR_RECIPE_CONTROL_ADDR,
+            CSR_RECIPE_REJECT_STATUS_ADDR,
+            CSR_RECIPE_STATE_ADDR,
+            CSR_RECIPE_CURRENT_SLOT_ADDR,
+            CSR_RECIPE_COMPLETED_COUNT_ADDR,
+            CSR_RECIPE_SLOT_DONE_MASK_ADDR,
+            CSR_RECIPE_SLOT_ERROR_MASK_ADDR,
+            CSR_RECIPE_SLOT_REJECT_MASK_ADDR,
+            CSR_RECIPE_RESERVED_234_ADDR,
+            CSR_RECIPE_PERF_BUSY_CYCLES_ADDR,
+            CSR_RECIPE_PERF_MAC_COUNT_ADDR,
+            CSR_RECIPE_PERF_OUTPUT_COUNT_ADDR,
+            CSR_RECIPE_RESERVED_28C_ADDR: begin
                 return 1'b1;
             end
 
             default: begin
-                return 1'b0;
+                return recipe_slot_addr_is_valid(addr);
             end
         endcase
     end
@@ -823,7 +1209,75 @@ module ai_accel_csr_regs #(
                 return job_perf_output_count_q;
             end
 
+            CSR_RECIPE_VERSION_ADDR: begin
+                return CSR_RECIPE_VERSION_VALUE;
+            end
+
+            CSR_RECIPE_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_RECIPE_STATUS_ADDR: begin
+                return recipe_status_read_data;
+            end
+
+            CSR_RECIPE_DONE_STATUS_ADDR: begin
+                return recipe_done_status_q;
+            end
+
+            CSR_RECIPE_ERROR_STATUS_ADDR: begin
+                return recipe_error_status_q;
+            end
+
+            CSR_RECIPE_CONTROL_ADDR: begin
+                return recipe_control_q;
+            end
+
+            CSR_RECIPE_REJECT_STATUS_ADDR: begin
+                return recipe_reject_status_q;
+            end
+
+            CSR_RECIPE_STATE_ADDR: begin
+                return recipe_state;
+            end
+
+            CSR_RECIPE_CURRENT_SLOT_ADDR: begin
+                return recipe_current_slot;
+            end
+
+            CSR_RECIPE_COMPLETED_COUNT_ADDR: begin
+                return recipe_completed_count;
+            end
+
+            CSR_RECIPE_SLOT_DONE_MASK_ADDR: begin
+                return recipe_slot_done_mask_q;
+            end
+
+            CSR_RECIPE_SLOT_ERROR_MASK_ADDR: begin
+                return recipe_slot_error_mask_q;
+            end
+
+            CSR_RECIPE_SLOT_REJECT_MASK_ADDR: begin
+                return recipe_slot_reject_mask_q;
+            end
+
+            CSR_RECIPE_PERF_BUSY_CYCLES_ADDR: begin
+                return recipe_perf_busy_cycles_q;
+            end
+
+            CSR_RECIPE_PERF_MAC_COUNT_ADDR: begin
+                return recipe_perf_mac_count_q;
+            end
+
+            CSR_RECIPE_PERF_OUTPUT_COUNT_ADDR: begin
+                return recipe_perf_output_count_q;
+            end
+
             default: begin
+                if (recipe_slot_addr_is_valid(addr)) begin
+                    return recipe_slot_read_data(addr);
+                end
+
                 return 32'h0000_0000;
             end
         endcase
@@ -880,9 +1334,40 @@ module ai_accel_csr_regs #(
         job_status_read_data[0]  = job_busy;
         job_status_read_data[1]  = |job_done_status_q;
         job_status_read_data[2]  = (|job_error_status_q) | (|job_reject_status_q);
-        job_status_read_data[3]  = !job_busy && !micro_op_busy;
+        job_status_read_data[3]  = !job_busy && !micro_op_busy && !recipe_busy;
         job_status_read_data[8]  = micro_op_busy;
         job_status_read_data[16] = 1'b1;
+
+        recipe_count_comb      = recipe_control_q[3:0];
+        recipe_start_slot_comb = recipe_control_q[7:4];
+        recipe_range_valid     = (recipe_count_comb != 4'd0) &&
+                                 (recipe_start_slot_comb < P16_RECIPE_QUEUE_DEPTH_U4) &&
+                                 ((recipe_start_slot_comb + recipe_count_comb) <= P16_RECIPE_QUEUE_DEPTH_U4);
+
+        recipe_selected_slots_valid = 1'b1;
+        recipe_selected_desc_valid  = 1'b1;
+
+        for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
+            if ((slot_i >= recipe_start_slot_comb) &&
+                (slot_i < (recipe_start_slot_comb + recipe_count_comb))) begin
+                if (!recipe_slot_control_q[slot_i][0]) begin
+                    recipe_selected_slots_valid = 1'b0;
+                end
+
+                if (!recipe_slot_descriptor_valid(slot_i)) begin
+                    recipe_selected_desc_valid = 1'b0;
+                end
+            end
+        end
+
+        recipe_status_read_data = 32'h0000_0000;
+        recipe_status_read_data[0]  = recipe_busy;
+        recipe_status_read_data[1]  = |recipe_done_status_q;
+        recipe_status_read_data[2]  = (|recipe_error_status_q) | (|recipe_reject_status_q);
+        recipe_status_read_data[3]  = !recipe_busy && !job_busy && !micro_op_busy;
+        recipe_status_read_data[8]  = job_busy;
+        recipe_status_read_data[9]  = micro_op_busy;
+        recipe_status_read_data[16] = 1'b1;
     end
 
     // ------------------------------------------------------------
@@ -940,6 +1425,14 @@ module ai_accel_csr_regs #(
         job_command_unsupported_combo = (job_command_has_start &&
                                          job_command_masked[JOB_CMD_CLEAR_ERROR_BIT] &&
                                          ((|job_error_status_q) || (|job_reject_status_q)));
+
+        recipe_command_has_active_strobe = |write_strb;
+        recipe_command_masked            = write_data & strobe_to_mask(write_strb);
+        recipe_command_has_start         = recipe_command_masked[RECIPE_CMD_START_BIT];
+
+        recipe_command_unsupported_combo = (recipe_command_has_start &&
+                                            recipe_command_masked[RECIPE_CMD_CLEAR_ERROR_BIT] &&
+                                            ((|recipe_error_status_q) || (|recipe_reject_status_q)));
     end
 
     // ------------------------------------------------------------
@@ -1026,6 +1519,39 @@ module ai_accel_csr_regs #(
             job_perf_mac_count_q    <= 32'h0000_0000;
             job_perf_output_count_q <= 32'h0000_0000;
 
+            recipe_control_q       <= 32'h0000_0700;
+
+            recipe_done_status_q   <= 32'h0000_0000;
+            recipe_error_status_q  <= 32'h0000_0000;
+            recipe_reject_status_q <= 32'h0000_0000;
+            recipe_slot_done_mask_q   <= 32'h0000_0000;
+            recipe_slot_error_mask_q  <= 32'h0000_0000;
+            recipe_slot_reject_mask_q <= 32'h0000_0000;
+
+            recipe_perf_busy_cycles_q  <= 32'h0000_0000;
+            recipe_perf_mac_count_q    <= 32'h0000_0000;
+            recipe_perf_output_count_q <= 32'h0000_0000;
+
+            for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
+                recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
+                recipe_slot_base_addr_a_q[slot_i]      <= 32'h0000_0000;
+                recipe_slot_base_addr_b_q[slot_i]      <= 32'h0000_0100;
+                recipe_slot_base_addr_c_q[slot_i]      <= 32'h0000_0200;
+                recipe_slot_dim_m_q[slot_i]            <= 32'h0000_0004;
+                recipe_slot_dim_n_q[slot_i]            <= 32'h0000_0004;
+                recipe_slot_dim_k_q[slot_i]            <= 32'h0000_0004;
+                recipe_slot_a_src_base_q[slot_i]       <= 32'h0000_0000;
+                recipe_slot_a_dst_base_q[slot_i]       <= 32'h0000_0000;
+                recipe_slot_a_load_beats_q[slot_i]     <= 32'h0000_0000;
+                recipe_slot_b_src_base_q[slot_i]       <= 32'h0000_0100;
+                recipe_slot_b_dst_base_q[slot_i]       <= 32'h0000_0100;
+                recipe_slot_b_load_beats_q[slot_i]     <= 32'h0000_0000;
+                recipe_slot_store_src_base_q[slot_i]   <= 32'h0000_0200;
+                recipe_slot_store_dst_base_q[slot_i]   <= 32'h0000_0000;
+                recipe_slot_store_byte_count_q[slot_i] <= 32'h0000_0000;
+                recipe_slot_user_tag_q[slot_i]         <= 32'h0000_0000;
+            end
+
             acc_start_pulse        <= 1'b0;
             dma_load_start_pulse   <= 1'b0;
             axis_load_start_pulse  <= 1'b0;
@@ -1036,6 +1562,12 @@ module ai_accel_csr_regs #(
             job_clear_done_pulse   <= 1'b0;
             job_clear_error_pulse  <= 1'b0;
             job_clear_perf_pulse   <= 1'b0;
+
+            recipe_start_pulse             <= 1'b0;
+            recipe_clear_done_pulse        <= 1'b0;
+            recipe_clear_error_pulse       <= 1'b0;
+            recipe_clear_perf_pulse        <= 1'b0;
+            recipe_clear_slot_status_pulse <= 1'b0;
         end
         else begin
             acc_start_pulse       <= 1'b0;
@@ -1048,6 +1580,12 @@ module ai_accel_csr_regs #(
             job_clear_done_pulse  <= 1'b0;
             job_clear_error_pulse <= 1'b0;
             job_clear_perf_pulse  <= 1'b0;
+
+            recipe_start_pulse             <= 1'b0;
+            recipe_clear_done_pulse        <= 1'b0;
+            recipe_clear_error_pulse       <= 1'b0;
+            recipe_clear_perf_pulse        <= 1'b0;
+            recipe_clear_slot_status_pulse <= 1'b0;
 
             // Sticky completion and error capture.
             if (acc_done) begin
@@ -1126,6 +1664,46 @@ module ai_accel_csr_regs #(
                 job_error_status_q[JOB_ERR_SEQUENCE_BIT] <= 1'b1;
             end
 
+            if (recipe_done) begin
+                recipe_done_status_q[RECIPE_DONE_BIT] <= 1'b1;
+
+                recipe_perf_busy_cycles_q  <= recipe_perf_busy_cycles;
+                recipe_perf_mac_count_q    <= recipe_perf_mac_count;
+                recipe_perf_output_count_q <= recipe_perf_output_count;
+            end
+
+            if (recipe_all_slots_done) begin
+                recipe_done_status_q[RECIPE_ALL_SLOTS_DONE_BIT] <= 1'b1;
+            end
+
+            if (recipe_final_store_done) begin
+                recipe_done_status_q[RECIPE_FINAL_STORE_DONE_BIT] <= 1'b1;
+            end
+
+            if (recipe_slot_job_error) begin
+                recipe_error_status_q[RECIPE_ERR_SLOT_JOB_ERROR_BIT] <= 1'b1;
+            end
+
+            if (recipe_slot_job_reject) begin
+                recipe_error_status_q[RECIPE_ERR_SLOT_JOB_REJECT_BIT] <= 1'b1;
+            end
+
+            if (recipe_sequence_error) begin
+                recipe_error_status_q[RECIPE_ERR_SEQUENCE_BIT] <= 1'b1;
+            end
+
+            if (recipe_slot_range_error) begin
+                recipe_error_status_q[RECIPE_ERR_SLOT_RANGE_BIT] <= 1'b1;
+            end
+
+            if (recipe_slot_descriptor_error) begin
+                recipe_error_status_q[RECIPE_ERR_SLOT_DESCRIPTOR_BIT] <= 1'b1;
+            end
+
+            recipe_slot_done_mask_q   <= recipe_slot_done_mask_q   | recipe_slot_done_mask;
+            recipe_slot_error_mask_q  <= recipe_slot_error_mask_q  | recipe_slot_error_mask;
+            recipe_slot_reject_mask_q <= recipe_slot_reject_mask_q | recipe_slot_reject_mask;
+
             // Capture write address/data channels independently.
             if (aw_fire && !write_apply) begin
                 awaddr_q       <= csr_if.awaddr;
@@ -1175,7 +1753,10 @@ module ai_accel_csr_regs #(
                                         perf_output_count_q <= 32'h0000_0000;
                                     end
 
-                                    if (command_has_start && job_busy) begin
+                                    if (command_has_start && recipe_busy) begin
+                                        recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                    end
+                                    else if (command_has_start && job_busy) begin
                                         job_reject_status_q[JOB_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                     end
                                     else begin
@@ -1270,7 +1851,10 @@ module ai_accel_csr_regs #(
                                     end
 
                                     if (job_command_masked[JOB_CMD_START_BIT]) begin
-                                        if (job_busy) begin
+                                        if (recipe_busy) begin
+                                            recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                        end
+                                        else if (job_busy) begin
                                             job_reject_status_q[JOB_REJ_BUSY_BIT] <= 1'b1;
                                         end
                                         else if (micro_op_busy) begin
@@ -1301,6 +1885,76 @@ module ai_accel_csr_regs #(
                                             job_error_status_q  <= 32'h0000_0000;
                                             job_reject_status_q <= 32'h0000_0000;
                                             job_start_pulse     <= 1'b1;
+                                        end
+                                    end
+                                end
+                            end
+                        end
+
+                        CSR_RECIPE_COMMAND_ADDR: begin
+                            if (recipe_command_has_active_strobe) begin
+                                if (recipe_command_unsupported_combo) begin
+                                    recipe_reject_status_q[RECIPE_REJ_UNSUPPORTED_COMBO] <= 1'b1;
+                                end
+                                else begin
+                                    if (recipe_command_masked[RECIPE_CMD_CLEAR_DONE_BIT]) begin
+                                        recipe_done_status_q <= 32'h0000_0000;
+                                        recipe_slot_done_mask_q <= 32'h0000_0000;
+                                        recipe_clear_done_pulse <= 1'b1;
+                                    end
+
+                                    if (recipe_command_masked[RECIPE_CMD_CLEAR_ERROR_BIT]) begin
+                                        recipe_error_status_q  <= 32'h0000_0000;
+                                        recipe_reject_status_q <= 32'h0000_0000;
+                                        recipe_slot_error_mask_q  <= 32'h0000_0000;
+                                        recipe_slot_reject_mask_q <= 32'h0000_0000;
+                                        recipe_clear_error_pulse <= 1'b1;
+                                    end
+
+                                    if (recipe_command_masked[RECIPE_CMD_CLEAR_PERF_BIT]) begin
+                                        recipe_perf_busy_cycles_q  <= 32'h0000_0000;
+                                        recipe_perf_mac_count_q    <= 32'h0000_0000;
+                                        recipe_perf_output_count_q <= 32'h0000_0000;
+                                        recipe_clear_perf_pulse <= 1'b1;
+                                    end
+
+                                    if (recipe_command_masked[RECIPE_CMD_CLEAR_SLOT_STATUS_BIT]) begin
+                                        recipe_slot_done_mask_q   <= 32'h0000_0000;
+                                        recipe_slot_error_mask_q  <= 32'h0000_0000;
+                                        recipe_slot_reject_mask_q <= 32'h0000_0000;
+                                        recipe_clear_slot_status_pulse <= 1'b1;
+                                    end
+
+                                    if (recipe_command_masked[RECIPE_CMD_START_BIT]) begin
+                                        if (recipe_busy) begin
+                                            recipe_reject_status_q[RECIPE_REJ_BUSY_BIT] <= 1'b1;
+                                        end
+                                        else if (job_busy) begin
+                                            recipe_reject_status_q[RECIPE_REJ_JOB_BUSY_BIT] <= 1'b1;
+                                        end
+                                        else if (micro_op_busy) begin
+                                            recipe_reject_status_q[RECIPE_REJ_MICRO_OP_BUSY_BIT] <= 1'b1;
+                                        end
+                                        else if (recipe_count_comb == 4'd0) begin
+                                            recipe_reject_status_q[RECIPE_REJ_ZERO_COUNT_BIT] <= 1'b1;
+                                        end
+                                        else if (!recipe_range_valid) begin
+                                            recipe_reject_status_q[RECIPE_REJ_SLOT_RANGE_BIT] <= 1'b1;
+                                        end
+                                        else if (!recipe_selected_slots_valid) begin
+                                            recipe_reject_status_q[RECIPE_REJ_SLOT_INVALID_BIT] <= 1'b1;
+                                        end
+                                        else if (!recipe_selected_desc_valid) begin
+                                            recipe_reject_status_q[RECIPE_REJ_SLOT_DESC_BIT] <= 1'b1;
+                                        end
+                                        else begin
+                                            recipe_done_status_q      <= 32'h0000_0000;
+                                            recipe_error_status_q     <= 32'h0000_0000;
+                                            recipe_reject_status_q    <= 32'h0000_0000;
+                                            recipe_slot_done_mask_q   <= 32'h0000_0000;
+                                            recipe_slot_error_mask_q  <= 32'h0000_0000;
+                                            recipe_slot_reject_mask_q <= 32'h0000_0000;
+                                            recipe_start_pulse        <= 1'b1;
                                         end
                                     end
                                 end
@@ -1413,6 +2067,59 @@ module ai_accel_csr_regs #(
                             dma_store_byte_count_q <= apply_wstrb32(dma_store_byte_count_q, write_data, write_strb);
                         end
 
+                        CSR_RECIPE_DONE_STATUS_ADDR: begin
+                            recipe_done_status_q <= recipe_done_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_RECIPE_ERROR_STATUS_ADDR: begin
+                            recipe_error_status_q <= recipe_error_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_RECIPE_CONTROL_ADDR: begin
+                            recipe_control_q <= apply_wstrb32(recipe_control_q, write_data, write_strb) &
+                                                RECIPE_CONTROL_MASK;
+                        end
+
+                        CSR_RECIPE_REJECT_STATUS_ADDR: begin
+                            recipe_reject_status_q <= recipe_reject_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_RECIPE_SLOT_DONE_MASK_ADDR: begin
+                            recipe_slot_done_mask_q <= recipe_slot_done_mask_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_RECIPE_SLOT_ERROR_MASK_ADDR: begin
+                            recipe_slot_error_mask_q <= recipe_slot_error_mask_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_RECIPE_SLOT_REJECT_MASK_ADDR: begin
+                            recipe_slot_reject_mask_q <= recipe_slot_reject_mask_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
                         CSR_JOB_DONE_STATUS_ADDR: begin
                             job_done_status_q <= job_done_status_q & ~apply_wstrb32(
                                 32'h0000_0000,
@@ -1503,7 +2210,110 @@ module ai_accel_csr_regs #(
                         end
 
                         default: begin
-                            // RO and reserved registers ignore valid writes.
+                            if (recipe_slot_addr_is_valid(write_addr)) begin
+                                int unsigned slot_idx;
+                                logic [6:0]  slot_offset;
+
+                                slot_idx    = recipe_slot_index(write_addr);
+                                slot_offset = recipe_slot_offset(write_addr);
+
+                                if (slot_idx < P16_RECIPE_QUEUE_DEPTH) begin
+                                    unique case (slot_offset)
+                                        SLOT_CONTROL_OFFSET: begin
+                                            recipe_slot_control_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_control_q[slot_idx], write_data, write_strb) &
+                                                RECIPE_SLOT_CONTROL_MASK;
+                                        end
+
+                                        SLOT_BASE_ADDR_A_OFFSET: begin
+                                            recipe_slot_base_addr_a_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_base_addr_a_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_BASE_ADDR_B_OFFSET: begin
+                                            recipe_slot_base_addr_b_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_base_addr_b_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_BASE_ADDR_C_OFFSET: begin
+                                            recipe_slot_base_addr_c_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_base_addr_c_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_DIM_M_OFFSET: begin
+                                            recipe_slot_dim_m_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_dim_m_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_DIM_N_OFFSET: begin
+                                            recipe_slot_dim_n_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_dim_n_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_DIM_K_OFFSET: begin
+                                            recipe_slot_dim_k_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_dim_k_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_A_SRC_BASE_OFFSET: begin
+                                            recipe_slot_a_src_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_a_src_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_A_DST_BASE_OFFSET: begin
+                                            recipe_slot_a_dst_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_a_dst_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_A_LOAD_BEATS_OFFSET: begin
+                                            recipe_slot_a_load_beats_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_a_load_beats_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_B_SRC_BASE_OFFSET: begin
+                                            recipe_slot_b_src_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_b_src_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_B_DST_BASE_OFFSET: begin
+                                            recipe_slot_b_dst_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_b_dst_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_B_LOAD_BEATS_OFFSET: begin
+                                            recipe_slot_b_load_beats_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_b_load_beats_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_STORE_SRC_BASE_OFFSET: begin
+                                            recipe_slot_store_src_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_store_src_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_STORE_DST_BASE_OFFSET: begin
+                                            recipe_slot_store_dst_base_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_store_dst_base_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_STORE_BYTE_COUNT_OFFSET: begin
+                                            recipe_slot_store_byte_count_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_store_byte_count_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        SLOT_USER_TAG_OFFSET: begin
+                                            recipe_slot_user_tag_q[slot_idx] <= apply_wstrb32(
+                                                recipe_slot_user_tag_q[slot_idx], write_data, write_strb);
+                                        end
+
+                                        default: begin
+                                            // Reserved slot registers ignore valid writes.
+                                        end
+                                    endcase
+                                end
+                            end
+                            else begin
+                                // RO and reserved registers ignore valid writes.
+                            end
                         end
                     endcase
                 end
@@ -1576,6 +2386,35 @@ module ai_accel_csr_regs #(
     assign job_store_src_base_addr = job_store_src_base_q[ADDR_WIDTH-1:0];
     assign job_store_dst_base_addr = job_store_dst_base_q[ADDR_WIDTH-1:0];
     assign job_store_byte_count    = job_store_byte_count_q;
+
+    assign recipe_count                      = recipe_control_q[3:0];
+    assign recipe_start_slot                 = recipe_control_q[7:4];
+    assign recipe_stop_on_error              = recipe_control_q[8];
+    assign recipe_clear_job_sticky_each_slot = recipe_control_q[9];
+    assign recipe_accumulate_perf            = recipe_control_q[10];
+    assign recipe_allow_slot_writes_while_busy = recipe_control_q[11];
+
+    generate
+        for (genvar slot_g = 0; slot_g < P16_RECIPE_QUEUE_DEPTH; slot_g++) begin : g_recipe_slot_outputs
+            assign recipe_slot_control[slot_g]             = recipe_slot_control_q[slot_g];
+            assign recipe_slot_base_addr_a[slot_g]         = recipe_slot_base_addr_a_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_base_addr_b[slot_g]         = recipe_slot_base_addr_b_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_base_addr_c[slot_g]         = recipe_slot_base_addr_c_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_dim_m[slot_g]               = recipe_slot_dim_m_q[slot_g][GEMM_DIM_WIDTH-1:0];
+            assign recipe_slot_dim_n[slot_g]               = recipe_slot_dim_n_q[slot_g][GEMM_DIM_WIDTH-1:0];
+            assign recipe_slot_dim_k[slot_g]               = recipe_slot_dim_k_q[slot_g][GEMM_DIM_WIDTH-1:0];
+            assign recipe_slot_a_src_base_addr[slot_g]     = recipe_slot_a_src_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_a_dst_base_addr[slot_g]     = recipe_slot_a_dst_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_a_load_beats[slot_g]        = recipe_slot_a_load_beats_q[slot_g];
+            assign recipe_slot_b_src_base_addr[slot_g]     = recipe_slot_b_src_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_b_dst_base_addr[slot_g]     = recipe_slot_b_dst_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_b_load_beats[slot_g]        = recipe_slot_b_load_beats_q[slot_g];
+            assign recipe_slot_store_src_base_addr[slot_g] = recipe_slot_store_src_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_store_dst_base_addr[slot_g] = recipe_slot_store_dst_base_q[slot_g][ADDR_WIDTH-1:0];
+            assign recipe_slot_store_byte_count[slot_g]    = recipe_slot_store_byte_count_q[slot_g];
+            assign recipe_slot_user_tag[slot_g]            = recipe_slot_user_tag_q[slot_g];
+        end
+    endgenerate
 
 endmodule
 

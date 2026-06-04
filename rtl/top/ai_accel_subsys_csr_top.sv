@@ -42,8 +42,10 @@ module ai_accel_subsys_csr_top #(
 
     parameter int CSR_ADDR_WIDTH = 12,
     parameter int CSR_DATA_WIDTH = 32,
-    parameter logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014,
-    parameter logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015
+    parameter logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014,
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015,
+    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016,
+    parameter int          P16_RECIPE_QUEUE_DEPTH   = 4
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -301,6 +303,127 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               job_perf_output_count_i;
 
     // ============================================================
+    // P16 CSR recipe descriptor wires
+    //
+    // P16 recipe control window and descriptor slots.
+    // P16C connects these wires to ai_accel_recipe_sequencer,
+    // which dispatches one slot at a time through the P15 worker.
+    // ============================================================
+    logic                      csr_recipe_start_pulse;
+    logic                      csr_recipe_clear_done_pulse;
+    logic                      csr_recipe_clear_error_pulse;
+    logic                      csr_recipe_clear_perf_pulse;
+    logic                      csr_recipe_clear_slot_status_pulse;
+
+    logic [3:0]                csr_recipe_count;
+    logic [3:0]                csr_recipe_start_slot;
+    logic                      csr_recipe_stop_on_error;
+    logic                      csr_recipe_clear_job_sticky_each_slot;
+    logic                      csr_recipe_accumulate_perf;
+    logic                      csr_recipe_allow_slot_writes_while_busy;
+
+    logic [31:0]               csr_recipe_slot_control [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_base_addr_a [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_base_addr_b [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_base_addr_c [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] csr_recipe_slot_dim_m [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] csr_recipe_slot_dim_n [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] csr_recipe_slot_dim_k [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_a_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_a_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               csr_recipe_slot_a_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_b_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_b_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               csr_recipe_slot_b_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_store_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     csr_recipe_slot_store_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               csr_recipe_slot_store_byte_count [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               csr_recipe_slot_user_tag [P16_RECIPE_QUEUE_DEPTH];
+
+    // ============================================================
+    // P16 recipe sequencer outputs and status
+    // ============================================================
+    logic                      recipe_job_start_pulse;
+    logic                      recipe_job_clear_done_pulse;
+    logic                      recipe_job_clear_error_pulse;
+    logic                      recipe_job_clear_perf_pulse;
+
+    logic [1:0]                recipe_job_input_mode;
+    logic [1:0]                recipe_job_output_mode;
+    logic                      recipe_job_accumulate_enable;
+
+    logic [ADDR_WIDTH-1:0]     recipe_job_base_addr_a;
+    logic [ADDR_WIDTH-1:0]     recipe_job_base_addr_b;
+    logic [ADDR_WIDTH-1:0]     recipe_job_base_addr_c;
+    logic [GEMM_DIM_WIDTH-1:0] recipe_job_dim_m;
+    logic [GEMM_DIM_WIDTH-1:0] recipe_job_dim_n;
+    logic [GEMM_DIM_WIDTH-1:0] recipe_job_dim_k;
+
+    logic [ADDR_WIDTH-1:0]     recipe_job_a_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     recipe_job_a_dst_base_addr;
+    logic [31:0]               recipe_job_a_load_beats;
+    logic [ADDR_WIDTH-1:0]     recipe_job_b_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     recipe_job_b_dst_base_addr;
+    logic [31:0]               recipe_job_b_load_beats;
+    logic [ADDR_WIDTH-1:0]     recipe_job_store_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     recipe_job_store_dst_base_addr;
+    logic [31:0]               recipe_job_store_byte_count;
+
+    logic                      recipe_busy_i;
+    logic                      recipe_done_i;
+    logic                      recipe_all_slots_done_i;
+    logic                      recipe_final_store_done_i;
+
+    logic                      recipe_slot_job_error_i;
+    logic                      recipe_slot_job_reject_i;
+    logic                      recipe_sequence_error_i;
+    logic                      recipe_slot_range_error_i;
+    logic                      recipe_slot_descriptor_error_i;
+
+    logic [31:0]               recipe_state_i;
+    logic [31:0]               recipe_current_slot_i;
+    logic [31:0]               recipe_completed_count_i;
+    logic [31:0]               recipe_slot_done_mask_i;
+    logic [31:0]               recipe_slot_error_mask_i;
+    logic [31:0]               recipe_slot_reject_mask_i;
+    logic [31:0]               recipe_perf_busy_cycles_i;
+    logic [31:0]               recipe_perf_mac_count_i;
+    logic [31:0]               recipe_perf_output_count_i;
+
+    // ============================================================
+    // Effective P15 job inputs
+    //
+    // When a P16 recipe is active, the recipe sequencer owns the
+    // P15 single-job worker.  Otherwise, the original P15 CSR job
+    // descriptor path remains available for debug and regression.
+    // ============================================================
+    logic                      eff_job_start_pulse;
+    logic                      eff_job_clear_done_pulse;
+    logic                      eff_job_clear_error_pulse;
+    logic                      eff_job_clear_perf_pulse;
+
+    logic [1:0]                eff_job_input_mode;
+    logic [1:0]                eff_job_output_mode;
+    logic                      eff_job_accumulate_enable;
+
+    logic [ADDR_WIDTH-1:0]     eff_job_base_addr_a;
+    logic [ADDR_WIDTH-1:0]     eff_job_base_addr_b;
+    logic [ADDR_WIDTH-1:0]     eff_job_base_addr_c;
+    logic [GEMM_DIM_WIDTH-1:0] eff_job_dim_m;
+    logic [GEMM_DIM_WIDTH-1:0] eff_job_dim_n;
+    logic [GEMM_DIM_WIDTH-1:0] eff_job_dim_k;
+
+    logic [ADDR_WIDTH-1:0]     eff_job_a_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     eff_job_a_dst_base_addr;
+    logic [31:0]               eff_job_a_load_beats;
+    logic [ADDR_WIDTH-1:0]     eff_job_b_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     eff_job_b_dst_base_addr;
+    logic [31:0]               eff_job_b_load_beats;
+    logic [ADDR_WIDTH-1:0]     eff_job_store_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     eff_job_store_dst_base_addr;
+    logic [31:0]               eff_job_store_byte_count;
+
+    // ============================================================
     // Muxed control/config wires driven into the existing subsystem
     // ============================================================
     logic                      subsys_acc_start_pulse;
@@ -398,8 +521,10 @@ module ai_accel_subsys_csr_top #(
         .GEMM_DIM_WIDTH    (GEMM_DIM_WIDTH),
         .CSR_ADDR_WIDTH        (CSR_ADDR_WIDTH),
         .CSR_DATA_WIDTH        (CSR_DATA_WIDTH),
-        .CSR_VERSION_VALUE     (CSR_VERSION_VALUE),
-        .CSR_JOB_VERSION_VALUE (CSR_JOB_VERSION_VALUE)
+        .CSR_VERSION_VALUE        (CSR_VERSION_VALUE),
+        .CSR_JOB_VERSION_VALUE    (CSR_JOB_VERSION_VALUE),
+        .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
+        .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
@@ -469,6 +594,37 @@ module ai_accel_subsys_csr_top #(
         .job_store_dst_base_addr(csr_job_store_dst_base_addr),
         .job_store_byte_count   (csr_job_store_byte_count),
 
+        .recipe_start_pulse             (csr_recipe_start_pulse),
+        .recipe_clear_done_pulse        (csr_recipe_clear_done_pulse),
+        .recipe_clear_error_pulse       (csr_recipe_clear_error_pulse),
+        .recipe_clear_perf_pulse        (csr_recipe_clear_perf_pulse),
+        .recipe_clear_slot_status_pulse (csr_recipe_clear_slot_status_pulse),
+
+        .recipe_count                   (csr_recipe_count),
+        .recipe_start_slot              (csr_recipe_start_slot),
+        .recipe_stop_on_error           (csr_recipe_stop_on_error),
+        .recipe_clear_job_sticky_each_slot(csr_recipe_clear_job_sticky_each_slot),
+        .recipe_accumulate_perf         (csr_recipe_accumulate_perf),
+        .recipe_allow_slot_writes_while_busy(csr_recipe_allow_slot_writes_while_busy),
+
+        .recipe_slot_control            (csr_recipe_slot_control),
+        .recipe_slot_base_addr_a        (csr_recipe_slot_base_addr_a),
+        .recipe_slot_base_addr_b        (csr_recipe_slot_base_addr_b),
+        .recipe_slot_base_addr_c        (csr_recipe_slot_base_addr_c),
+        .recipe_slot_dim_m              (csr_recipe_slot_dim_m),
+        .recipe_slot_dim_n              (csr_recipe_slot_dim_n),
+        .recipe_slot_dim_k              (csr_recipe_slot_dim_k),
+        .recipe_slot_a_src_base_addr    (csr_recipe_slot_a_src_base_addr),
+        .recipe_slot_a_dst_base_addr    (csr_recipe_slot_a_dst_base_addr),
+        .recipe_slot_a_load_beats       (csr_recipe_slot_a_load_beats),
+        .recipe_slot_b_src_base_addr    (csr_recipe_slot_b_src_base_addr),
+        .recipe_slot_b_dst_base_addr    (csr_recipe_slot_b_dst_base_addr),
+        .recipe_slot_b_load_beats       (csr_recipe_slot_b_load_beats),
+        .recipe_slot_store_src_base_addr(csr_recipe_slot_store_src_base_addr),
+        .recipe_slot_store_dst_base_addr(csr_recipe_slot_store_dst_base_addr),
+        .recipe_slot_store_byte_count   (csr_recipe_slot_store_byte_count),
+        .recipe_slot_user_tag           (csr_recipe_slot_user_tag),
+
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
         .job_gemm_done          (job_gemm_done_i),
@@ -484,6 +640,27 @@ module ai_accel_subsys_csr_top #(
         .job_perf_busy_cycles   (job_perf_busy_cycles_i),
         .job_perf_mac_count     (job_perf_mac_count_i),
         .job_perf_output_count  (job_perf_output_count_i),
+
+        .recipe_busy            (recipe_busy_i),
+        .recipe_done            (recipe_done_i),
+        .recipe_all_slots_done  (recipe_all_slots_done_i),
+        .recipe_final_store_done(recipe_final_store_done_i),
+
+        .recipe_slot_job_error  (recipe_slot_job_error_i),
+        .recipe_slot_job_reject (recipe_slot_job_reject_i),
+        .recipe_sequence_error  (recipe_sequence_error_i),
+        .recipe_slot_range_error(recipe_slot_range_error_i),
+        .recipe_slot_descriptor_error(recipe_slot_descriptor_error_i),
+
+        .recipe_state           (recipe_state_i),
+        .recipe_current_slot    (recipe_current_slot_i),
+        .recipe_completed_count (recipe_completed_count_i),
+        .recipe_slot_done_mask  (recipe_slot_done_mask_i),
+        .recipe_slot_error_mask (recipe_slot_error_mask_i),
+        .recipe_slot_reject_mask(recipe_slot_reject_mask_i),
+        .recipe_perf_busy_cycles(recipe_perf_busy_cycles_i),
+        .recipe_perf_mac_count  (recipe_perf_mac_count_i),
+        .recipe_perf_output_count(recipe_perf_output_count_i),
 
         .acc_busy               (acc_busy_i),
         .acc_done               (acc_done_i),
@@ -510,6 +687,136 @@ module ai_accel_subsys_csr_top #(
     );
 
     // ============================================================
+    // P16 multi-job recipe sequencer
+    //
+    // The recipe sequencer dispatches CSR-resident descriptor slots
+    // through the existing P15 single-job sequencer.  It does not
+    // duplicate the preload/GEMM/store FSM; it only selects one slot,
+    // starts one P15 job, waits for that job to complete, and advances
+    // to the next selected slot.
+    // ============================================================
+    ai_accel_recipe_sequencer #(
+        .ADDR_WIDTH             (ADDR_WIDTH),
+        .GEMM_DIM_WIDTH         (GEMM_DIM_WIDTH),
+        .P16_RECIPE_QUEUE_DEPTH (P16_RECIPE_QUEUE_DEPTH)
+    ) u_ai_accel_recipe_sequencer (
+        .clk                    (dma_clk),
+        .rst_n                  (dma_rst_n),
+
+        .recipe_start_pulse     (csr_recipe_start_pulse),
+        .recipe_clear_done_pulse(csr_recipe_clear_done_pulse),
+        .recipe_clear_error_pulse(csr_recipe_clear_error_pulse),
+        .recipe_clear_perf_pulse(csr_recipe_clear_perf_pulse),
+        .recipe_clear_slot_status_pulse(csr_recipe_clear_slot_status_pulse),
+
+        .recipe_count           (csr_recipe_count),
+        .recipe_start_slot      (csr_recipe_start_slot),
+        .recipe_stop_on_error   (csr_recipe_stop_on_error),
+        .recipe_clear_job_sticky_each_slot(csr_recipe_clear_job_sticky_each_slot),
+        .recipe_accumulate_perf (csr_recipe_accumulate_perf),
+
+        .recipe_slot_control            (csr_recipe_slot_control),
+        .recipe_slot_base_addr_a        (csr_recipe_slot_base_addr_a),
+        .recipe_slot_base_addr_b        (csr_recipe_slot_base_addr_b),
+        .recipe_slot_base_addr_c        (csr_recipe_slot_base_addr_c),
+        .recipe_slot_dim_m              (csr_recipe_slot_dim_m),
+        .recipe_slot_dim_n              (csr_recipe_slot_dim_n),
+        .recipe_slot_dim_k              (csr_recipe_slot_dim_k),
+        .recipe_slot_a_src_base_addr    (csr_recipe_slot_a_src_base_addr),
+        .recipe_slot_a_dst_base_addr    (csr_recipe_slot_a_dst_base_addr),
+        .recipe_slot_a_load_beats       (csr_recipe_slot_a_load_beats),
+        .recipe_slot_b_src_base_addr    (csr_recipe_slot_b_src_base_addr),
+        .recipe_slot_b_dst_base_addr    (csr_recipe_slot_b_dst_base_addr),
+        .recipe_slot_b_load_beats       (csr_recipe_slot_b_load_beats),
+        .recipe_slot_store_src_base_addr(csr_recipe_slot_store_src_base_addr),
+        .recipe_slot_store_dst_base_addr(csr_recipe_slot_store_dst_base_addr),
+        .recipe_slot_store_byte_count   (csr_recipe_slot_store_byte_count),
+        .recipe_slot_user_tag           (csr_recipe_slot_user_tag),
+
+        .job_busy               (job_busy_i),
+        .job_done               (job_done_i),
+        .job_gemm_done          (job_gemm_done_i),
+        .job_store_done         (job_store_done_i),
+        .job_dma_load_error     (job_dma_load_error_i),
+        .job_axis_load_error    (job_axis_load_error_i),
+        .job_ds_load_error      (job_ds_load_error_i),
+        .job_dma_store_error    (job_dma_store_error_i),
+        .job_sequence_error     (job_sequence_error_i),
+        .job_state              (job_state_i),
+        .job_perf_busy_cycles   (job_perf_busy_cycles_i),
+        .job_perf_mac_count     (job_perf_mac_count_i),
+        .job_perf_output_count  (job_perf_output_count_i),
+
+        .job_start_pulse        (recipe_job_start_pulse),
+        .job_clear_done_pulse   (recipe_job_clear_done_pulse),
+        .job_clear_error_pulse  (recipe_job_clear_error_pulse),
+        .job_clear_perf_pulse   (recipe_job_clear_perf_pulse),
+        .job_input_mode         (recipe_job_input_mode),
+        .job_output_mode        (recipe_job_output_mode),
+        .job_accumulate_enable  (recipe_job_accumulate_enable),
+        .job_base_addr_a        (recipe_job_base_addr_a),
+        .job_base_addr_b        (recipe_job_base_addr_b),
+        .job_base_addr_c        (recipe_job_base_addr_c),
+        .job_dim_m              (recipe_job_dim_m),
+        .job_dim_n              (recipe_job_dim_n),
+        .job_dim_k              (recipe_job_dim_k),
+        .job_a_src_base_addr    (recipe_job_a_src_base_addr),
+        .job_a_dst_base_addr    (recipe_job_a_dst_base_addr),
+        .job_a_load_beats       (recipe_job_a_load_beats),
+        .job_b_src_base_addr    (recipe_job_b_src_base_addr),
+        .job_b_dst_base_addr    (recipe_job_b_dst_base_addr),
+        .job_b_load_beats       (recipe_job_b_load_beats),
+        .job_store_src_base_addr(recipe_job_store_src_base_addr),
+        .job_store_dst_base_addr(recipe_job_store_dst_base_addr),
+        .job_store_byte_count   (recipe_job_store_byte_count),
+
+        .recipe_busy            (recipe_busy_i),
+        .recipe_done            (recipe_done_i),
+        .recipe_all_slots_done  (recipe_all_slots_done_i),
+        .recipe_final_store_done(recipe_final_store_done_i),
+        .recipe_slot_job_error  (recipe_slot_job_error_i),
+        .recipe_slot_job_reject (recipe_slot_job_reject_i),
+        .recipe_sequence_error  (recipe_sequence_error_i),
+        .recipe_slot_range_error(recipe_slot_range_error_i),
+        .recipe_slot_descriptor_error(recipe_slot_descriptor_error_i),
+        .recipe_state           (recipe_state_i),
+        .recipe_current_slot    (recipe_current_slot_i),
+        .recipe_completed_count (recipe_completed_count_i),
+        .recipe_slot_done_mask  (recipe_slot_done_mask_i),
+        .recipe_slot_error_mask (recipe_slot_error_mask_i),
+        .recipe_slot_reject_mask(recipe_slot_reject_mask_i),
+        .recipe_perf_busy_cycles(recipe_perf_busy_cycles_i),
+        .recipe_perf_mac_count  (recipe_perf_mac_count_i),
+        .recipe_perf_output_count(recipe_perf_output_count_i)
+    );
+
+    assign eff_job_start_pulse       = recipe_busy_i ? recipe_job_start_pulse       : csr_job_start_pulse;
+    assign eff_job_clear_done_pulse  = recipe_busy_i ? recipe_job_clear_done_pulse  : csr_job_clear_done_pulse;
+    assign eff_job_clear_error_pulse = recipe_busy_i ? recipe_job_clear_error_pulse : csr_job_clear_error_pulse;
+    assign eff_job_clear_perf_pulse  = recipe_busy_i ? recipe_job_clear_perf_pulse  : csr_job_clear_perf_pulse;
+
+    assign eff_job_input_mode        = recipe_busy_i ? recipe_job_input_mode        : csr_job_input_mode;
+    assign eff_job_output_mode       = recipe_busy_i ? recipe_job_output_mode       : csr_job_output_mode;
+    assign eff_job_accumulate_enable = recipe_busy_i ? recipe_job_accumulate_enable : csr_job_accumulate_enable;
+
+    assign eff_job_base_addr_a = recipe_busy_i ? recipe_job_base_addr_a : csr_job_base_addr_a;
+    assign eff_job_base_addr_b = recipe_busy_i ? recipe_job_base_addr_b : csr_job_base_addr_b;
+    assign eff_job_base_addr_c = recipe_busy_i ? recipe_job_base_addr_c : csr_job_base_addr_c;
+    assign eff_job_dim_m       = recipe_busy_i ? recipe_job_dim_m       : csr_job_dim_m;
+    assign eff_job_dim_n       = recipe_busy_i ? recipe_job_dim_n       : csr_job_dim_n;
+    assign eff_job_dim_k       = recipe_busy_i ? recipe_job_dim_k       : csr_job_dim_k;
+
+    assign eff_job_a_src_base_addr     = recipe_busy_i ? recipe_job_a_src_base_addr     : csr_job_a_src_base_addr;
+    assign eff_job_a_dst_base_addr     = recipe_busy_i ? recipe_job_a_dst_base_addr     : csr_job_a_dst_base_addr;
+    assign eff_job_a_load_beats        = recipe_busy_i ? recipe_job_a_load_beats        : csr_job_a_load_beats;
+    assign eff_job_b_src_base_addr     = recipe_busy_i ? recipe_job_b_src_base_addr     : csr_job_b_src_base_addr;
+    assign eff_job_b_dst_base_addr     = recipe_busy_i ? recipe_job_b_dst_base_addr     : csr_job_b_dst_base_addr;
+    assign eff_job_b_load_beats        = recipe_busy_i ? recipe_job_b_load_beats        : csr_job_b_load_beats;
+    assign eff_job_store_src_base_addr = recipe_busy_i ? recipe_job_store_src_base_addr : csr_job_store_src_base_addr;
+    assign eff_job_store_dst_base_addr = recipe_busy_i ? recipe_job_store_dst_base_addr : csr_job_store_dst_base_addr;
+    assign eff_job_store_byte_count    = recipe_busy_i ? recipe_job_store_byte_count    : csr_job_store_byte_count;
+
+    // ============================================================
     // P15 single-job sequencer
     //
     // The sequencer owns the existing subsystem control/config wires
@@ -524,33 +831,33 @@ module ai_accel_subsys_csr_top #(
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
 
-        .job_start_pulse        (csr_job_start_pulse),
-        .job_clear_done_pulse   (csr_job_clear_done_pulse),
-        .job_clear_error_pulse  (csr_job_clear_error_pulse),
-        .job_clear_perf_pulse   (csr_job_clear_perf_pulse),
+        .job_start_pulse        (eff_job_start_pulse),
+        .job_clear_done_pulse   (eff_job_clear_done_pulse),
+        .job_clear_error_pulse  (eff_job_clear_error_pulse),
+        .job_clear_perf_pulse   (eff_job_clear_perf_pulse),
 
-        .job_input_mode         (csr_job_input_mode),
-        .job_output_mode        (csr_job_output_mode),
-        .job_accumulate_enable  (csr_job_accumulate_enable),
+        .job_input_mode         (eff_job_input_mode),
+        .job_output_mode        (eff_job_output_mode),
+        .job_accumulate_enable  (eff_job_accumulate_enable),
 
-        .job_base_addr_a        (csr_job_base_addr_a),
-        .job_base_addr_b        (csr_job_base_addr_b),
-        .job_base_addr_c        (csr_job_base_addr_c),
-        .job_dim_m              (csr_job_dim_m),
-        .job_dim_n              (csr_job_dim_n),
-        .job_dim_k              (csr_job_dim_k),
+        .job_base_addr_a        (eff_job_base_addr_a),
+        .job_base_addr_b        (eff_job_base_addr_b),
+        .job_base_addr_c        (eff_job_base_addr_c),
+        .job_dim_m              (eff_job_dim_m),
+        .job_dim_n              (eff_job_dim_n),
+        .job_dim_k              (eff_job_dim_k),
 
-        .job_a_src_base_addr    (csr_job_a_src_base_addr),
-        .job_a_dst_base_addr    (csr_job_a_dst_base_addr),
-        .job_a_load_beats       (csr_job_a_load_beats),
+        .job_a_src_base_addr    (eff_job_a_src_base_addr),
+        .job_a_dst_base_addr    (eff_job_a_dst_base_addr),
+        .job_a_load_beats       (eff_job_a_load_beats),
 
-        .job_b_src_base_addr    (csr_job_b_src_base_addr),
-        .job_b_dst_base_addr    (csr_job_b_dst_base_addr),
-        .job_b_load_beats       (csr_job_b_load_beats),
+        .job_b_src_base_addr    (eff_job_b_src_base_addr),
+        .job_b_dst_base_addr    (eff_job_b_dst_base_addr),
+        .job_b_load_beats       (eff_job_b_load_beats),
 
-        .job_store_src_base_addr(csr_job_store_src_base_addr),
-        .job_store_dst_base_addr(csr_job_store_dst_base_addr),
-        .job_store_byte_count   (csr_job_store_byte_count),
+        .job_store_src_base_addr(eff_job_store_src_base_addr),
+        .job_store_dst_base_addr(eff_job_store_dst_base_addr),
+        .job_store_byte_count   (eff_job_store_byte_count),
 
         .acc_busy               (acc_busy_i),
         .acc_done               (acc_done_i),

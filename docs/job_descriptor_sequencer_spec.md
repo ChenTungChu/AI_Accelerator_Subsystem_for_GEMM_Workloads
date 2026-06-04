@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document defines the P15A job descriptor and hardware sequencer specification for the AI Accelerator Subsystem.
+This document defines the P15 job descriptor and hardware sequencer specification for the AI Accelerator Subsystem.
 
 P14 completed a software-visible AXI-Lite CSR control plane.  The host can now program individual operations through registers and launch each micro-operation independently:
 
@@ -52,7 +52,7 @@ Performance counters
 AXI-Lite CSR control-plane wrapper
 CSR-controlled host-primary GEMM representative tests
 CSR-controlled DMA / AXI-Stream / Direct Stream frontend representative tests
-Full UVM regression passing 90/90 after P14F/P14G
+Full UVM regression passing 95/95 after P15E/P15F closure
 ```
 
 P14 keeps the datapath subsystem intact and adds software-visible CSR control.  P15 should preserve that principle.
@@ -160,6 +160,21 @@ AXI interconnect / NoC integration
 ```
 
 These can be future milestones after the single-job sequencer is stable.
+
+### 4.3 Current Implementation Status
+
+The current implementation has completed the P15 single-job sequencer through frontend-mode extension:
+
+```text
+P15A: Job descriptor / sequencer spec                         PASS
+P15B: CSR job-control register extension                      PASS
+P15C: Single-job DMA-load -> GEMM -> DMA-store hardware FSM    PASS
+P15D: Job sequencer reject / busy / clear handling             PASS
+P15E: Job sequencer frontend-mode extension                   PASS
+P15F: documentation / closure update                          PASS
+
+Full regression: 95/95 PASS
+```
 
 ---
 
@@ -297,9 +312,9 @@ GEMM_INPUT_STREAM_MODE = 1
 
 `ACCUMULATE_ENABLE` comes from the job descriptor mode register.
 
-### 7.5 First Implementation Target
+### 7.5 Implemented Job Modes
 
-The recommended first P15 implementation target is:
+The first implementation target was completed for:
 
 ```text
 INPUT_MODE  = DMA_LOAD
@@ -308,12 +323,24 @@ CASE_ID=100
 CASE_ID=102
 ```
 
-After that is stable, P15 can extend the same sequencer framework to:
+The frontend-mode extension was then completed for:
+
+```text
+INPUT_MODE  = AXIS_PRELOAD
+OUTPUT_MODE = DMA_STORE
+CASE_ID=102
+
+INPUT_MODE  = DIRECT_STREAM
+OUTPUT_MODE = DMA_STORE
+CASE_ID=102
+```
+
+The same sequencer framework remains compatible with later extensions such as:
 
 ```text
 HOST_PRELOADED + HOST_READBACK
-AXIS_PRELOAD + DMA_STORE
-DIRECT_STREAM + DMA_STORE
+HOST_PRELOADED + DMA_STORE
+DMA_LOAD + HOST_READBACK
 C RMW accumulation recipes
 ```
 
@@ -953,19 +980,23 @@ busy START_JOB reject test
 
 ### 17.3 End-to-End Job Tests
 
-Recommended initial P15C end-to-end tests:
+P15C end-to-end tests:
 
 ```text
 csr_job_dma_load_store_case100
 csr_job_dma_load_store_case102
 ```
 
-Recommended P15F frontend extensions:
+P15D reject / busy / clear handling test:
 
 ```text
-csr_job_axis_stream_load_store_case100
+csr_job_reject_error_case102
+```
+
+P15E frontend-mode extension tests:
+
+```text
 csr_job_axis_stream_load_store_case102
-csr_job_direct_stream_load_store_case100
 csr_job_direct_stream_load_store_case102
 ```
 
@@ -978,73 +1009,85 @@ csr_job_c_rmw_accum_dma_load_store_case208
 
 ### 17.4 Acceptance Criteria
 
-P15 closure should require:
+P15 closure criteria and current status:
 
 ```text
-P15A spec reviewed and accepted
-Job register / sequencer RTL compiles
-Standalone job sequencer tests PASS
-Job-level DMA load + GEMM + DMA store representative tests PASS
-Job-level AXI-Stream and Direct Stream representative tests PASS when added
-Existing P14 micro-operation tests still PASS
-Legacy sideband full regression still PASS
-New full regression total increases only by targeted P15 representative items
-No BRAM RTL changes
-No GEMM datapath behavioral changes required for P15A/P15B/P15C
+P15A spec reviewed and accepted                                      PASS
+Job register / sequencer RTL compiles                                PASS
+CSR job register extension PASS                                      PASS
+Job-level DMA load + GEMM + DMA store representative tests PASS       PASS
+Job-level AXI-Stream and Direct Stream representative tests PASS      PASS
+Reject / busy / manual-command-during-job validation PASS             PASS
+Existing P14 micro-operation tests still PASS                         PASS
+Legacy sideband full regression still PASS                            PASS
+New full regression total increases only by targeted P15 items        PASS
+No BRAM RTL changes                                                   PASS
+No GEMM datapath behavioral changes required for P15A-P15E            PASS
+
+Full regression: 95/95 PASS
 ```
 
 ---
 
 ## 18. P15 Milestone Breakdown
 
-Recommended P15 split:
+Current P15 split and status:
 
 ```text
 P15A: Job descriptor / sequencer spec                         PASS
-P15B: CSR job register extension and compile integration       Future
-P15C: Single-job DMA load -> GEMM -> DMA store sequencer       Future
-P15D: Job-level UVM smoke CASE_ID=100 / CASE_ID=102            Future
-P15E: Error / reject / busy / snapshot validation              Future
-P15F: AXI-Stream and Direct Stream job input modes             Future
-P15G: Full regression and documentation closure                Future
+P15B: CSR job register extension and compile integration       PASS
+P15C: Single-job DMA load -> GEMM -> DMA store sequencer       PASS
+P15D: Job sequencer reject / busy / clear handling             PASS
+P15E: AXI-Stream and Direct Stream job input modes             PASS
+P15F: Full regression and documentation closure                PASS
+```
+
+Validated full-regression additions:
+
+```text
+P15C: csr_job_dma_load_store_case100
+P15C: csr_job_dma_load_store_case102
+P15D: csr_job_reject_error_case102
+P15E: csr_job_axis_stream_load_store_case102
+P15E: csr_job_direct_stream_load_store_case102
 ```
 
 ---
 
-## 19. Open Decisions Before P15B
+## 19. Resolved P15 Implementation Decisions
 
-These should be confirmed before writing RTL:
+These were resolved during the P15B-P15E implementation:
 
 ```text
 1. Should the job descriptor be integrated into ai_accel_csr_regs.sv or split into a small job CSR submodule?
-   Recommended: integrate the CSR storage into ai_accel_csr_regs.sv first, then refactor only if needed.
+   Resolved: integrate the CSR storage into ai_accel_csr_regs.sv first, then refactor only if needed.
 
 2. Should P14 micro-operation commands remain available while no job is active?
-   Recommended: yes, for debug and backward compatibility.
+   Resolved: yes, for debug and backward compatibility.
 
 3. Should P14 micro-operation commands be rejected while job_busy is high?
-   Recommended: yes.
+   Resolved: yes.
 
 4. Should descriptor registers be writable while job_busy is high?
-   Recommended: yes, but active job uses a START_JOB snapshot.
+   Resolved: yes; active job uses a START_JOB snapshot.
 
 5. Should P15 implement hardware timeout counters?
-   Recommended: no for P15C; keep timeouts in UVM first.
+   Resolved: no for P15C-P15E; keep timeouts in UVM first.
 
 6. Should START_JOB automatically clear P14 sticky done/error bits?
-   Recommended: no by default.  Use raw done/error pulses internally and keep P14 status independent.
+   Resolved: no by default.  Use raw done/error pulses internally and keep P14 status independent.
 
 7. Should START_JOB require previous JOB_DONE/JOB_ERROR to be cleared?
-   Recommended: no for JOB_DONE, yes or reject for sticky JOB_ERROR until CLEAR_JOB_ERROR is written.
+   Resolved: no for JOB_DONE; reject unsupported START_JOB + CLEAR_ERROR while sticky error/reject is set until CLEAR_JOB_ERROR is written.
 
 8. Should HOST_PRELOADED + DMA_STORE be supported?
-   Recommended: yes; it is useful for host-preload plus DMA-store result movement.
+   Resolved: kept as supported architecture policy for later targeted validation.
 
 9. Should DMA_LOAD + HOST_READBACK be supported?
-   Recommended: yes; it is useful for DMA-preload plus host-readback debug.
+   Resolved: kept as supported architecture policy for later targeted validation.
 
 10. Should Direct Stream mode force GEMM_INPUT_STREAM_MODE=1 regardless of CSR_MODE?
-    Recommended: yes; job mode should derive the required GEMM mode.
+    Resolved: yes; job mode derives the required GEMM mode.
 ```
 
 ---
@@ -1194,16 +1237,28 @@ START_JOB
 poll JOB_DONE / JOB_ERROR
 ```
 
-The first implementation should remain conservative:
+The implemented P15 closure remains conservative:
 
 ```text
 single outstanding job
 CSR-resident descriptor
+active descriptor snapshot on accepted START_JOB
 no descriptor queue
 no overlap pipeline
 no BRAM changes
 no GEMM datapath behavioral changes
 P14 micro-operation commands preserved when job sequencer is idle
+P14 manual commands rejected while job_busy is high
+```
+
+P15C validates the DMA-load job path.  P15D validates reject, busy, sticky status, cleanup, and manual-command conflict behavior.  P15E validates AXI-Stream and Direct Stream job input modes.
+
+The current closure result is:
+
+```text
+TOTAL : 95
+PASS  : 95
+FAIL  : 0
 ```
 
 This gives the project a realistic job-based accelerator control model while preserving the validated datapath and verification foundation built through P14.

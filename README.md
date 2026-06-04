@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, and AXI-Lite CSR control-plane integration.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, and CSR job descriptor / hardware sequencer integration.
 
 Current milestone:
 
 ```text
-CSR Control Plane P14F: CSR-Controlled Frontend Representative Regression Completed
+Job Sequencer P15E: Job Descriptor Frontend-Mode Regression Completed
 
 Regression:
-  TOTAL : 90
-  PASS  : 90
+  TOTAL : 95
+  PASS  : 95
   FAIL  : 0
 ```
 
@@ -45,6 +45,7 @@ GEMM_MAC_LANES=4 + N-tiling representative regression across DMA / AXI-Stream / 
 GEMM_MAC_LANES=4 + M-tiling representative regression across DMA / AXI-Stream / Direct Stream
 GEMM_MAC_LANES=4 + C RMW accumulation focused and frontend representative regression
 AXI-Lite CSR standalone smoke and CSR-controlled host/frontend representative regression
+CSR job descriptor sequencer representative regression across DMA / AXI-Stream / Direct Stream job modes
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -81,6 +82,22 @@ CSR-controlled AXI-Stream preload + GEMM + DMA store representative smoke
 CSR-controlled Direct Stream preload + GEMM + DMA store representative smoke
 ```
 
+P15 extends the P14 CSR micro-operation model with a CSR-resident single-job descriptor and a hardware job sequencer.  Instead of launching every preload, GEMM, and store micro-operation independently, software programs one descriptor and writes `CSR_JOB_COMMAND.START_JOB`.  The sequencer then launches the required A/B preload stage, GEMM stage, and optional DMA store stage internally.
+
+P15 scope:
+
+```text
+CSR job descriptor register window
+Single-outstanding-job hardware sequencer
+START_JOB command and active descriptor snapshot
+Job done / error / reject sticky status
+Job performance snapshot
+DMA load A/B -> GEMM -> DMA store job-level path
+AXI-Stream preload A/B -> GEMM -> DMA store job-level path
+Direct Stream preload A/B -> GEMM -> DMA store job-level path
+Reject / busy / manual-command-during-job handling
+```
+
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
 
 P11 extends the P10 row-accumulator model to output-column tiling.  It supports `N_total` larger than the local B-cache / row-accumulator N capacity by splitting output columns into local N tiles.
@@ -107,6 +124,7 @@ Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchp
 
 - `ai_accel_subsys`
 - `ai_accel_subsys_csr_top`
+- `ai_accel_job_sequencer`
 - `ai_accel_csr_regs`
 - `axi_lite_if`
 - `gemm_top`
@@ -129,6 +147,8 @@ Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchp
 The `axi_mm_dual_port_bram` model is treated as a stable scratchpad baseline.
 
 `ai_accel_subsys_csr_top` is a CSR wrapper around the existing `ai_accel_subsys` datapath top.  It is used by CSR-controlled tests and does not replace the legacy sideband UVM top.
+
+`ai_accel_job_sequencer` implements the P15 single-job descriptor sequencer.  It consumes the CSR job descriptor snapshot and drives the existing sideband starts/configuration for DMA load, AXI-Stream preload, Direct Stream preload, GEMM, and DMA store while a job is active.
 
 `gemm_top` supports:
 
@@ -567,7 +587,26 @@ CSR DMA load A/B or CSR AXI-Stream preload A/B or CSR Direct Stream preload A/B
     -> DMA destination memory compare against software reference
 ```
 
-P10/P11/P12/P13 do not change any frontend protocol. The K/N/M-tiled GEMM path and the C RMW accumulation path use the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
+### CSR job-level descriptor paths
+
+```text
+CSR job descriptor + START_JOB
+    -> sequencer-controlled DMA load A/B or AXI-Stream preload A/B or Direct Stream preload A/B
+    -> sequencer-controlled GEMM
+    -> sequencer-controlled DMA store
+    -> DMA destination memory compare against software reference
+```
+
+P15 job-level mode policy:
+
+```text
+INPUT_MODE=DMA_LOAD      -> scratchpad A/B preload, GEMM input stream mode = 0
+INPUT_MODE=AXIS_PRELOAD  -> scratchpad A/B preload, GEMM input stream mode = 0
+INPUT_MODE=DIRECT_STREAM -> operand-buffer A/B preload, GEMM input stream mode = 1
+OUTPUT_MODE=DMA_STORE    -> sequencer launches DMA store after GEMM done
+```
+
+P10/P11/P12/P13/P15 do not change any frontend protocol. The K/N/M-tiled GEMM path and the C RMW accumulation path use the same GEMM local-memory interface, so scratchpad mode and Direct Stream mode both remain compatible.
 
 Direct Stream routing policy with P13 C RMW enabled:
 
@@ -640,6 +679,10 @@ Current UVM regression covers:
 - CSR-controlled DMA load + GEMM + DMA store representative regression
 - CSR-controlled AXI-Stream preload + GEMM + DMA store representative regression
 - CSR-controlled Direct Stream preload + GEMM + DMA store representative regression
+- CSR job-level DMA load + GEMM + DMA store representative regression
+- CSR job-level AXI-Stream preload + GEMM + DMA store representative regression
+- CSR job-level Direct Stream preload + GEMM + DMA store representative regression
+- CSR job sequencer reject / busy / clear handling regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -650,11 +693,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 90 items and is passing:
+The current full UVM regression contains 95 items and is passing:
 
 ```text
-TOTAL : 90
-PASS  : 90
+TOTAL : 95
+PASS  : 95
 FAIL  : 0
 ```
 
@@ -733,6 +776,32 @@ csr_direct_stream_load_store_case102
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, launch the selected frontend through AXI-Lite CSR commands, launch GEMM through CSR, store C through CSR-controlled DMA store, and compare the DMA destination memory against the software reference.
 
+P15C added these CSR job-level DMA load/store items:
+
+```text
+csr_job_dma_load_store_case100
+csr_job_dma_load_store_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, program one CSR job descriptor, issue `CSR_JOB_COMMAND.START_JOB`, let the hardware job sequencer run DMA load A, DMA load B, GEMM, and DMA store, then compare the DMA destination memory against the software reference.
+
+P15D added this CSR job reject / busy / clear handling item:
+
+```text
+csr_job_reject_error_case102
+```
+
+This uses `UVM_TOP=ai_accel_subsys_csr_uvm_top` and validates zero-dimension / zero-length rejects, unsupported mode reject, START_JOB while job_busy, P14 manual command reject during a P15 job, sticky reject status, cleanup commands, and successful valid-job completion after benign reject injection.
+
+P15E added these CSR job-level frontend-mode items:
+
+```text
+csr_job_axis_stream_load_store_case102
+csr_job_direct_stream_load_store_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, select AXI-Stream or Direct Stream input mode through `CSR_JOB_MODE`, issue `START_JOB`, let the hardware job sequencer run frontend preload A/B, GEMM, and DMA store, then compare the DMA destination memory against the software reference.
+
 ---
 
 ## Running Regression
@@ -761,8 +830,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 90
-PASS  : 90
+TOTAL : 95
+PASS  : 95
 FAIL  : 0
 ```
 
@@ -1233,6 +1302,63 @@ do run_uvm.tcl
 
 ---
 
+
+## Useful P15 Single-Test Runs
+
+### P15C CSR job-level DMA load + GEMM + DMA store smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_job_dma_load_store_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P15D CSR job reject / busy / clear handling smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_job_reject_error_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P15E CSR job-level AXI-Stream preload + GEMM + DMA store smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P15E CSR job-level Direct Stream preload + GEMM + DMA store smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+---
+
 ## Known Warning
 
 Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
@@ -1250,7 +1376,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-CSR Control Plane P14F: CSR-Controlled Frontend Representative Regression Completed
+Job Sequencer P15E: Job Descriptor Frontend-Mode Regression Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -1274,14 +1400,14 @@ Completed:
   P11D: actual N-tile execution microarchitecture          PASS
   P11E: frontend compatibility sanity                      PASS
   P11G: regression integration                             PASS
-  P12A: M-tiling / multi-row tile scheduling spec         PASS
-  P12B: safe M-tiling parameter plumbing                  PASS
-  P12C: M>current-row testcase / reference support        PASS
-  P12D: actual M-tile execution microarchitecture         PASS
-  P12E: host-primary focused validation                   PASS
-  P12F: frontend compatibility sanity                     PASS
-  P12G: regression integration                            PASS
-  P12H: documentation / closure update                    PASS
+  P12A: M-tiling / multi-row tile scheduling spec          PASS
+  P12B: safe M-tiling parameter plumbing                   PASS
+  P12C: M>current-row testcase / reference support         PASS
+  P12D: actual M-tile execution microarchitecture          PASS
+  P12E: host-primary focused validation                    PASS
+  P12F: frontend compatibility sanity                      PASS
+  P12G: regression integration                             PASS
+  P12H: documentation / closure update                     PASS
   P13A: C RMW / partial accumulation spec                  PASS
   P13B: safe C RMW parameter / control-bit plumbing        PASS
   P13C: partial-sum recipe / reference support             PASS
@@ -1290,27 +1416,36 @@ Completed:
   P13F: frontend compatibility sanity                      PASS
   P13G: regression integration                             PASS
   P13H: documentation / closure update                     PASS
-  P14A: AXI-Lite CSR control-plane spec                     PASS
-  P14B: standalone AXI-Lite CSR register block              PASS
-  P14C: CSR wrapper around existing subsystem               PASS
-  P14D: CSR access helper and integrated run flow           PASS
-  P14E: CSR-controlled host-primary GEMM smoke              PASS
-  P14E2: CSR regression integration                         PASS
-  P14F1: CSR DMA load + GEMM + DMA store smoke              PASS
-  P14F2: CSR AXI-Stream preload + GEMM + DMA store smoke    PASS
+  P14A: AXI-Lite CSR control-plane spec                    PASS
+  P14B: standalone AXI-Lite CSR register block             PASS
+  P14C: CSR wrapper around existing subsystem              PASS
+  P14D: CSR access helper and integrated run flow          PASS
+  P14E: CSR-controlled host-primary GEMM smoke             PASS
+  P14E2: CSR regression integration                        PASS
+  P14F1: CSR DMA load + GEMM + DMA store smoke             PASS
+  P14F2: CSR AXI-Stream preload + GEMM + DMA store smoke   PASS
   P14F3: CSR Direct Stream preload + GEMM + DMA store smoke PASS
-  P14G: documentation / closure update                      PASS
+  P14G: documentation / closure update                     PASS
+  P15A: Job descriptor / sequencer spec                    PASS
+  P15B: CSR job-control register extension                 PASS
+  P15C: Single-job DMA-load -> GEMM -> DMA-store FSM       PASS
+  P15D: Job sequencer reject / busy / clear handling       PASS
+  P15E: Job sequencer frontend-mode extension              PASS
+  P15F: documentation / closure update                     PASS
 
 Regression:
-  90/90 PASS
+  95/95 PASS
 ```
+
 
 ---
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, and an AXI-Lite CSR control-plane wrapper.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, and a CSR job descriptor / hardware sequencer.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
 P14F proves that the subsystem can be launched through a software-visible CSR control plane across host-primary, DMA load/store, AXI-Stream preload, and Direct Stream preload representative paths.  The CSR-controlled frontend tests program the selected frontend through AXI-Lite registers, issue command pulses through CSR, poll sticky done status, launch GEMM and DMA store through CSR, and compare the final DMA destination memory against the software reference.
+
+P15E proves that the subsystem can also be launched through a job-level hardware sequencer.  The host programs one CSR-resident job descriptor and writes `START_JOB`; the sequencer then launches the selected frontend preload, GEMM, and DMA store stages automatically.  Validated P15 job paths include DMA load A/B, AXI-Stream preload A/B, and Direct Stream preload A/B, all followed by GEMM and DMA store with DMA destination memory comparison.  P15D also validates reject, busy, manual-command-during-job, sticky status, and cleanup behavior.

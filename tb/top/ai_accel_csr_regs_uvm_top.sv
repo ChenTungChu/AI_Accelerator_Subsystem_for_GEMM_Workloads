@@ -66,6 +66,30 @@ interface ai_accel_csr_status_if #(
     logic [DATA_WIDTH-1:0] job_perf_output_count;
 
     // ------------------------------------------------------------
+    // P16 recipe-sequencer status inputs to the standalone CSR DUT
+    // ------------------------------------------------------------
+    logic                  recipe_busy;
+    logic                  recipe_done;
+    logic                  recipe_all_slots_done;
+    logic                  recipe_final_store_done;
+
+    logic                  recipe_slot_job_error;
+    logic                  recipe_slot_job_reject;
+    logic                  recipe_sequence_error;
+    logic                  recipe_slot_range_error;
+    logic                  recipe_slot_descriptor_error;
+
+    logic [DATA_WIDTH-1:0] recipe_state;
+    logic [DATA_WIDTH-1:0] recipe_current_slot;
+    logic [DATA_WIDTH-1:0] recipe_completed_count;
+    logic [DATA_WIDTH-1:0] recipe_slot_done_mask;
+    logic [DATA_WIDTH-1:0] recipe_slot_error_mask;
+    logic [DATA_WIDTH-1:0] recipe_slot_reject_mask;
+    logic [DATA_WIDTH-1:0] recipe_perf_busy_cycles;
+    logic [DATA_WIDTH-1:0] recipe_perf_mac_count;
+    logic [DATA_WIDTH-1:0] recipe_perf_output_count;
+
+    // ------------------------------------------------------------
     // Initialize all DUT status inputs
     // ------------------------------------------------------------
     task automatic init_status_inputs();
@@ -108,6 +132,27 @@ interface ai_accel_csr_status_if #(
         job_perf_busy_cycles  = '0;
         job_perf_mac_count    = '0;
         job_perf_output_count = '0;
+
+        recipe_busy            = 1'b0;
+        recipe_done            = 1'b0;
+        recipe_all_slots_done  = 1'b0;
+        recipe_final_store_done= 1'b0;
+
+        recipe_slot_job_error       = 1'b0;
+        recipe_slot_job_reject      = 1'b0;
+        recipe_sequence_error       = 1'b0;
+        recipe_slot_range_error     = 1'b0;
+        recipe_slot_descriptor_error= 1'b0;
+
+        recipe_state             = '0;
+        recipe_current_slot      = '0;
+        recipe_completed_count   = '0;
+        recipe_slot_done_mask    = '0;
+        recipe_slot_error_mask   = '0;
+        recipe_slot_reject_mask  = '0;
+        recipe_perf_busy_cycles  = '0;
+        recipe_perf_mac_count    = '0;
+        recipe_perf_output_count = '0;
     end
     endtask
 
@@ -232,6 +277,54 @@ interface ai_accel_csr_status_if #(
     end
     endtask
 
+
+    task automatic pulse_recipe_done(
+        input logic [DATA_WIDTH-1:0] slot_mask,
+        input logic [DATA_WIDTH-1:0] busy_cycles,
+        input logic [DATA_WIDTH-1:0] mac_count,
+        input logic [DATA_WIDTH-1:0] output_count
+    );
+    begin
+        @(posedge clk);
+        recipe_slot_done_mask    <= slot_mask;
+        recipe_perf_busy_cycles  <= busy_cycles;
+        recipe_perf_mac_count    <= mac_count;
+        recipe_perf_output_count <= output_count;
+        recipe_done              <= 1'b1;
+        recipe_all_slots_done    <= 1'b1;
+        recipe_final_store_done  <= 1'b1;
+
+        @(posedge clk);
+        recipe_done              <= 1'b0;
+        recipe_all_slots_done    <= 1'b0;
+        recipe_final_store_done  <= 1'b0;
+        recipe_slot_done_mask    <= '0;
+    end
+    endtask
+
+    task automatic pulse_recipe_error(input logic [DATA_WIDTH-1:0] slot_mask,
+                                      input logic [DATA_WIDTH-1:0] reject_mask);
+    begin
+        @(posedge clk);
+        recipe_slot_error_mask  <= slot_mask;
+        recipe_slot_reject_mask <= reject_mask;
+        recipe_slot_job_error   <= (slot_mask != '0);
+        recipe_slot_job_reject  <= (reject_mask != '0);
+
+        @(posedge clk);
+        recipe_slot_error_mask  <= '0;
+        recipe_slot_reject_mask <= '0;
+        recipe_slot_job_error   <= 1'b0;
+        recipe_slot_job_reject  <= 1'b0;
+    end
+    endtask
+
+    task automatic pulse_recipe_reject(input logic [DATA_WIDTH-1:0] reject_mask);
+    begin
+        pulse_recipe_error('0, reject_mask);
+    end
+    endtask
+
 endinterface
 
 `endif
@@ -248,8 +341,10 @@ module ai_accel_csr_regs_uvm_top;
     localparam int CSR_ADDR_WIDTH = 12;
     localparam int CSR_DATA_WIDTH = 32;
 
-    localparam logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014;
-    localparam logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015;
+    localparam logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014;
+    localparam logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015;
+    localparam logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016;
+    localparam int          P16_RECIPE_QUEUE_DEPTH   = 4;
 
     // ============================================================
     // Clock / reset
@@ -285,6 +380,24 @@ module ai_accel_csr_regs_uvm_top;
         .clk (clk)
     );
 
+
+    logic [31:0] recipe_slot_control [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_a [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_b [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_base_addr_c [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_m [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_n [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] recipe_slot_dim_k [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_a_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_a_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_a_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_b_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_b_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_b_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_store_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0] recipe_slot_store_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_store_byte_count [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0] recipe_slot_user_tag [P16_RECIPE_QUEUE_DEPTH];
     // ============================================================
     // CSR DUT
     // ============================================================
@@ -293,8 +406,10 @@ module ai_accel_csr_regs_uvm_top;
         .GEMM_DIM_WIDTH    (GEMM_DIM_WIDTH),
         .CSR_ADDR_WIDTH        (CSR_ADDR_WIDTH),
         .CSR_DATA_WIDTH        (CSR_DATA_WIDTH),
-        .CSR_VERSION_VALUE     (CSR_VERSION_VALUE),
-        .CSR_JOB_VERSION_VALUE (CSR_JOB_VERSION_VALUE)
+        .CSR_VERSION_VALUE        (CSR_VERSION_VALUE),
+        .CSR_JOB_VERSION_VALUE    (CSR_JOB_VERSION_VALUE),
+        .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
+        .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_csr_regs (
         .clk                    (clk),
         .rst_n                  (rst_n),
@@ -364,6 +479,37 @@ module ai_accel_csr_regs_uvm_top;
         .job_store_dst_base_addr(),
         .job_store_byte_count   (),
 
+        .recipe_start_pulse             (),
+        .recipe_clear_done_pulse        (),
+        .recipe_clear_error_pulse       (),
+        .recipe_clear_perf_pulse        (),
+        .recipe_clear_slot_status_pulse (),
+
+        .recipe_count                   (),
+        .recipe_start_slot              (),
+        .recipe_stop_on_error           (),
+        .recipe_clear_job_sticky_each_slot(),
+        .recipe_accumulate_perf         (),
+        .recipe_allow_slot_writes_while_busy(),
+
+        .recipe_slot_control            (recipe_slot_control),
+        .recipe_slot_base_addr_a        (recipe_slot_base_addr_a),
+        .recipe_slot_base_addr_b        (recipe_slot_base_addr_b),
+        .recipe_slot_base_addr_c        (recipe_slot_base_addr_c),
+        .recipe_slot_dim_m              (recipe_slot_dim_m),
+        .recipe_slot_dim_n              (recipe_slot_dim_n),
+        .recipe_slot_dim_k              (recipe_slot_dim_k),
+        .recipe_slot_a_src_base_addr    (recipe_slot_a_src_base_addr),
+        .recipe_slot_a_dst_base_addr    (recipe_slot_a_dst_base_addr),
+        .recipe_slot_a_load_beats       (recipe_slot_a_load_beats),
+        .recipe_slot_b_src_base_addr    (recipe_slot_b_src_base_addr),
+        .recipe_slot_b_dst_base_addr    (recipe_slot_b_dst_base_addr),
+        .recipe_slot_b_load_beats       (recipe_slot_b_load_beats),
+        .recipe_slot_store_src_base_addr(recipe_slot_store_src_base_addr),
+        .recipe_slot_store_dst_base_addr(recipe_slot_store_dst_base_addr),
+        .recipe_slot_store_byte_count   (recipe_slot_store_byte_count),
+        .recipe_slot_user_tag           (recipe_slot_user_tag),
+
         .job_busy               (status_if.job_busy),
         .job_done               (status_if.job_done),
         .job_gemm_done          (status_if.job_gemm_done),
@@ -379,6 +525,27 @@ module ai_accel_csr_regs_uvm_top;
         .job_perf_busy_cycles   (status_if.job_perf_busy_cycles),
         .job_perf_mac_count     (status_if.job_perf_mac_count),
         .job_perf_output_count  (status_if.job_perf_output_count),
+
+        .recipe_busy            (status_if.recipe_busy),
+        .recipe_done            (status_if.recipe_done),
+        .recipe_all_slots_done  (status_if.recipe_all_slots_done),
+        .recipe_final_store_done(status_if.recipe_final_store_done),
+
+        .recipe_slot_job_error  (status_if.recipe_slot_job_error),
+        .recipe_slot_job_reject (status_if.recipe_slot_job_reject),
+        .recipe_sequence_error  (status_if.recipe_sequence_error),
+        .recipe_slot_range_error(status_if.recipe_slot_range_error),
+        .recipe_slot_descriptor_error(status_if.recipe_slot_descriptor_error),
+
+        .recipe_state           (status_if.recipe_state),
+        .recipe_current_slot    (status_if.recipe_current_slot),
+        .recipe_completed_count (status_if.recipe_completed_count),
+        .recipe_slot_done_mask  (status_if.recipe_slot_done_mask),
+        .recipe_slot_error_mask (status_if.recipe_slot_error_mask),
+        .recipe_slot_reject_mask(status_if.recipe_slot_reject_mask),
+        .recipe_perf_busy_cycles(status_if.recipe_perf_busy_cycles),
+        .recipe_perf_mac_count  (status_if.recipe_perf_mac_count),
+        .recipe_perf_output_count(status_if.recipe_perf_output_count),
 
         .acc_busy               (status_if.acc_busy),
         .acc_done               (status_if.acc_done),

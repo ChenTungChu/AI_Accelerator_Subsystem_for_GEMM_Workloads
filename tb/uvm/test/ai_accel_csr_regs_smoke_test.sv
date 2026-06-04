@@ -19,8 +19,9 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         .DATA_WIDTH (32)
     ) status_vif_t;
 
-    localparam logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014;
-    localparam logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015;
+    localparam logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014;
+    localparam logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015;
+    localparam logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016;
     localparam logic [1:0]  AXI_RESP_SLVERR   = 2'b10;
 
     csr_vif_t                    csr_vif;
@@ -99,6 +100,34 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_SRC_BASE,   32'h0000_0200,    "CSR_JOB_STORE_SRC_BASE");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_DST_BASE,   32'h0000_0000,    "CSR_JOB_STORE_DST_BASE");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_BYTE_COUNT, 32'h0000_0000,    "CSR_JOB_STORE_BYTE_COUNT");
+
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_VERSION,       CSR_RECIPE_VERSION_VALUE, "CSR_RECIPE_VERSION");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_COMMAND,       32'h0000_0000,    "CSR_RECIPE_COMMAND");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_STATUS,        32'h0001_0008,    "CSR_RECIPE_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_DONE_STATUS,   32'h0000_0000,    "CSR_RECIPE_DONE_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS,  32'h0000_0000,    "CSR_RECIPE_ERROR_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL,       32'h0000_0700,    "CSR_RECIPE_CONTROL");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS, 32'h0000_0000,    "CSR_RECIPE_REJECT_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_STATE,         32'h0000_0000,    "CSR_RECIPE_STATE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_CURRENT_SLOT,  32'h0000_0000,    "CSR_RECIPE_CURRENT_SLOT");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_COMPLETED_COUNT, 32'h0000_0000,  "CSR_RECIPE_COMPLETED_COUNT");
+
+        for (int unsigned slot_i = 0; slot_i < 4; slot_i++) begin
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_CONTROL),
+                32'h0000_0000, $sformatf("SLOT%0d_CONTROL", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_BASE_ADDR_A),
+                32'h0000_0000, $sformatf("SLOT%0d_BASE_A", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_BASE_ADDR_B),
+                32'h0000_0100, $sformatf("SLOT%0d_BASE_B", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_BASE_ADDR_C),
+                32'h0000_0200, $sformatf("SLOT%0d_BASE_C", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_DIM_M),
+                32'h0000_0004, $sformatf("SLOT%0d_DIM_M", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_DIM_N),
+                32'h0000_0004, $sformatf("SLOT%0d_DIM_N", slot_i));
+            csr.expect_read32(csr.recipe_slot_addr(slot_i, ai_accel_csr_access_helper::SLOT_DIM_K),
+                32'h0000_0004, $sformatf("SLOT%0d_DIM_K", slot_i));
+        end
     end
     endtask
 
@@ -203,6 +232,78 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
     end
     endtask
 
+
+    // ------------------------------------------------------------
+    // P16 recipe control and descriptor-slot register checks
+    // ------------------------------------------------------------
+    task automatic check_recipe_rw_registers();
+        logic [11:0] slot0;
+        logic [11:0] slot1;
+    begin
+        slot0 = ai_accel_csr_access_helper::CSR_RECIPE_SLOT_BASE;
+        slot1 = ai_accel_csr_access_helper::CSR_RECIPE_SLOT_BASE +
+                ai_accel_csr_access_helper::CSR_RECIPE_SLOT_STRIDE;
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'hFFFF_FFFF);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0FFF, "CSR_RECIPE_CONTROL mask");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0702);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0702, "CSR_RECIPE_CONTROL count=2 start=0");
+
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL,          32'hFFFF_FFFF);
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL,                32'h0000_007F, "SLOT0_CONTROL mask");
+
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL,          32'h0000_0003);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_A,      32'h0000_0000);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_B,      32'h0000_0100);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_C,      32'h0000_0200);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_DIM_M,            32'h0000_0001);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_DIM_N,            32'h0000_0004);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_DIM_K,            32'h0000_0008);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_A_SRC_BASE,       32'h0000_1000);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_A_DST_BASE,       32'h0000_0000);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_A_LOAD_BEATS,     32'h0000_0001);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_B_SRC_BASE,       32'h0000_1100);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_B_DST_BASE,       32'h0000_0100);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_B_LOAD_BEATS,     32'h0000_0001);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_STORE_SRC_BASE,   32'h0000_0200);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_STORE_DST_BASE,   32'h0000_3000);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_STORE_BYTE_COUNT, 32'h0000_0000);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_USER_TAG,         32'h0000_A000);
+
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_CONTROL,          32'h0000_002B);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_A,      32'h0000_0000);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_B,      32'h0000_0100);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_BASE_ADDR_C,      32'h0000_0200);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_DIM_M,            32'h0000_0001);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_DIM_N,            32'h0000_0004);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_DIM_K,            32'h0000_0008);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_A_SRC_BASE,       32'h0000_1200);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_A_DST_BASE,       32'h0000_0000);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_A_LOAD_BEATS,     32'h0000_0001);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_B_SRC_BASE,       32'h0000_1300);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_B_DST_BASE,       32'h0000_0100);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_B_LOAD_BEATS,     32'h0000_0001);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_STORE_SRC_BASE,   32'h0000_0200);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_STORE_DST_BASE,   32'h0000_3000);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_STORE_BYTE_COUNT, 32'h0000_0010);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_USER_TAG,         32'h0000_A001);
+
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL,          32'h0000_0003, "SLOT0_CONTROL DMA/HOST");
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_DIM_K,            32'h0000_0008, "SLOT0_DIM_K");
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_A_SRC_BASE,       32'h0000_1000, "SLOT0_A_SRC");
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_B_SRC_BASE,       32'h0000_1100, "SLOT0_B_SRC");
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_STORE_BYTE_COUNT, 32'h0000_0000, "SLOT0_STORE_BYTES");
+        csr.expect_read32(slot0 + ai_accel_csr_access_helper::SLOT_USER_TAG,         32'h0000_A000, "SLOT0_USER_TAG");
+
+        csr.expect_read32(slot1 + ai_accel_csr_access_helper::SLOT_CONTROL,          32'h0000_002B, "SLOT1_CONTROL DMA/STORE/ACCUM");
+        csr.expect_read32(slot1 + ai_accel_csr_access_helper::SLOT_A_SRC_BASE,       32'h0000_1200, "SLOT1_A_SRC");
+        csr.expect_read32(slot1 + ai_accel_csr_access_helper::SLOT_B_SRC_BASE,       32'h0000_1300, "SLOT1_B_SRC");
+        csr.expect_read32(slot1 + ai_accel_csr_access_helper::SLOT_STORE_BYTE_COUNT, 32'h0000_0010, "SLOT1_STORE_BYTES");
+        csr.expect_read32(slot1 + ai_accel_csr_access_helper::SLOT_USER_TAG,         32'h0000_A001, "SLOT1_USER_TAG");
+    end
+    endtask
+
     // ------------------------------------------------------------
     // Invalid address response checks
     // ------------------------------------------------------------
@@ -210,13 +311,13 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         logic [31:0] data;
         logic [1:0]  resp;
     begin
-        csr.read32(12'h3FC, data, resp);
+        csr.read32(12'h5FC, data, resp);
         if ((resp != AXI_RESP_SLVERR) || (data != 32'h0000_0000)) begin
             `uvm_fatal("CSR_SMOKE/BAD_INVALID_READ",
                 $sformatf("Invalid read expected SLVERR/0, got resp=%0b data=0x%08h", resp, data))
         end
 
-        csr.write32(12'h3FC, 32'hCAFE_BABE, 4'hF, resp);
+        csr.write32(12'h5FC, 32'hCAFE_BABE, 4'hF, resp);
         if (resp != AXI_RESP_SLVERR) begin
             `uvm_fatal("CSR_SMOKE/BAD_INVALID_WRITE",
                 $sformatf("Invalid write expected SLVERR, got resp=%0b", resp))
@@ -396,6 +497,137 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
     end
     endtask
 
+
+    // ------------------------------------------------------------
+    // P16 recipe sticky status / W1C clear checks
+    // ------------------------------------------------------------
+    task automatic check_recipe_sticky_status_and_perf();
+    begin
+        status_vif.pulse_recipe_done(32'h0000_0003, 32'd99, 32'd128, 32'd8);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_DONE_STATUS, 32'h0000_0007, "recipe done sticky");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_DONE_MASK, 32'h0000_0003, "slot done mask");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_BUSY_CYCLES, 32'd99, "recipe PERF_BUSY");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_MAC_COUNT, 32'd128, "recipe PERF_MAC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_OUTPUT_COUNT, 32'd8, "recipe PERF_OUT");
+
+        status_vif.pulse_recipe_error(32'h0000_0002, 32'h0000_0000);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS, 32'h0000_0001, "recipe job error sticky");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_ERROR_MASK, 32'h0000_0002, "slot error mask");
+
+        status_vif.pulse_recipe_reject(32'h0000_0004);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS, 32'h0000_0003, "recipe job reject sticky");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK, 32'h0000_0004, "slot reject mask");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_DONE_STATUS, 32'h0000_0007);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS, 32'h0000_0003);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_DONE_MASK, 32'h0000_0003);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_ERROR_MASK, 32'h0000_0002);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK, 32'h0000_0004);
+
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_DONE_STATUS, 32'h0000_0000, "clear recipe done");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS, 32'h0000_0000, "clear recipe error");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_DONE_MASK, 32'h0000_0000, "clear slot done");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_ERROR_MASK, 32'h0000_0000, "clear slot error");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK, 32'h0000_0000, "clear slot reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_PERF,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_BUSY_CYCLES,  32'h0000_0000, "clear recipe PERF_BUSY");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_MAC_COUNT,    32'h0000_0000, "clear recipe PERF_MAC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_PERF_OUTPUT_COUNT, 32'h0000_0000, "clear recipe PERF_OUT");
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // P16 recipe command reject checks
+    // ------------------------------------------------------------
+    task automatic check_recipe_command_rejects();
+        logic [11:0] slot0;
+        logic [11:0] slot1;
+    begin
+        slot0 = ai_accel_csr_access_helper::CSR_RECIPE_SLOT_BASE;
+        slot1 = ai_accel_csr_access_helper::CSR_RECIPE_SLOT_BASE +
+                ai_accel_csr_access_helper::CSR_RECIPE_SLOT_STRIDE;
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0700);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_START,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0008,
+            "zero-count recipe reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0000,
+            "clear recipe reject status");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0705);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_START,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0010,
+            "slot range recipe reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_CONTROL, 32'h0000_0702);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL, 32'h0000_0000);
+        csr.write32_expect_okay(slot1 + ai_accel_csr_access_helper::SLOT_CONTROL, 32'h0000_002B);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_START,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0020,
+            "invalid slot recipe reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_CONTROL, 32'h0000_0003);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_DIM_K,   32'h0000_0000);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_START,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0040,
+            "descriptor recipe reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.write32_expect_okay(slot0 + ai_accel_csr_access_helper::SLOT_DIM_K, 32'h0000_0008);
+
+        @(posedge status_vif.clk);
+        status_vif.recipe_busy <= 1'b1;
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_START,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0001,
+            "recipe busy reject");
+        status_vif.recipe_busy <= 1'b0;
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+
+        @(posedge status_vif.clk);
+        status_vif.recipe_busy <= 1'b1;
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::CMD_START_GEMM);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0080,
+            "P14 manual command during recipe reject");
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+            ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0080,
+            "P15 START_JOB during recipe reject sticky");
+        status_vif.recipe_busy <= 1'b0;
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::RECIPE_CMD_CLEAR_ERROR,
+            ai_accel_csr_access_helper::CSR_RECIPE_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
+            32'h0000_0000,
+            "clear manual during recipe reject");
+    end
+    endtask
+
     // ------------------------------------------------------------
     // Live status readback checks
     // ------------------------------------------------------------
@@ -449,11 +681,14 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         check_reset_defaults();
         check_rw_registers();
         check_job_rw_registers();
+        check_recipe_rw_registers();
         check_invalid_address_responses();
         check_sticky_status_and_perf();
         check_command_rejects();
         check_job_sticky_status_and_perf();
         check_job_command_rejects();
+        check_recipe_sticky_status_and_perf();
+        check_recipe_command_rejects();
         check_live_status_bits();
 
         `uvm_info("CSR_SMOKE",

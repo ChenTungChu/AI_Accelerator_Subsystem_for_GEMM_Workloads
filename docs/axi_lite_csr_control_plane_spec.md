@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint.
+This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint and the P15E job-descriptor sequencer CSR extension checkpoint.
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.
 
 ---
 
@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 82/82
+Full UVM regression baseline passing 82/82 before CSR representative expansion
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -46,7 +46,7 @@ ds_load_start / ds_src_base_addr / ds_dst_base_addr / ds_load_beats / ds_operand
 dma_store_start / dma_store_src_base_addr / dma_store_dst_base_addr / dma_store_byte_count
 ```
 
-P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.
+P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.  P15 preserves that wrapper and adds a higher-level job descriptor window above the P14 micro-operation registers.
 
 ---
 
@@ -65,7 +65,7 @@ The intended programming model is:
 6. Host polls status registers and reads performance/status counters.
 ```
 
-The CSR block does not automatically schedule multi-stage jobs.  Software or the UVM sequence remains responsible for launching DMA load, GEMM, and DMA store in the desired order.
+The P14 CSR block does not automatically schedule multi-stage jobs.  Software or the UVM sequence remains responsible for launching DMA load, GEMM, and DMA store in the desired order.  P15 adds a separate job-level sequencer path that can consume one descriptor and automatically launch preload, GEMM, and optional store stages while preserving the P14 micro-operation programming model for debug and compatibility.
 
 ---
 
@@ -98,7 +98,19 @@ CSR-controlled host-primary GEMM CASE_ID=102
 CSR-controlled DMA load + GEMM + DMA store CASE_ID=100/102
 CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=100/102
 CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=100/102
-Full regression: 90/90 PASS
+Full regression after P14F/P14G: 90/90 PASS
+```
+
+Current P15E validated scope:
+
+```text
+CSR job descriptor register window above the P14 CSR map
+Hardware single-job sequencer integrated in ai_accel_subsys_csr_top
+CSR job-level DMA load + GEMM + DMA store CASE_ID=100/102
+CSR job reject / busy / clear handling CASE_ID=102
+CSR job-level AXI-Stream preload + GEMM + DMA store CASE_ID=102
+CSR job-level Direct Stream preload + GEMM + DMA store CASE_ID=102
+Full regression after P15E: 95/95 PASS
 ```
 
 ### 4.2 Not Included
@@ -111,7 +123,7 @@ UVM RAL model
 Linux driver
 C software driver
 Descriptor queue
-Automatic job scheduler
+P14 automatic job scheduler
 Multi-job hardware command processor
 Cache-coherent host interface
 AXI interconnect / NoC integration
@@ -119,7 +131,7 @@ Double buffering
 Streaming GEMM compute rewrite
 ```
 
-These can be future milestones after the CSR control plane is stable.
+These can be future milestones after the CSR control plane and the single-job P15 sequencer are stable.
 
 ---
 
@@ -135,7 +147,7 @@ rtl/csr/ai_accel_csr_regs.sv
 rtl/top/ai_accel_subsys_csr_top.sv
 ```
 
-Recommended partition:
+Recommended P14 partition:
 
 ```text
 ai_accel_subsys_csr_top
@@ -145,7 +157,19 @@ ai_accel_subsys_csr_top
                 -> ai_accel_subsys
 ```
 
-The existing `ai_accel_subsys.sv` remains the stable datapath subsystem.  The new CSR top wraps it.
+Recommended P15 extension:
+
+```text
+ai_accel_subsys_csr_top
+    AXI-Lite CSR slave port
+        -> ai_accel_csr_regs
+            -> P14 micro-operation CSR outputs
+            -> P15 job descriptor/config outputs
+                -> ai_accel_job_sequencer
+                    -> existing ai_accel_subsys sideband starts/configs
+```
+
+The existing `ai_accel_subsys.sv` remains the stable datapath subsystem.  The CSR top wraps it, and the P15 job sequencer arbitrates between job-level control and the existing P14 micro-operation controls.
 
 ---
 
@@ -298,6 +322,45 @@ All registers are 32-bit and word-aligned.
 
 The initial P14A map intentionally leaves gaps for future status/debug expansion.
 
+P15 adds a job descriptor / sequencer register window above the P14 micro-operation window.  The P14 registers from `0x000` through `0x08C` remain unchanged.
+
+### 9.1 P15 Job Descriptor Register Window
+
+| Offset | Name | Access | Description |
+|---:|---|---|---|
+| 0x100 | `CSR_JOB_VERSION` | RO | Job sequencer version / feature ID |
+| 0x104 | `CSR_JOB_COMMAND` | W1P | Job start and clear commands |
+| 0x108 | `CSR_JOB_STATUS` | RO | Live job status summary |
+| 0x10C | `CSR_JOB_DONE_STATUS` | RO/W1C | Sticky job done status |
+| 0x110 | `CSR_JOB_ERROR_STATUS` | RO/W1C | Sticky job error status |
+| 0x114 | `CSR_JOB_MODE` | RW | Job input/output mode and options |
+| 0x118 | `CSR_JOB_REJECT_STATUS` | RO/W1C | Sticky job command reject reasons |
+| 0x11C | `CSR_JOB_STATE` | RO | Current sequencer state |
+| 0x120 | `CSR_JOB_BASE_ADDR_A` | RW | GEMM A logical base address |
+| 0x124 | `CSR_JOB_BASE_ADDR_B` | RW | GEMM B logical base address |
+| 0x128 | `CSR_JOB_BASE_ADDR_C` | RW | GEMM C scratchpad base address |
+| 0x12C | `CSR_JOB_DIM_M` | RW | GEMM M dimension |
+| 0x130 | `CSR_JOB_DIM_N` | RW | GEMM N dimension |
+| 0x134 | `CSR_JOB_DIM_K` | RW | GEMM K dimension |
+| 0x138 | `CSR_JOB_A_SRC_BASE` | RW | External/source-memory A base for preload modes |
+| 0x13C | `CSR_JOB_A_DST_BASE` | RW | Scratchpad or operand-buffer A destination/base |
+| 0x140 | `CSR_JOB_A_LOAD_BEATS` | RW | A preload length in DATA_WIDTH beats |
+| 0x144 | `CSR_JOB_RESERVED_144` | RO | Reserved |
+| 0x148 | `CSR_JOB_B_SRC_BASE` | RW | External/source-memory B base for preload modes |
+| 0x14C | `CSR_JOB_B_DST_BASE` | RW | Scratchpad or operand-buffer B destination/base |
+| 0x150 | `CSR_JOB_B_LOAD_BEATS` | RW | B preload length in DATA_WIDTH beats |
+| 0x154 | `CSR_JOB_RESERVED_154` | RO | Reserved |
+| 0x158 | `CSR_JOB_STORE_SRC_BASE` | RW | Scratchpad C source base for DMA store |
+| 0x15C | `CSR_JOB_STORE_DST_BASE` | RW | External destination memory base for DMA store |
+| 0x160 | `CSR_JOB_STORE_BYTE_COUNT` | RW | DMA store byte count |
+| 0x164 | `CSR_JOB_RESERVED_164` | RO | Reserved |
+| 0x180 | `CSR_JOB_PERF_BUSY_CYCLES` | RO | Captured GEMM busy-cycle count for completed job |
+| 0x184 | `CSR_JOB_PERF_MAC_COUNT` | RO | Captured GEMM MAC count for completed job |
+| 0x188 | `CSR_JOB_PERF_OUTPUT_COUNT` | RO | Captured GEMM output count for completed job |
+| 0x18C | `CSR_JOB_RESERVED_18C` | RO | Reserved |
+
+The P15 job window is intentionally separate from the P14 micro-operation window.  Software can continue using P14 commands directly when the job sequencer is idle.
+
 ---
 
 ## 10. Register Bit Definitions
@@ -406,6 +469,45 @@ Sticky command reject bits are set when a CSR command write cannot be accepted. 
 | 8 | `UNSUPPORTED_COMBO` | RO/W1C | Unsupported command-bit combination was written |
 | 9 | `ZERO_LENGTH_REJECT` | RO/W1C | Start command rejected because configured length/dimension is zero |
 
+### 10.8 P15 Job Command / Status Registers
+
+The P15 job registers use the same AXI-Lite access policy and the same W1P/W1C definitions as the P14 CSR window.
+
+`CSR_JOB_COMMAND` at `0x104` is a write-one-pulse register:
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `START_JOB` | W1P | Latch the CSR job descriptor and start the hardware job sequencer if accepted |
+| 8 | `CLEAR_JOB_DONE` | W1P | Clear sticky job done bits |
+| 9 | `CLEAR_JOB_ERROR` | W1P | Clear sticky job error and reject bits |
+| 10 | `CLEAR_JOB_PERF` | W1P | Clear job performance snapshot registers |
+
+`CSR_JOB_MODE` at `0x114` selects the job-level frontend and output path:
+
+| Bits | Name | Access | Description |
+|---:|---|---|---|
+| [1:0] | `INPUT_MODE` | RW | 0=HOST_PRELOADED, 1=DMA_LOAD, 2=AXIS_PRELOAD, 3=DIRECT_STREAM |
+| [3:2] | `OUTPUT_MODE` | RW | 0=HOST_READBACK, 1=DMA_STORE |
+| 4 | `ACCUMULATE_ENABLE` | RW | GEMM C RMW accumulation control for this job |
+| 5 | `CLEAR_P14_STICKY_ON_START` | RW | Optional debug policy bit, reserved by the current validated flow |
+| [31:6] | `RSVD` | RO | Reserved |
+
+`CSR_JOB_REJECT_STATUS` at `0x118` records job command rejects:
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `JOB_BUSY_REJECT` | RO/W1C | START_JOB requested while job_busy is high |
+| 1 | `MICRO_OP_BUSY_REJECT` | RO/W1C | START_JOB requested while an underlying engine is already busy |
+| 2 | `UNSUPPORTED_MODE_REJECT` | RO/W1C | Unsupported input/output mode combination |
+| 3 | `ZERO_DIM_REJECT` | RO/W1C | M/N/K dimension is zero |
+| 4 | `ZERO_A_LENGTH_REJECT` | RO/W1C | A preload length is zero when required |
+| 5 | `ZERO_B_LENGTH_REJECT` | RO/W1C | B preload length is zero when required |
+| 6 | `ZERO_STORE_LENGTH_REJECT` | RO/W1C | Store byte count is zero when DMA store is required |
+| 7 | `MANUAL_CMD_DURING_JOB_REJECT` | RO/W1C | P14 manual micro-op command attempted while job sequencer owns control |
+| 8 | `UNSUPPORTED_COMBO` | RO/W1C | Unsupported job command-bit combination was written |
+
+The full job register bit definitions are recorded in `docs/job_descriptor_sequencer_spec.md`.
+
 ---
 
 ## 11. Configuration Register Defaults
@@ -436,6 +538,21 @@ After reset, recommended defaults are:
 | `CSR_DMA_STORE_BYTE_COUNT` | 0x0000_0000 |
 
 The A/B/C and M/N/K defaults match the original simple 4x4 bring-up memory map and make CSR smoke tests deterministic even before software writes every field.
+
+P15 job descriptor defaults mirror the same logical A/B/C and M/N/K bring-up map, while preload/store length fields reset to zero so accidental `START_JOB` does not launch a partial data movement operation without software programming the descriptor lengths.
+
+```text
+CSR_JOB_MODE              = 0x0000_0004
+CSR_JOB_BASE_ADDR_A       = 0x0000_0000
+CSR_JOB_BASE_ADDR_B       = 0x0000_0100
+CSR_JOB_BASE_ADDR_C       = 0x0000_0200
+CSR_JOB_DIM_M             = 0x0000_0004
+CSR_JOB_DIM_N             = 0x0000_0004
+CSR_JOB_DIM_K             = 0x0000_0004
+CSR_JOB_A_LOAD_BEATS      = 0x0000_0000
+CSR_JOB_B_LOAD_BEATS      = 0x0000_0000
+CSR_JOB_STORE_BYTE_COUNT  = 0x0000_0000
+```
 
 ---
 
@@ -537,6 +654,27 @@ CSR_DMA_STORE_BYTE_COUNT != 0
 
 Software should normally launch DMA store only after GEMM done is observed, but P14A does not require the CSR block to enforce `GEMM_DONE` before `START_DMA_STORE`.  This keeps the CSR block a simple control plane rather than a scheduler.
 
+### 13.7 P15 START_JOB Acceptance
+
+`START_JOB` is accepted only when:
+
+```text
+job_busy == 0
+acc_busy == 0
+dma_load_busy == 0
+axis_load_busy == 0
+ds_load_busy == 0
+dma_store_busy == 0
+dim_m != 0
+dim_n != 0
+dim_k != 0
+input/output mode combination is supported
+required preload lengths are non-zero for preload modes
+required store byte count is non-zero for DMA_STORE output mode
+```
+
+When a P15 job is active, P14 manual `START_*` commands are rejected and are not forwarded to the datapath.  This policy avoids two CSR control sources driving the same underlying engines.
+
 ---
 
 ## 14. Sideband Outputs From CSR Block
@@ -585,6 +723,33 @@ output logic [31:0]           dma_store_byte_count
 
 All start outputs are one `dma_clk` cycle pulses.
 
+For P15, the CSR block also exposes the job descriptor fields and job command pulses to `ai_accel_job_sequencer`.  The sequencer then drives the same style of subsystem sideband control/config wires during an active job.
+
+Recommended job-facing outputs include:
+
+```systemverilog
+output logic                  job_start_pulse,
+output logic                  job_clear_done_pulse,
+output logic                  job_clear_error_pulse,
+output logic                  job_clear_perf_pulse,
+output logic [31:0]           job_mode,
+output logic [ADDR_WIDTH-1:0] job_base_addr_a,
+output logic [ADDR_WIDTH-1:0] job_base_addr_b,
+output logic [ADDR_WIDTH-1:0] job_base_addr_c,
+output logic [GEMM_DIM_WIDTH-1:0] job_dim_m,
+output logic [GEMM_DIM_WIDTH-1:0] job_dim_n,
+output logic [GEMM_DIM_WIDTH-1:0] job_dim_k,
+output logic [ADDR_WIDTH-1:0] job_a_src_base,
+output logic [ADDR_WIDTH-1:0] job_a_dst_base,
+output logic [31:0]           job_a_load_beats,
+output logic [ADDR_WIDTH-1:0] job_b_src_base,
+output logic [ADDR_WIDTH-1:0] job_b_dst_base,
+output logic [31:0]           job_b_load_beats,
+output logic [ADDR_WIDTH-1:0] job_store_src_base,
+output logic [ADDR_WIDTH-1:0] job_store_dst_base,
+output logic [31:0]           job_store_byte_count
+```
+
 ---
 
 ## 15. Sideband Inputs To CSR Block
@@ -621,6 +786,19 @@ input logic [31:0] gemm_perf_output_count
 `acc_done`, `dma_load_done`, `axis_load_done`, `ds_load_done`, and `dma_store_done` are converted into sticky CSR done bits.
 
 Error inputs are converted into sticky CSR error bits.
+
+For P15, the CSR block receives job sequencer status and exposes them through the job CSR window:
+
+```systemverilog
+input logic        job_busy,
+input logic [31:0] job_done_status,
+input logic [31:0] job_error_status,
+input logic [31:0] job_reject_status,
+input logic [31:0] job_state,
+input logic [31:0] job_perf_busy_cycles,
+input logic [31:0] job_perf_mac_count,
+input logic [31:0] job_perf_output_count
+```
 
 ---
 
@@ -710,11 +888,51 @@ Job 1:
 
 Software or the UVM sequence is responsible for programming each job's A/B/C base and dimensions consistently with the C RMW recipe.
 
+### 16.6 P15 Job Descriptor DMA Load + GEMM + DMA Store Sequence
+
+```text
+1. CSR writes JOB_BASE_ADDR_A/B/C and JOB_DIM_M/N/K.
+2. CSR writes JOB_A_SRC_BASE / JOB_A_DST_BASE / JOB_A_LOAD_BEATS.
+3. CSR writes JOB_B_SRC_BASE / JOB_B_DST_BASE / JOB_B_LOAD_BEATS.
+4. CSR writes JOB_STORE_SRC_BASE / JOB_STORE_DST_BASE / JOB_STORE_BYTE_COUNT.
+5. CSR writes JOB_MODE:
+     INPUT_MODE  = DMA_LOAD
+     OUTPUT_MODE = DMA_STORE
+6. CSR writes CSR_JOB_COMMAND.START_JOB.
+7. Hardware sequencer runs DMA load A.
+8. Hardware sequencer runs DMA load B.
+9. Hardware sequencer runs GEMM.
+10. Hardware sequencer runs DMA store.
+11. CSR polls CSR_JOB_DONE_STATUS.JOB_DONE.
+12. Test checks DMA destination memory.
+```
+
+### 16.7 P15 Job Descriptor AXI-Stream / Direct Stream Frontend Sequence
+
+For AXI-Stream job mode:
+
+```text
+INPUT_MODE  = AXIS_PRELOAD
+OUTPUT_MODE = DMA_STORE
+Sequencer runs AXI-Stream preload A, AXI-Stream preload B, GEMM, DMA store.
+```
+
+For Direct Stream job mode:
+
+```text
+INPUT_MODE  = DIRECT_STREAM
+OUTPUT_MODE = DMA_STORE
+Sequencer runs Direct Stream preload A with ds_operand_sel=0.
+Sequencer runs Direct Stream preload B with ds_operand_sel=1.
+Sequencer starts GEMM with GEMM_INPUT_STREAM_MODE=1.
+Sequencer runs DMA store after GEMM completion.
+```
+
 ---
 
-## 17. Verification Plan For P14
+## 17. Verification Plan For P14 / P15
 
-### 17.1 CSR Register Tests
+### 17.1 P14 CSR Register Tests
 
 P14B/P14D should include:
 
@@ -731,7 +949,7 @@ CSR sticky error clear test
 CSR busy-command reject test
 ```
 
-### 17.2 CSR-Controlled End-to-End Tests
+### 17.2 P14 CSR-Controlled End-to-End Tests
 
 P14E/P14F add representative tests, not duplicate the entire 82-item legacy regression.
 
@@ -750,7 +968,21 @@ csr_direct_stream_load_store_case102
 
 The legacy sideband regression continues to pass unchanged, with CSR representative items increasing the integrated full regression total to 90.
 
-### 17.3 Acceptance Criteria
+### 17.3 P15 Job-Level End-to-End Tests
+
+Validated P15 job-level regression items:
+
+```text
+csr_job_dma_load_store_case100
+csr_job_dma_load_store_case102
+csr_job_reject_error_case102
+csr_job_axis_stream_load_store_case102
+csr_job_direct_stream_load_store_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, program one CSR-resident job descriptor, issue `CSR_JOB_COMMAND.START_JOB`, let the hardware job sequencer launch the selected preload/GEMM/store stages, and compare the final DMA destination memory against the software reference.
+
+### 17.4 Acceptance Criteria
 
 P14 closure should require:
 
@@ -761,15 +993,16 @@ CSR frontend representative tests PASS
 Legacy sideband full regression still PASS
 New full regression total increases by the CSR representative items
 P14F full regression: 90/90 PASS
+P15E full regression: 95/95 PASS
 No BRAM RTL changes
 No GEMM datapath behavioral changes required for P14A/P14B
 ```
 
 ---
 
-## 18. P14 Milestone Breakdown
+## 18. P14 / P15 Milestone Breakdown
 
-Recommended P14 split:
+Completed P14 split:
 
 ```text
 P14A: CSR control-plane spec and register map                         PASS
@@ -781,11 +1014,22 @@ P14F: CSR-controlled DMA / AXI-Stream / Direct Stream representatives  PASS
 P14G: Regression and documentation closure                             PASS
 ```
 
+Completed P15 job-sequencer split through the current checkpoint:
+
+```text
+P15A: Job descriptor / sequencer spec                                  PASS
+P15B: CSR job-control register extension                               PASS
+P15C: Single-job DMA load -> GEMM -> DMA store hardware FSM            PASS
+P15D: Job sequencer reject / busy / clear handling                     PASS
+P15E: Job sequencer frontend-mode extension                            PASS
+P15F: Documentation / closure update                                   PASS
+```
+
 ---
 
-## 19. Open Decisions Before P14B
+## 19. Open Decisions
 
-These should be confirmed before writing RTL:
+The original P14 questions have been resolved for the current baseline:
 
 ```text
 1. Use a dedicated axi_lite_if.sv or plain port list?
@@ -799,9 +1043,9 @@ These should be confirmed before writing RTL:
 
 ---
 
-## 20. Current P14F Validation Status
+## 20. Current P14F / P15E Validation Status
 
-The current validated P14F checkpoint is:
+The validated P14F checkpoint is:
 
 ```text
 CSR standalone register smoke: PASS
@@ -813,10 +1057,23 @@ CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=100: PASS
 CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=102: PASS
 CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=100: PASS
 CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=102: PASS
-Full regression: 90/90 PASS
+Full regression after P14F/P14G: 90/90 PASS
+```
+
+The validated P15E checkpoint is:
+
+```text
+CSR job-level DMA load + GEMM + DMA store CASE_ID=100: PASS
+CSR job-level DMA load + GEMM + DMA store CASE_ID=102: PASS
+CSR job reject / busy / clear handling CASE_ID=102: PASS
+CSR job-level AXI-Stream preload + GEMM + DMA store CASE_ID=102: PASS
+CSR job-level Direct Stream preload + GEMM + DMA store CASE_ID=102: PASS
+Full regression after P15E: 95/95 PASS
 ```
 
 P14F keeps the legacy sideband subsystem top available while using `ai_accel_subsys_csr_uvm_top` for CSR-wrapper validation.  The CSR-controlled frontend tests launch each selected data movement frontend through CSR commands, launch GEMM through CSR, launch DMA store through CSR, and compare the DMA destination memory against the software reference.
+
+P15E uses the same CSR wrapper top, but software/UVM now programs a single job descriptor and writes `START_JOB`.  The hardware job sequencer then launches the selected frontend, GEMM, and DMA store stages automatically.
 
 ---
 
@@ -824,13 +1081,22 @@ P14F keeps the legacy sideband subsystem top available while using `ai_accel_sub
 
 P14 adds a lightweight AXI-Lite CSR control plane to make the accelerator host-programmable while preserving the validated datapath subsystem.
 
-The key design choice is to keep P14 as a control-plane wrapper:
+The key P14 design choice is to keep the control plane as a micro-operation wrapper:
 
 ```text
-CSR writes configure and launch operations.
+CSR writes configure and launch individual operations.
 Existing ai_accel_subsys executes the operations.
 CSR reads expose live status, sticky completion/error, and performance snapshots.
-Software/UVM still controls operation sequencing.
+Software/UVM controls operation sequencing.
 ```
 
-This gives the project a realistic software-visible accelerator control model without turning P14 into a descriptor scheduler or full SoC software stack.
+P15 extends the same CSR wrapper into a job-level accelerator control model:
+
+```text
+CSR writes one job descriptor.
+CSR writes START_JOB.
+Hardware sequencer launches preload A, preload B, GEMM, and optional DMA store.
+CSR reads expose job busy/done/error/reject status and job performance snapshots.
+```
+
+The current P15E checkpoint validates DMA, AXI-Stream, and Direct Stream job-level frontend modes while keeping P14 micro-operation CSR commands available when the job sequencer is idle.  Full regression is passing 95/95.

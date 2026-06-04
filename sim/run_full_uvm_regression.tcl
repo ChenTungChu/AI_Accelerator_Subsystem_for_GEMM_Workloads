@@ -1953,6 +1953,48 @@ run_reg_item "csr_job_direct_stream_load_store_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+
+# ============================================================
+# P16D2: CSR recipe sequencer regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items validate the P16 recipe runner after P16C/P16D by issuing
+# START_RECIPE and letting the hardware recipe sequencer dispatch
+# two CSR-resident descriptor slots through the existing P15
+# single-job worker.
+#
+# The first item validates a two-slot DMA recipe.  The second item
+# validates the P13-style two-job C RMW partial-K recipe through
+# the P16 recipe sequencer.
+# Expected total after P16D2: 97.
+# ============================================================
+run_reg_item "csr_recipe_dma_two_slot_case102" {
+    set UVM_TEST ai_accel_subsys_csr_recipe_dma_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_recipe_c_rmw_two_slot_case208" {
+    set UVM_TEST ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 208
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_ENABLE_C_RMW_ACCUM 1
+}
+
 # ============================================================
 # Final summary
 # ============================================================

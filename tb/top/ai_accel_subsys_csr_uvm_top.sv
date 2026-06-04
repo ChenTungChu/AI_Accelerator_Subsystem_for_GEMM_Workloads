@@ -12,6 +12,8 @@ import ai_accel_subsys_uvm_pkg::*;
 `include "ai_accel_subsys_csr_job_dma_load_store_smoke_test.sv"
 `include "ai_accel_subsys_csr_job_reject_error_test.sv"
 `include "ai_accel_subsys_csr_job_frontend_mode_smoke_test.sv"
+`include "ai_accel_subsys_csr_recipe_dma_two_slot_smoke_test.sv"
+`include "ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test.sv"
 
 module ai_accel_subsys_csr_uvm_top;
 

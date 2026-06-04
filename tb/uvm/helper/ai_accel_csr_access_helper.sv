@@ -88,6 +88,44 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_JOB_PERF_MAC_COUNT   = 12'h184;
     localparam logic [11:0] CSR_JOB_PERF_OUTPUT_COUNT= 12'h188;
 
+    localparam logic [11:0] CSR_RECIPE_VERSION       = 12'h200;
+    localparam logic [11:0] CSR_RECIPE_COMMAND       = 12'h204;
+    localparam logic [11:0] CSR_RECIPE_STATUS        = 12'h208;
+    localparam logic [11:0] CSR_RECIPE_DONE_STATUS   = 12'h20C;
+    localparam logic [11:0] CSR_RECIPE_ERROR_STATUS  = 12'h210;
+    localparam logic [11:0] CSR_RECIPE_CONTROL       = 12'h214;
+    localparam logic [11:0] CSR_RECIPE_REJECT_STATUS = 12'h218;
+    localparam logic [11:0] CSR_RECIPE_STATE         = 12'h21C;
+    localparam logic [11:0] CSR_RECIPE_CURRENT_SLOT  = 12'h220;
+    localparam logic [11:0] CSR_RECIPE_COMPLETED_COUNT = 12'h224;
+    localparam logic [11:0] CSR_RECIPE_SLOT_DONE_MASK  = 12'h228;
+    localparam logic [11:0] CSR_RECIPE_SLOT_ERROR_MASK = 12'h22C;
+    localparam logic [11:0] CSR_RECIPE_SLOT_REJECT_MASK= 12'h230;
+    localparam logic [11:0] CSR_RECIPE_PERF_BUSY_CYCLES = 12'h280;
+    localparam logic [11:0] CSR_RECIPE_PERF_MAC_COUNT   = 12'h284;
+    localparam logic [11:0] CSR_RECIPE_PERF_OUTPUT_COUNT= 12'h288;
+
+    localparam logic [11:0] CSR_RECIPE_SLOT_BASE = 12'h300;
+    localparam int unsigned CSR_RECIPE_SLOT_STRIDE = 128;
+
+    localparam logic [6:0] SLOT_CONTROL          = 7'h00;
+    localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
+    localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;
+    localparam logic [6:0] SLOT_BASE_ADDR_C      = 7'h0C;
+    localparam logic [6:0] SLOT_DIM_M            = 7'h10;
+    localparam logic [6:0] SLOT_DIM_N            = 7'h14;
+    localparam logic [6:0] SLOT_DIM_K            = 7'h18;
+    localparam logic [6:0] SLOT_A_SRC_BASE       = 7'h1C;
+    localparam logic [6:0] SLOT_A_DST_BASE       = 7'h20;
+    localparam logic [6:0] SLOT_A_LOAD_BEATS     = 7'h24;
+    localparam logic [6:0] SLOT_B_SRC_BASE       = 7'h28;
+    localparam logic [6:0] SLOT_B_DST_BASE       = 7'h2C;
+    localparam logic [6:0] SLOT_B_LOAD_BEATS     = 7'h30;
+    localparam logic [6:0] SLOT_STORE_SRC_BASE   = 7'h34;
+    localparam logic [6:0] SLOT_STORE_DST_BASE   = 7'h38;
+    localparam logic [6:0] SLOT_STORE_BYTE_COUNT = 7'h3C;
+    localparam logic [6:0] SLOT_USER_TAG         = 7'h40;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -104,6 +142,12 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int JOB_CMD_CLEAR_DONE  = 8;
     localparam int JOB_CMD_CLEAR_ERROR = 9;
     localparam int JOB_CMD_CLEAR_PERF  = 10;
+
+    localparam int RECIPE_CMD_START             = 0;
+    localparam int RECIPE_CMD_CLEAR_DONE        = 8;
+    localparam int RECIPE_CMD_CLEAR_ERROR       = 9;
+    localparam int RECIPE_CMD_CLEAR_PERF        = 10;
+    localparam int RECIPE_CMD_CLEAR_SLOT_STATUS = 11;
 
     // ------------------------------------------------------------
     // Sticky status bits
@@ -142,9 +186,38 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int JOB_REJ_MANUAL_CMD     = 7;
     localparam int JOB_REJ_UNSUPPORTED_COMBO = 8;
 
+    localparam int RECIPE_DONE             = 0;
+    localparam int RECIPE_ALL_SLOTS_DONE   = 1;
+    localparam int RECIPE_FINAL_STORE_DONE = 2;
+
+    localparam int RECIPE_ERR_SLOT_JOB_ERROR  = 0;
+    localparam int RECIPE_ERR_SLOT_JOB_REJECT = 1;
+    localparam int RECIPE_ERR_SEQUENCE        = 2;
+    localparam int RECIPE_ERR_SLOT_RANGE      = 3;
+    localparam int RECIPE_ERR_SLOT_DESC       = 4;
+
+    localparam int RECIPE_REJ_BUSY          = 0;
+    localparam int RECIPE_REJ_JOB_BUSY      = 1;
+    localparam int RECIPE_REJ_MICRO_OP_BUSY = 2;
+    localparam int RECIPE_REJ_ZERO_COUNT    = 3;
+    localparam int RECIPE_REJ_SLOT_RANGE    = 4;
+    localparam int RECIPE_REJ_SLOT_INVALID  = 5;
+    localparam int RECIPE_REJ_SLOT_DESC     = 6;
+    localparam int RECIPE_REJ_MANUAL_CMD    = 7;
+    localparam int RECIPE_REJ_UNSUPPORTED_COMBO = 8;
+
     localparam int unsigned DEFAULT_TIMEOUT_CYCLES = 2000;
 
     csr_vif_t vif;
+
+    function automatic logic [11:0] recipe_slot_addr(
+        input int unsigned slot_idx,
+        input logic [6:0] slot_offset
+    );
+    begin
+        return CSR_RECIPE_SLOT_BASE + (slot_idx * CSR_RECIPE_SLOT_STRIDE) + slot_offset;
+    end
+    endfunction
 
     // ------------------------------------------------------------
     // Constructor
