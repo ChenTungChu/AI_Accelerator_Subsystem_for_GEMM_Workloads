@@ -71,6 +71,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_direct_stream_load_store_smoke_test \
     ai_accel_subsys_csr_job_dma_load_store_smoke_test \
     ai_accel_subsys_csr_job_reject_error_test \
+    ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test \
+    ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test \
 ]
 
 # --------------------------------------------------
@@ -122,7 +124,9 @@ if {![info exists UVM_TOP]} {
               ($UVM_TEST eq "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") ||
               ($UVM_TEST eq "ai_accel_subsys_csr_direct_stream_load_store_smoke_test") ||
               ($UVM_TEST eq "ai_accel_subsys_csr_job_dma_load_store_smoke_test") ||
-              ($UVM_TEST eq "ai_accel_subsys_csr_job_reject_error_test")} {
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_reject_error_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test")} {
         set UVM_TOP ai_accel_subsys_csr_uvm_top
     } else {
         set UVM_TOP ai_accel_subsys_uvm_top
@@ -873,7 +877,9 @@ if {($UVM_TEST eq "ai_accel_csr_regs_smoke_test") ||
               ($UVM_TEST eq "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") ||
               ($UVM_TEST eq "ai_accel_subsys_csr_direct_stream_load_store_smoke_test") ||
               ($UVM_TEST eq "ai_accel_subsys_csr_job_dma_load_store_smoke_test") ||
-              ($UVM_TEST eq "ai_accel_subsys_csr_job_reject_error_test")} {
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_reject_error_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test") ||
+              ($UVM_TEST eq "ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test")} {
     set LOG_BASENAME ${UVM_TEST}_${UVM_TOP}_case_${CASE_ID}_result_${ENABLE_RESULT_CHECK}_${MEM_PATH_MODE}.log
 
 } elseif {$UVM_TEST eq "ai_accel_subsys_back_to_back_test"} {
@@ -936,6 +942,8 @@ set LOG_BASENAME [string map [list \
     "ai_accel_subsys_csr_direct_stream_load_store_smoke_test" "csr_ds_ls_smoke" \
     "ai_accel_subsys_csr_job_dma_load_store_smoke_test" "csr_job_dma_ls" \
     "ai_accel_subsys_csr_job_reject_error_test" "csr_job_reject" \
+    "ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test" "csr_job_axis_ls" \
+    "ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test" "csr_job_ds_ls" \
     "ai_accel_subsys_csr_smoke_test" "csr_subsys_smoke" \
     "ai_accel_csr_regs_uvm_top" "csr_regs_top" \
     "ai_accel_subsys_csr_uvm_top" "aas_csr_top" \

@@ -1917,6 +1917,42 @@ run_reg_item "csr_job_reject_error_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P15E: CSR job-level frontend-mode smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items program one CSR job descriptor with a non-DMA frontend
+# input mode, issue START_JOB, let the hardware job sequencer run
+# AXI-Stream or Direct Stream preload for A/B, GEMM, and DMA store,
+# then compare the DMA destination memory against the software
+# reference.
+# Expected total after P15E: 95.
+# ============================================================
+run_reg_item "csr_job_axis_stream_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_job_direct_stream_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
 # ============================================================
 # Final summary
 # ============================================================
