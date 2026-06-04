@@ -19,7 +19,8 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         .DATA_WIDTH (32)
     ) status_vif_t;
 
-    localparam logic [31:0] CSR_VERSION_VALUE = 32'h0001_0014;
+    localparam logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014;
+    localparam logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015;
     localparam logic [1:0]  AXI_RESP_SLVERR   = 2'b10;
 
     csr_vif_t                    csr_vif;
@@ -67,12 +68,37 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         csr.expect_read32(ai_accel_csr_access_helper::CSR_MODE,                32'h0000_0000,    "CSR_MODE");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,   32'h0000_0000,    "CSR_CMD_REJECT_STATUS");
 
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_VERSION,         CSR_JOB_VERSION_VALUE, "CSR_JOB_VERSION");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_COMMAND,         32'h0000_0000,    "CSR_JOB_COMMAND");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATUS,          32'h0001_0008,    "CSR_JOB_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS,     32'h0000_0000,    "CSR_JOB_DONE_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS,    32'h0000_0000,    "CSR_JOB_ERROR_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_MODE,            32'h0000_0004,    "CSR_JOB_MODE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,   32'h0000_0000,    "CSR_JOB_REJECT_STATUS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATE,           32'h0000_0000,    "CSR_JOB_STATE");
+
         csr.expect_read32(ai_accel_csr_access_helper::CSR_BASE_ADDR_A,         32'h0000_0000,    "CSR_BASE_ADDR_A");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_BASE_ADDR_B,         32'h0000_0100,    "CSR_BASE_ADDR_B");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_BASE_ADDR_C,         32'h0000_0200,    "CSR_BASE_ADDR_C");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DIM_M,               32'h0000_0004,    "CSR_DIM_M");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DIM_N,               32'h0000_0004,    "CSR_DIM_N");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DIM_K,               32'h0000_0004,    "CSR_DIM_K");
+
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_A,      32'h0000_0000,    "CSR_JOB_BASE_ADDR_A");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_B,      32'h0000_0100,    "CSR_JOB_BASE_ADDR_B");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_C,      32'h0000_0200,    "CSR_JOB_BASE_ADDR_C");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_M,            32'h0000_0004,    "CSR_JOB_DIM_M");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_N,            32'h0000_0004,    "CSR_JOB_DIM_N");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_K,            32'h0000_0004,    "CSR_JOB_DIM_K");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_SRC_BASE,       32'h0000_0000,    "CSR_JOB_A_SRC_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_DST_BASE,       32'h0000_0000,    "CSR_JOB_A_DST_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_LOAD_BEATS,     32'h0000_0000,    "CSR_JOB_A_LOAD_BEATS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_SRC_BASE,       32'h0000_0100,    "CSR_JOB_B_SRC_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_DST_BASE,       32'h0000_0100,    "CSR_JOB_B_DST_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_LOAD_BEATS,     32'h0000_0000,    "CSR_JOB_B_LOAD_BEATS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_SRC_BASE,   32'h0000_0200,    "CSR_JOB_STORE_SRC_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_DST_BASE,   32'h0000_0000,    "CSR_JOB_STORE_DST_BASE");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_BYTE_COUNT, 32'h0000_0000,    "CSR_JOB_STORE_BYTE_COUNT");
     end
     endtask
 
@@ -129,6 +155,51 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DMA_STORE_SRC_BASE,   32'h0000_0200, "STORE_SRC");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DMA_STORE_DST_BASE,   32'h0000_3C00, "STORE_DST");
         csr.expect_read32(ai_accel_csr_access_helper::CSR_DMA_STORE_BYTE_COUNT, 32'h0000_0040, "STORE_BYTES");
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // P15 job descriptor read/write register checks
+    // ------------------------------------------------------------
+    task automatic check_job_rw_registers();
+    begin
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'hFFFF_FFFF);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_003F, "CSR_JOB_MODE mask");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_0005);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_0005, "CSR_JOB_MODE DMA load/store");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_A,      32'h0000_0400);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_B,      32'h0000_0800);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_C,      32'h0000_0C00);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DIM_M,            32'h0000_0002);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DIM_N,            32'h0000_0003);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DIM_K,            32'h0000_0004);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_A_SRC_BASE,       32'h0000_1000);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_A_DST_BASE,       32'h0000_0400);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_A_LOAD_BEATS,     32'h0000_0002);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_B_SRC_BASE,       32'h0000_1100);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_B_DST_BASE,       32'h0000_0800);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_B_LOAD_BEATS,     32'h0000_0003);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STORE_SRC_BASE,   32'h0000_0C00);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STORE_DST_BASE,   32'h0000_2000);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STORE_BYTE_COUNT, 32'h0000_0018);
+
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_A,      32'h0000_0400, "JOB_BASE_A");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_B,      32'h0000_0800, "JOB_BASE_B");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_BASE_ADDR_C,      32'h0000_0C00, "JOB_BASE_C");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_M,            32'h0000_0002, "JOB_DIM_M");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_N,            32'h0000_0003, "JOB_DIM_N");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DIM_K,            32'h0000_0004, "JOB_DIM_K");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_SRC_BASE,       32'h0000_1000, "JOB_A_SRC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_DST_BASE,       32'h0000_0400, "JOB_A_DST");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_A_LOAD_BEATS,     32'h0000_0002, "JOB_A_BEATS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_SRC_BASE,       32'h0000_1100, "JOB_B_SRC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_DST_BASE,       32'h0000_0800, "JOB_B_DST");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_B_LOAD_BEATS,     32'h0000_0003, "JOB_B_BEATS");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_SRC_BASE,   32'h0000_0C00, "JOB_STORE_SRC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_DST_BASE,   32'h0000_2000, "JOB_STORE_DST");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STORE_BYTE_COUNT, 32'h0000_0018, "JOB_STORE_BYTES");
     end
     endtask
 
@@ -218,6 +289,114 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
     endtask
 
     // ------------------------------------------------------------
+    // P15 job sticky status / performance snapshot checks
+    // ------------------------------------------------------------
+    task automatic check_job_sticky_status_and_perf();
+    begin
+        status_vif.pulse_job_gemm_done(32'd23, 32'd96, 32'd6);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS,      32'h0000_0002, "JOB_GEMM_DONE sticky");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_BUSY_CYCLES, 32'd23,        "JOB_PERF_BUSY");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_MAC_COUNT,   32'd96,        "JOB_PERF_MAC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_OUTPUT_COUNT,32'd6,         "JOB_PERF_OUT");
+
+        status_vif.pulse_job_done(1'b1);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS, 32'h0000_0007, "JOB done/store sticky");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS, 32'h0000_0007);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS, 32'h0000_0000, "clear job done bits");
+
+        status_vif.pulse_job_errors(1'b1, 1'b1, 1'b1, 1'b1, 1'b1);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, 32'h0000_010F, "JOB error sticky");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, 32'h0000_010F);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, 32'h0000_0000, "clear job error bits");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_PERF,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_BUSY_CYCLES,  32'h0000_0000, "clear JOB_PERF_BUSY");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_MAC_COUNT,    32'h0000_0000, "clear JOB_PERF_MAC");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_PERF_OUTPUT_COUNT, 32'h0000_0000, "clear JOB_PERF_OUT");
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // P15 job command reject checks
+    // ------------------------------------------------------------
+    task automatic check_job_command_rejects();
+    begin
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_0004);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STORE_BYTE_COUNT, 32'h0000_0000);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0040,
+            "zero store length job reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_ERROR,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0000,
+            "clear job reject status");
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_0008);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0004,
+            "unsupported job output mode reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_ERROR,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_MODE, 32'h0000_0000);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DIM_M, 32'h0000_0000);
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0008,
+            "zero dimension job reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_ERROR,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DIM_M, 32'h0000_0002);
+        @(posedge status_vif.clk);
+        status_vif.acc_busy <= 1'b1;
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0002,
+            "micro-op busy job reject");
+        @(posedge status_vif.clk);
+        status_vif.acc_busy <= 1'b0;
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_ERROR,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+
+        @(posedge status_vif.clk);
+        status_vif.job_busy <= 1'b1;
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_START,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0001,
+            "job busy reject");
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::CMD_START_GEMM);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0081,
+            "manual P14 command during job reject");
+        @(posedge status_vif.clk);
+        status_vif.job_busy <= 1'b0;
+
+        csr.issue_command(32'h1 << ai_accel_csr_access_helper::JOB_CMD_CLEAR_ERROR,
+                          ai_accel_csr_access_helper::CSR_JOB_COMMAND);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            32'h0000_0000,
+            "clear job busy/manual reject");
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Live status readback checks
     // ------------------------------------------------------------
     task automatic check_live_status_bits();
@@ -239,6 +418,21 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
         status_vif.dma_store_busy <= 1'b0;
 
         csr.expect_read32(ai_accel_csr_access_helper::CSR_STATUS, 32'h0001_0000, "idle status bits");
+
+        @(posedge status_vif.clk);
+        status_vif.job_busy <= 1'b1;
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATUS, 32'h0001_0001, "job busy status bit");
+
+        @(posedge status_vif.clk);
+        status_vif.job_busy <= 1'b0;
+        status_vif.acc_busy <= 1'b1;
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATUS, 32'h0001_0100, "job micro-op busy status bit");
+
+        @(posedge status_vif.clk);
+        status_vif.acc_busy <= 1'b0;
+        status_vif.job_state <= 32'h0000_0008;
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATE, 32'h0000_0008, "job state readback");
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_JOB_STATUS, 32'h0001_0008, "job idle accept-ready status");
     end
     endtask
 
@@ -254,9 +448,12 @@ class ai_accel_csr_regs_smoke_test extends uvm_test;
 
         check_reset_defaults();
         check_rw_registers();
+        check_job_rw_registers();
         check_invalid_address_responses();
         check_sticky_status_and_perf();
         check_command_rejects();
+        check_job_sticky_status_and_perf();
+        check_job_command_rejects();
         check_live_status_bits();
 
         `uvm_info("CSR_SMOKE",

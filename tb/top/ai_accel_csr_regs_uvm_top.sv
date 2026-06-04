@@ -47,6 +47,25 @@ interface ai_accel_csr_status_if #(
     logic [DATA_WIDTH-1:0] gemm_perf_output_count;
 
     // ------------------------------------------------------------
+    // P15 job-sequencer status inputs to the standalone CSR DUT
+    // ------------------------------------------------------------
+    logic                  job_busy;
+    logic                  job_done;
+    logic                  job_gemm_done;
+    logic                  job_store_done;
+
+    logic                  job_dma_load_error;
+    logic                  job_axis_load_error;
+    logic                  job_ds_load_error;
+    logic                  job_dma_store_error;
+    logic                  job_sequence_error;
+
+    logic [DATA_WIDTH-1:0] job_state;
+    logic [DATA_WIDTH-1:0] job_perf_busy_cycles;
+    logic [DATA_WIDTH-1:0] job_perf_mac_count;
+    logic [DATA_WIDTH-1:0] job_perf_output_count;
+
+    // ------------------------------------------------------------
     // Initialize all DUT status inputs
     // ------------------------------------------------------------
     task automatic init_status_inputs();
@@ -73,6 +92,22 @@ interface ai_accel_csr_status_if #(
         gemm_perf_busy_cycles  = '0;
         gemm_perf_mac_count    = '0;
         gemm_perf_output_count = '0;
+
+        job_busy            = 1'b0;
+        job_done            = 1'b0;
+        job_gemm_done       = 1'b0;
+        job_store_done      = 1'b0;
+
+        job_dma_load_error  = 1'b0;
+        job_axis_load_error = 1'b0;
+        job_ds_load_error   = 1'b0;
+        job_dma_store_error = 1'b0;
+        job_sequence_error  = 1'b0;
+
+        job_state             = '0;
+        job_perf_busy_cycles  = '0;
+        job_perf_mac_count    = '0;
+        job_perf_output_count = '0;
     end
     endtask
 
@@ -144,6 +179,59 @@ interface ai_accel_csr_status_if #(
     end
     endtask
 
+    task automatic pulse_job_gemm_done(
+        input logic [DATA_WIDTH-1:0] busy_cycles,
+        input logic [DATA_WIDTH-1:0] mac_count,
+        input logic [DATA_WIDTH-1:0] output_count
+    );
+    begin
+        @(posedge clk);
+        job_perf_busy_cycles  <= busy_cycles;
+        job_perf_mac_count    <= mac_count;
+        job_perf_output_count <= output_count;
+        job_gemm_done         <= 1'b1;
+
+        @(posedge clk);
+        job_gemm_done         <= 1'b0;
+    end
+    endtask
+
+    task automatic pulse_job_done(input bit with_store_done = 1'b1);
+    begin
+        @(posedge clk);
+        job_done       <= 1'b1;
+        job_store_done <= with_store_done;
+
+        @(posedge clk);
+        job_done       <= 1'b0;
+        job_store_done <= 1'b0;
+    end
+    endtask
+
+    task automatic pulse_job_errors(
+        input bit dma_load_error  = 1'b0,
+        input bit axis_load_error = 1'b0,
+        input bit ds_load_error   = 1'b0,
+        input bit store_error     = 1'b0,
+        input bit sequence_error  = 1'b0
+    );
+    begin
+        @(posedge clk);
+        job_dma_load_error  <= dma_load_error;
+        job_axis_load_error <= axis_load_error;
+        job_ds_load_error   <= ds_load_error;
+        job_dma_store_error <= store_error;
+        job_sequence_error  <= sequence_error;
+
+        @(posedge clk);
+        job_dma_load_error  <= 1'b0;
+        job_axis_load_error <= 1'b0;
+        job_ds_load_error   <= 1'b0;
+        job_dma_store_error <= 1'b0;
+        job_sequence_error  <= 1'b0;
+    end
+    endtask
+
 endinterface
 
 `endif
@@ -160,7 +248,8 @@ module ai_accel_csr_regs_uvm_top;
     localparam int CSR_ADDR_WIDTH = 12;
     localparam int CSR_DATA_WIDTH = 32;
 
-    localparam logic [31:0] CSR_VERSION_VALUE = 32'h0001_0014;
+    localparam logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014;
+    localparam logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015;
 
     // ============================================================
     // Clock / reset
@@ -202,9 +291,10 @@ module ai_accel_csr_regs_uvm_top;
     ai_accel_csr_regs #(
         .ADDR_WIDTH        (ADDR_WIDTH),
         .GEMM_DIM_WIDTH    (GEMM_DIM_WIDTH),
-        .CSR_ADDR_WIDTH    (CSR_ADDR_WIDTH),
-        .CSR_DATA_WIDTH    (CSR_DATA_WIDTH),
-        .CSR_VERSION_VALUE (CSR_VERSION_VALUE)
+        .CSR_ADDR_WIDTH        (CSR_ADDR_WIDTH),
+        .CSR_DATA_WIDTH        (CSR_DATA_WIDTH),
+        .CSR_VERSION_VALUE     (CSR_VERSION_VALUE),
+        .CSR_JOB_VERSION_VALUE (CSR_JOB_VERSION_VALUE)
     ) u_csr_regs (
         .clk                    (clk),
         .rst_n                  (rst_n),
@@ -243,6 +333,52 @@ module ai_accel_csr_regs_uvm_top;
         .dma_store_src_base_addr(),
         .dma_store_dst_base_addr(),
         .dma_store_byte_count   (),
+
+        .job_start_pulse        (),
+        .job_clear_done_pulse   (),
+        .job_clear_error_pulse  (),
+        .job_clear_perf_pulse   (),
+
+        .job_input_mode         (),
+        .job_output_mode        (),
+        .job_accumulate_enable  (),
+        .job_clear_p14_sticky_on_start(),
+
+        .job_base_addr_a        (),
+        .job_base_addr_b        (),
+        .job_base_addr_c        (),
+
+        .job_dim_m              (),
+        .job_dim_n              (),
+        .job_dim_k              (),
+
+        .job_a_src_base_addr    (),
+        .job_a_dst_base_addr    (),
+        .job_a_load_beats       (),
+
+        .job_b_src_base_addr    (),
+        .job_b_dst_base_addr    (),
+        .job_b_load_beats       (),
+
+        .job_store_src_base_addr(),
+        .job_store_dst_base_addr(),
+        .job_store_byte_count   (),
+
+        .job_busy               (status_if.job_busy),
+        .job_done               (status_if.job_done),
+        .job_gemm_done          (status_if.job_gemm_done),
+        .job_store_done         (status_if.job_store_done),
+
+        .job_dma_load_error     (status_if.job_dma_load_error),
+        .job_axis_load_error    (status_if.job_axis_load_error),
+        .job_ds_load_error      (status_if.job_ds_load_error),
+        .job_dma_store_error    (status_if.job_dma_store_error),
+        .job_sequence_error     (status_if.job_sequence_error),
+
+        .job_state              (status_if.job_state),
+        .job_perf_busy_cycles   (status_if.job_perf_busy_cycles),
+        .job_perf_mac_count     (status_if.job_perf_mac_count),
+        .job_perf_output_count  (status_if.job_perf_output_count),
 
         .acc_busy               (status_if.acc_busy),
         .acc_done               (status_if.acc_done),

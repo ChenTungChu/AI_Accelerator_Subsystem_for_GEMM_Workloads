@@ -1861,6 +1861,63 @@ run_reg_item "csr_direct_stream_load_store_case102" {
 }
 
 # ============================================================
+# P15C: CSR job-level DMA load + GEMM + DMA store smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items program one CSR job descriptor, issue START_JOB, let the
+# hardware job sequencer run DMA load A, DMA load B, GEMM, and
+# DMA store, then compare the DMA destination memory against the
+# software reference.
+# Expected total after P15C: 92.
+# ============================================================
+run_reg_item "csr_job_dma_load_store_case100" {
+    set UVM_TEST ai_accel_subsys_csr_job_dma_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 100
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_job_dma_load_store_case102" {
+    set UVM_TEST ai_accel_subsys_csr_job_dma_load_store_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+
+# ============================================================
+# P15D: CSR job reject / busy / clear handling smoke
+#
+# The CSR-wrapper subsystem top is selected explicitly.  This
+# item validates job-level descriptor reject conditions, START_JOB
+# while job_busy, P14 manual command reject during a P15 job, sticky
+# reject status, cleanup commands, and a valid job completion after
+# benign reject injection.
+# Expected total after P15D: 93.
+# ============================================================
+run_reg_item "csr_job_reject_error_case102" {
+    set UVM_TEST ai_accel_subsys_csr_job_reject_error_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"

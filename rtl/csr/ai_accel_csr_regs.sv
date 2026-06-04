@@ -9,7 +9,8 @@ module ai_accel_csr_regs #(
     parameter int CSR_ADDR_WIDTH  = 12,
     parameter int CSR_DATA_WIDTH  = 32,
 
-    parameter logic [31:0] CSR_VERSION_VALUE = 32'h0001_0014
+    parameter logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014,
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015
 )(
     input  logic clk,
     input  logic rst_n,
@@ -63,6 +64,58 @@ module ai_accel_csr_regs #(
     output logic [ADDR_WIDTH-1:0] dma_store_src_base_addr,
     output logic [ADDR_WIDTH-1:0] dma_store_dst_base_addr,
     output logic [31:0]           dma_store_byte_count,
+
+    // ------------------------------------------------------------
+    // P15 job descriptor / sequencer control outputs
+    // ------------------------------------------------------------
+    output logic                  job_start_pulse,
+    output logic                  job_clear_done_pulse,
+    output logic                  job_clear_error_pulse,
+    output logic                  job_clear_perf_pulse,
+
+    output logic [1:0]            job_input_mode,
+    output logic [1:0]            job_output_mode,
+    output logic                  job_accumulate_enable,
+    output logic                  job_clear_p14_sticky_on_start,
+
+    output logic [ADDR_WIDTH-1:0] job_base_addr_a,
+    output logic [ADDR_WIDTH-1:0] job_base_addr_b,
+    output logic [ADDR_WIDTH-1:0] job_base_addr_c,
+
+    output logic [GEMM_DIM_WIDTH-1:0] job_dim_m,
+    output logic [GEMM_DIM_WIDTH-1:0] job_dim_n,
+    output logic [GEMM_DIM_WIDTH-1:0] job_dim_k,
+
+    output logic [ADDR_WIDTH-1:0] job_a_src_base_addr,
+    output logic [ADDR_WIDTH-1:0] job_a_dst_base_addr,
+    output logic [31:0]           job_a_load_beats,
+
+    output logic [ADDR_WIDTH-1:0] job_b_src_base_addr,
+    output logic [ADDR_WIDTH-1:0] job_b_dst_base_addr,
+    output logic [31:0]           job_b_load_beats,
+
+    output logic [ADDR_WIDTH-1:0] job_store_src_base_addr,
+    output logic [ADDR_WIDTH-1:0] job_store_dst_base_addr,
+    output logic [31:0]           job_store_byte_count,
+
+    // ------------------------------------------------------------
+    // Live status inputs from the future P15 job sequencer
+    // ------------------------------------------------------------
+    input  logic                  job_busy,
+    input  logic                  job_done,
+    input  logic                  job_gemm_done,
+    input  logic                  job_store_done,
+
+    input  logic                  job_dma_load_error,
+    input  logic                  job_axis_load_error,
+    input  logic                  job_ds_load_error,
+    input  logic                  job_dma_store_error,
+    input  logic                  job_sequence_error,
+
+    input  logic [31:0]           job_state,
+    input  logic [31:0]           job_perf_busy_cycles,
+    input  logic [31:0]           job_perf_mac_count,
+    input  logic [31:0]           job_perf_output_count,
 
     // ------------------------------------------------------------
     // Live status inputs from the existing subsystem
@@ -149,6 +202,42 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_PERF_OUTPUT_COUNT_ADDR    = 12'h088;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_RESERVED_08C_ADDR         = 12'h08C;
 
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_VERSION_ADDR          = 12'h100;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_COMMAND_ADDR          = 12'h104;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_STATUS_ADDR           = 12'h108;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_DONE_STATUS_ADDR      = 12'h10C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_ERROR_STATUS_ADDR     = 12'h110;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_MODE_ADDR             = 12'h114;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_REJECT_STATUS_ADDR    = 12'h118;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_STATE_ADDR            = 12'h11C;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_BASE_ADDR_A_ADDR      = 12'h120;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_BASE_ADDR_B_ADDR      = 12'h124;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_BASE_ADDR_C_ADDR      = 12'h128;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_DIM_M_ADDR            = 12'h12C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_DIM_N_ADDR            = 12'h130;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_DIM_K_ADDR            = 12'h134;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_A_SRC_BASE_ADDR       = 12'h138;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_A_DST_BASE_ADDR       = 12'h13C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_A_LOAD_BEATS_ADDR     = 12'h140;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_RESERVED_144_ADDR     = 12'h144;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_B_SRC_BASE_ADDR       = 12'h148;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_B_DST_BASE_ADDR       = 12'h14C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_B_LOAD_BEATS_ADDR     = 12'h150;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_RESERVED_154_ADDR     = 12'h154;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_STORE_SRC_BASE_ADDR   = 12'h158;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_STORE_DST_BASE_ADDR   = 12'h15C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_STORE_BYTE_COUNT_ADDR = 12'h160;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_RESERVED_164_ADDR     = 12'h164;
+
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_PERF_BUSY_CYCLES_ADDR = 12'h180;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_PERF_MAC_COUNT_ADDR   = 12'h184;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_PERF_OUTPUT_COUNT_ADDR= 12'h188;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_JOB_RESERVED_18C_ADDR     = 12'h18C;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -185,6 +274,45 @@ module ai_accel_csr_regs #(
     localparam int REJ_DMA_STORE_BUSY_BIT = 4;
     localparam int REJ_UNSUPPORTED_BIT    = 8;
     localparam int REJ_ZERO_LENGTH_BIT    = 9;
+
+    // ------------------------------------------------------------
+    // P15 job command / sticky status bit positions
+    // ------------------------------------------------------------
+    localparam int JOB_CMD_START_BIT       = 0;
+    localparam int JOB_CMD_CLEAR_DONE_BIT  = 8;
+    localparam int JOB_CMD_CLEAR_ERROR_BIT = 9;
+    localparam int JOB_CMD_CLEAR_PERF_BIT  = 10;
+
+    localparam int JOB_DONE_BIT       = 0;
+    localparam int JOB_GEMM_DONE_BIT  = 1;
+    localparam int JOB_STORE_DONE_BIT = 2;
+
+    localparam int JOB_ERR_DMA_LOAD_BIT       = 0;
+    localparam int JOB_ERR_AXIS_LOAD_BIT      = 1;
+    localparam int JOB_ERR_DS_LOAD_BIT        = 2;
+    localparam int JOB_ERR_DMA_STORE_BIT      = 3;
+    localparam int JOB_ERR_GEMM_RSVD_BIT      = 4;
+    localparam int JOB_ERR_SEQUENCE_BIT       = 8;
+
+    localparam int JOB_REJ_BUSY_BIT           = 0;
+    localparam int JOB_REJ_MICRO_OP_BUSY_BIT  = 1;
+    localparam int JOB_REJ_UNSUPPORTED_MODE   = 2;
+    localparam int JOB_REJ_ZERO_DIM_BIT       = 3;
+    localparam int JOB_REJ_ZERO_A_LENGTH_BIT  = 4;
+    localparam int JOB_REJ_ZERO_B_LENGTH_BIT  = 5;
+    localparam int JOB_REJ_ZERO_STORE_LEN_BIT = 6;
+    localparam int JOB_REJ_MANUAL_CMD_BIT     = 7;
+    localparam int JOB_REJ_UNSUPPORTED_COMBO  = 8;
+
+    localparam logic [1:0] JOB_INPUT_HOST_PRELOADED = 2'd0;
+    localparam logic [1:0] JOB_INPUT_DMA_LOAD       = 2'd1;
+    localparam logic [1:0] JOB_INPUT_AXIS_PRELOAD   = 2'd2;
+    localparam logic [1:0] JOB_INPUT_DIRECT_STREAM  = 2'd3;
+
+    localparam logic [1:0] JOB_OUTPUT_HOST_READBACK = 2'd0;
+    localparam logic [1:0] JOB_OUTPUT_DMA_STORE     = 2'd1;
+
+    localparam logic [31:0] JOB_MODE_MASK = 32'h0000_003F;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -257,6 +385,36 @@ module ai_accel_csr_regs #(
     logic [31:0] perf_mac_count_q;
     logic [31:0] perf_output_count_q;
 
+    logic [31:0] job_mode_q;
+
+    logic [31:0] job_base_addr_a_q;
+    logic [31:0] job_base_addr_b_q;
+    logic [31:0] job_base_addr_c_q;
+
+    logic [31:0] job_dim_m_q;
+    logic [31:0] job_dim_n_q;
+    logic [31:0] job_dim_k_q;
+
+    logic [31:0] job_a_src_base_q;
+    logic [31:0] job_a_dst_base_q;
+    logic [31:0] job_a_load_beats_q;
+
+    logic [31:0] job_b_src_base_q;
+    logic [31:0] job_b_dst_base_q;
+    logic [31:0] job_b_load_beats_q;
+
+    logic [31:0] job_store_src_base_q;
+    logic [31:0] job_store_dst_base_q;
+    logic [31:0] job_store_byte_count_q;
+
+    logic [31:0] job_done_status_q;
+    logic [31:0] job_error_status_q;
+    logic [31:0] job_reject_status_q;
+
+    logic [31:0] job_perf_busy_cycles_q;
+    logic [31:0] job_perf_mac_count_q;
+    logic [31:0] job_perf_output_count_q;
+
     // ------------------------------------------------------------
     // Internal command decode helpers
     // ------------------------------------------------------------
@@ -267,7 +425,17 @@ module ai_accel_csr_regs #(
     logic        command_multi_start;
     logic        command_unsupported_combo;
 
+    logic [31:0] job_command_masked;
+    logic        job_command_has_active_strobe;
+    logic        job_command_has_start;
+    logic        job_command_unsupported_combo;
+
     logic [31:0] status_read_data;
+    logic [31:0] job_status_read_data;
+    logic        micro_op_busy;
+    logic        job_preload_required;
+    logic        job_store_required;
+    logic        job_output_mode_supported;
 
     // ------------------------------------------------------------
     // Parameter sanity
@@ -383,7 +551,43 @@ module ai_accel_csr_regs #(
             CSR_PERF_BUSY_CYCLES_ADDR,
             CSR_PERF_MAC_COUNT_ADDR,
             CSR_PERF_OUTPUT_COUNT_ADDR,
-            CSR_RESERVED_08C_ADDR: begin
+            CSR_RESERVED_08C_ADDR,
+
+            CSR_JOB_VERSION_ADDR,
+            CSR_JOB_COMMAND_ADDR,
+            CSR_JOB_STATUS_ADDR,
+            CSR_JOB_DONE_STATUS_ADDR,
+            CSR_JOB_ERROR_STATUS_ADDR,
+            CSR_JOB_MODE_ADDR,
+            CSR_JOB_REJECT_STATUS_ADDR,
+            CSR_JOB_STATE_ADDR,
+
+            CSR_JOB_BASE_ADDR_A_ADDR,
+            CSR_JOB_BASE_ADDR_B_ADDR,
+            CSR_JOB_BASE_ADDR_C_ADDR,
+            CSR_JOB_DIM_M_ADDR,
+            CSR_JOB_DIM_N_ADDR,
+            CSR_JOB_DIM_K_ADDR,
+
+            CSR_JOB_A_SRC_BASE_ADDR,
+            CSR_JOB_A_DST_BASE_ADDR,
+            CSR_JOB_A_LOAD_BEATS_ADDR,
+            CSR_JOB_RESERVED_144_ADDR,
+
+            CSR_JOB_B_SRC_BASE_ADDR,
+            CSR_JOB_B_DST_BASE_ADDR,
+            CSR_JOB_B_LOAD_BEATS_ADDR,
+            CSR_JOB_RESERVED_154_ADDR,
+
+            CSR_JOB_STORE_SRC_BASE_ADDR,
+            CSR_JOB_STORE_DST_BASE_ADDR,
+            CSR_JOB_STORE_BYTE_COUNT_ADDR,
+            CSR_JOB_RESERVED_164_ADDR,
+
+            CSR_JOB_PERF_BUSY_CYCLES_ADDR,
+            CSR_JOB_PERF_MAC_COUNT_ADDR,
+            CSR_JOB_PERF_OUTPUT_COUNT_ADDR,
+            CSR_JOB_RESERVED_18C_ADDR: begin
                 return 1'b1;
             end
 
@@ -515,6 +719,110 @@ module ai_accel_csr_regs #(
                 return perf_output_count_q;
             end
 
+            CSR_JOB_VERSION_ADDR: begin
+                return CSR_JOB_VERSION_VALUE;
+            end
+
+            CSR_JOB_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_JOB_STATUS_ADDR: begin
+                return job_status_read_data;
+            end
+
+            CSR_JOB_DONE_STATUS_ADDR: begin
+                return job_done_status_q;
+            end
+
+            CSR_JOB_ERROR_STATUS_ADDR: begin
+                return job_error_status_q;
+            end
+
+            CSR_JOB_MODE_ADDR: begin
+                return job_mode_q;
+            end
+
+            CSR_JOB_REJECT_STATUS_ADDR: begin
+                return job_reject_status_q;
+            end
+
+            CSR_JOB_STATE_ADDR: begin
+                return job_state;
+            end
+
+            CSR_JOB_BASE_ADDR_A_ADDR: begin
+                return job_base_addr_a_q;
+            end
+
+            CSR_JOB_BASE_ADDR_B_ADDR: begin
+                return job_base_addr_b_q;
+            end
+
+            CSR_JOB_BASE_ADDR_C_ADDR: begin
+                return job_base_addr_c_q;
+            end
+
+            CSR_JOB_DIM_M_ADDR: begin
+                return job_dim_m_q;
+            end
+
+            CSR_JOB_DIM_N_ADDR: begin
+                return job_dim_n_q;
+            end
+
+            CSR_JOB_DIM_K_ADDR: begin
+                return job_dim_k_q;
+            end
+
+            CSR_JOB_A_SRC_BASE_ADDR: begin
+                return job_a_src_base_q;
+            end
+
+            CSR_JOB_A_DST_BASE_ADDR: begin
+                return job_a_dst_base_q;
+            end
+
+            CSR_JOB_A_LOAD_BEATS_ADDR: begin
+                return job_a_load_beats_q;
+            end
+
+            CSR_JOB_B_SRC_BASE_ADDR: begin
+                return job_b_src_base_q;
+            end
+
+            CSR_JOB_B_DST_BASE_ADDR: begin
+                return job_b_dst_base_q;
+            end
+
+            CSR_JOB_B_LOAD_BEATS_ADDR: begin
+                return job_b_load_beats_q;
+            end
+
+            CSR_JOB_STORE_SRC_BASE_ADDR: begin
+                return job_store_src_base_q;
+            end
+
+            CSR_JOB_STORE_DST_BASE_ADDR: begin
+                return job_store_dst_base_q;
+            end
+
+            CSR_JOB_STORE_BYTE_COUNT_ADDR: begin
+                return job_store_byte_count_q;
+            end
+
+            CSR_JOB_PERF_BUSY_CYCLES_ADDR: begin
+                return job_perf_busy_cycles_q;
+            end
+
+            CSR_JOB_PERF_MAC_COUNT_ADDR: begin
+                return job_perf_mac_count_q;
+            end
+
+            CSR_JOB_PERF_OUTPUT_COUNT_ADDR: begin
+                return job_perf_output_count_q;
+            end
+
             default: begin
                 return 32'h0000_0000;
             end
@@ -544,6 +852,16 @@ module ai_accel_csr_regs #(
     // Live status readback composition
     // ------------------------------------------------------------
     always_comb begin
+        micro_op_busy = acc_busy        |
+                        dma_load_busy   |
+                        axis_load_busy  |
+                        ds_load_busy    |
+                        dma_store_busy;
+
+        job_preload_required      = (job_mode_q[1:0] != JOB_INPUT_HOST_PRELOADED);
+        job_store_required        = (job_mode_q[3:2] == JOB_OUTPUT_DMA_STORE);
+        job_output_mode_supported = (job_mode_q[3:2] <= JOB_OUTPUT_DMA_STORE);
+
         status_read_data = 32'h0000_0000;
 
         status_read_data[0]  = acc_busy;
@@ -552,15 +870,19 @@ module ai_accel_csr_regs #(
         status_read_data[3]  = ds_load_busy;
         status_read_data[4]  = dma_store_busy;
 
-        status_read_data[8]  = acc_busy        |
-                               dma_load_busy   |
-                               axis_load_busy  |
-                               ds_load_busy    |
-                               dma_store_busy;
+        status_read_data[8]  = micro_op_busy;
 
         status_read_data[12] = |done_status_q;
         status_read_data[13] = (|error_status_q) | (|reject_status_q);
         status_read_data[16] = 1'b1;
+
+        job_status_read_data = 32'h0000_0000;
+        job_status_read_data[0]  = job_busy;
+        job_status_read_data[1]  = |job_done_status_q;
+        job_status_read_data[2]  = (|job_error_status_q) | (|job_reject_status_q);
+        job_status_read_data[3]  = !job_busy && !micro_op_busy;
+        job_status_read_data[8]  = micro_op_busy;
+        job_status_read_data[16] = 1'b1;
     end
 
     // ------------------------------------------------------------
@@ -610,6 +932,14 @@ module ai_accel_csr_regs #(
                                     (command_has_start &&
                                      command_masked[CMD_CLEAR_ERROR_BIT] &&
                                      ((|error_status_q) || (|reject_status_q)));
+
+        job_command_has_active_strobe = |write_strb;
+        job_command_masked            = write_data & strobe_to_mask(write_strb);
+        job_command_has_start         = job_command_masked[JOB_CMD_START_BIT];
+
+        job_command_unsupported_combo = (job_command_has_start &&
+                                         job_command_masked[JOB_CMD_CLEAR_ERROR_BIT] &&
+                                         ((|job_error_status_q) || (|job_reject_status_q)));
     end
 
     // ------------------------------------------------------------
@@ -666,11 +996,46 @@ module ai_accel_csr_regs #(
             perf_mac_count_q       <= 32'h0000_0000;
             perf_output_count_q    <= 32'h0000_0000;
 
+            job_mode_q             <= 32'h0000_0004;
+
+            job_base_addr_a_q      <= 32'h0000_0000;
+            job_base_addr_b_q      <= 32'h0000_0100;
+            job_base_addr_c_q      <= 32'h0000_0200;
+
+            job_dim_m_q            <= 32'h0000_0004;
+            job_dim_n_q            <= 32'h0000_0004;
+            job_dim_k_q            <= 32'h0000_0004;
+
+            job_a_src_base_q       <= 32'h0000_0000;
+            job_a_dst_base_q       <= 32'h0000_0000;
+            job_a_load_beats_q     <= 32'h0000_0000;
+
+            job_b_src_base_q       <= 32'h0000_0100;
+            job_b_dst_base_q       <= 32'h0000_0100;
+            job_b_load_beats_q     <= 32'h0000_0000;
+
+            job_store_src_base_q   <= 32'h0000_0200;
+            job_store_dst_base_q   <= 32'h0000_0000;
+            job_store_byte_count_q <= 32'h0000_0000;
+
+            job_done_status_q      <= 32'h0000_0000;
+            job_error_status_q     <= 32'h0000_0000;
+            job_reject_status_q    <= 32'h0000_0000;
+
+            job_perf_busy_cycles_q  <= 32'h0000_0000;
+            job_perf_mac_count_q    <= 32'h0000_0000;
+            job_perf_output_count_q <= 32'h0000_0000;
+
             acc_start_pulse        <= 1'b0;
             dma_load_start_pulse   <= 1'b0;
             axis_load_start_pulse  <= 1'b0;
             ds_load_start_pulse    <= 1'b0;
             dma_store_start_pulse  <= 1'b0;
+
+            job_start_pulse        <= 1'b0;
+            job_clear_done_pulse   <= 1'b0;
+            job_clear_error_pulse  <= 1'b0;
+            job_clear_perf_pulse   <= 1'b0;
         end
         else begin
             acc_start_pulse       <= 1'b0;
@@ -678,6 +1043,11 @@ module ai_accel_csr_regs #(
             axis_load_start_pulse <= 1'b0;
             ds_load_start_pulse   <= 1'b0;
             dma_store_start_pulse <= 1'b0;
+
+            job_start_pulse       <= 1'b0;
+            job_clear_done_pulse  <= 1'b0;
+            job_clear_error_pulse <= 1'b0;
+            job_clear_perf_pulse  <= 1'b0;
 
             // Sticky completion and error capture.
             if (acc_done) begin
@@ -718,6 +1088,42 @@ module ai_accel_csr_regs #(
 
             if (dma_store_error) begin
                 error_status_q[ERR_DMA_STORE_BIT] <= 1'b1;
+            end
+
+            if (job_done) begin
+                job_done_status_q[JOB_DONE_BIT] <= 1'b1;
+            end
+
+            if (job_gemm_done) begin
+                job_done_status_q[JOB_GEMM_DONE_BIT] <= 1'b1;
+
+                job_perf_busy_cycles_q  <= job_perf_busy_cycles;
+                job_perf_mac_count_q    <= job_perf_mac_count;
+                job_perf_output_count_q <= job_perf_output_count;
+            end
+
+            if (job_store_done) begin
+                job_done_status_q[JOB_STORE_DONE_BIT] <= 1'b1;
+            end
+
+            if (job_dma_load_error) begin
+                job_error_status_q[JOB_ERR_DMA_LOAD_BIT] <= 1'b1;
+            end
+
+            if (job_axis_load_error) begin
+                job_error_status_q[JOB_ERR_AXIS_LOAD_BIT] <= 1'b1;
+            end
+
+            if (job_ds_load_error) begin
+                job_error_status_q[JOB_ERR_DS_LOAD_BIT] <= 1'b1;
+            end
+
+            if (job_dma_store_error) begin
+                job_error_status_q[JOB_ERR_DMA_STORE_BIT] <= 1'b1;
+            end
+
+            if (job_sequence_error) begin
+                job_error_status_q[JOB_ERR_SEQUENCE_BIT] <= 1'b1;
             end
 
             // Capture write address/data channels independently.
@@ -769,7 +1175,11 @@ module ai_accel_csr_regs #(
                                         perf_output_count_q <= 32'h0000_0000;
                                     end
 
-                                    if (command_masked[CMD_START_GEMM_BIT]) begin
+                                    if (command_has_start && job_busy) begin
+                                        job_reject_status_q[JOB_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                    end
+                                    else begin
+                                        if (command_masked[CMD_START_GEMM_BIT]) begin
                                         if (acc_busy || axis_load_busy || ds_load_busy) begin
                                             reject_status_q[REJ_GEMM_BUSY_BIT] <= 1'b1;
                                         end
@@ -828,6 +1238,69 @@ module ai_accel_csr_regs #(
                                         end
                                         else begin
                                             dma_store_start_pulse <= 1'b1;
+                                        end
+                                    end
+                                    end
+                                end
+                            end
+                        end
+
+                        CSR_JOB_COMMAND_ADDR: begin
+                            if (job_command_has_active_strobe) begin
+                                if (job_command_unsupported_combo) begin
+                                    job_reject_status_q[JOB_REJ_UNSUPPORTED_COMBO] <= 1'b1;
+                                end
+                                else begin
+                                    if (job_command_masked[JOB_CMD_CLEAR_DONE_BIT]) begin
+                                        job_done_status_q <= 32'h0000_0000;
+                                        job_clear_done_pulse <= 1'b1;
+                                    end
+
+                                    if (job_command_masked[JOB_CMD_CLEAR_ERROR_BIT]) begin
+                                        job_error_status_q  <= 32'h0000_0000;
+                                        job_reject_status_q <= 32'h0000_0000;
+                                        job_clear_error_pulse <= 1'b1;
+                                    end
+
+                                    if (job_command_masked[JOB_CMD_CLEAR_PERF_BIT]) begin
+                                        job_perf_busy_cycles_q  <= 32'h0000_0000;
+                                        job_perf_mac_count_q    <= 32'h0000_0000;
+                                        job_perf_output_count_q <= 32'h0000_0000;
+                                        job_clear_perf_pulse <= 1'b1;
+                                    end
+
+                                    if (job_command_masked[JOB_CMD_START_BIT]) begin
+                                        if (job_busy) begin
+                                            job_reject_status_q[JOB_REJ_BUSY_BIT] <= 1'b1;
+                                        end
+                                        else if (micro_op_busy) begin
+                                            job_reject_status_q[JOB_REJ_MICRO_OP_BUSY_BIT] <= 1'b1;
+                                        end
+                                        else if (!job_output_mode_supported) begin
+                                            job_reject_status_q[JOB_REJ_UNSUPPORTED_MODE] <= 1'b1;
+                                        end
+                                        else if ((job_dim_m_q == 32'h0000_0000) ||
+                                                 (job_dim_n_q == 32'h0000_0000) ||
+                                                 (job_dim_k_q == 32'h0000_0000)) begin
+                                            job_reject_status_q[JOB_REJ_ZERO_DIM_BIT] <= 1'b1;
+                                        end
+                                        else if (job_preload_required &&
+                                                 (job_a_load_beats_q == 32'h0000_0000)) begin
+                                            job_reject_status_q[JOB_REJ_ZERO_A_LENGTH_BIT] <= 1'b1;
+                                        end
+                                        else if (job_preload_required &&
+                                                 (job_b_load_beats_q == 32'h0000_0000)) begin
+                                            job_reject_status_q[JOB_REJ_ZERO_B_LENGTH_BIT] <= 1'b1;
+                                        end
+                                        else if (job_store_required &&
+                                                 (job_store_byte_count_q == 32'h0000_0000)) begin
+                                            job_reject_status_q[JOB_REJ_ZERO_STORE_LEN_BIT] <= 1'b1;
+                                        end
+                                        else begin
+                                            job_done_status_q   <= 32'h0000_0000;
+                                            job_error_status_q  <= 32'h0000_0000;
+                                            job_reject_status_q <= 32'h0000_0000;
+                                            job_start_pulse     <= 1'b1;
                                         end
                                     end
                                 end
@@ -940,6 +1413,95 @@ module ai_accel_csr_regs #(
                             dma_store_byte_count_q <= apply_wstrb32(dma_store_byte_count_q, write_data, write_strb);
                         end
 
+                        CSR_JOB_DONE_STATUS_ADDR: begin
+                            job_done_status_q <= job_done_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_JOB_ERROR_STATUS_ADDR: begin
+                            job_error_status_q <= job_error_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_JOB_MODE_ADDR: begin
+                            job_mode_q <= apply_wstrb32(job_mode_q, write_data, write_strb) &
+                                          JOB_MODE_MASK;
+                        end
+
+                        CSR_JOB_REJECT_STATUS_ADDR: begin
+                            job_reject_status_q <= job_reject_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                        end
+
+                        CSR_JOB_BASE_ADDR_A_ADDR: begin
+                            job_base_addr_a_q <= apply_wstrb32(job_base_addr_a_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_BASE_ADDR_B_ADDR: begin
+                            job_base_addr_b_q <= apply_wstrb32(job_base_addr_b_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_BASE_ADDR_C_ADDR: begin
+                            job_base_addr_c_q <= apply_wstrb32(job_base_addr_c_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_DIM_M_ADDR: begin
+                            job_dim_m_q <= apply_wstrb32(job_dim_m_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_DIM_N_ADDR: begin
+                            job_dim_n_q <= apply_wstrb32(job_dim_n_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_DIM_K_ADDR: begin
+                            job_dim_k_q <= apply_wstrb32(job_dim_k_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_A_SRC_BASE_ADDR: begin
+                            job_a_src_base_q <= apply_wstrb32(job_a_src_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_A_DST_BASE_ADDR: begin
+                            job_a_dst_base_q <= apply_wstrb32(job_a_dst_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_A_LOAD_BEATS_ADDR: begin
+                            job_a_load_beats_q <= apply_wstrb32(job_a_load_beats_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_B_SRC_BASE_ADDR: begin
+                            job_b_src_base_q <= apply_wstrb32(job_b_src_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_B_DST_BASE_ADDR: begin
+                            job_b_dst_base_q <= apply_wstrb32(job_b_dst_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_B_LOAD_BEATS_ADDR: begin
+                            job_b_load_beats_q <= apply_wstrb32(job_b_load_beats_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_STORE_SRC_BASE_ADDR: begin
+                            job_store_src_base_q <= apply_wstrb32(job_store_src_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_STORE_DST_BASE_ADDR: begin
+                            job_store_dst_base_q <= apply_wstrb32(job_store_dst_base_q, write_data, write_strb);
+                        end
+
+                        CSR_JOB_STORE_BYTE_COUNT_ADDR: begin
+                            job_store_byte_count_q <= apply_wstrb32(job_store_byte_count_q, write_data, write_strb);
+                        end
+
                         default: begin
                             // RO and reserved registers ignore valid writes.
                         end
@@ -989,6 +1551,31 @@ module ai_accel_csr_regs #(
     assign dma_store_src_base_addr = dma_store_src_base_q[ADDR_WIDTH-1:0];
     assign dma_store_dst_base_addr = dma_store_dst_base_q[ADDR_WIDTH-1:0];
     assign dma_store_byte_count    = dma_store_byte_count_q;
+
+    assign job_input_mode                = job_mode_q[1:0];
+    assign job_output_mode               = job_mode_q[3:2];
+    assign job_accumulate_enable         = job_mode_q[4];
+    assign job_clear_p14_sticky_on_start = job_mode_q[5];
+
+    assign job_base_addr_a = job_base_addr_a_q[ADDR_WIDTH-1:0];
+    assign job_base_addr_b = job_base_addr_b_q[ADDR_WIDTH-1:0];
+    assign job_base_addr_c = job_base_addr_c_q[ADDR_WIDTH-1:0];
+
+    assign job_dim_m = job_dim_m_q[GEMM_DIM_WIDTH-1:0];
+    assign job_dim_n = job_dim_n_q[GEMM_DIM_WIDTH-1:0];
+    assign job_dim_k = job_dim_k_q[GEMM_DIM_WIDTH-1:0];
+
+    assign job_a_src_base_addr = job_a_src_base_q[ADDR_WIDTH-1:0];
+    assign job_a_dst_base_addr = job_a_dst_base_q[ADDR_WIDTH-1:0];
+    assign job_a_load_beats    = job_a_load_beats_q;
+
+    assign job_b_src_base_addr = job_b_src_base_q[ADDR_WIDTH-1:0];
+    assign job_b_dst_base_addr = job_b_dst_base_q[ADDR_WIDTH-1:0];
+    assign job_b_load_beats    = job_b_load_beats_q;
+
+    assign job_store_src_base_addr = job_store_src_base_q[ADDR_WIDTH-1:0];
+    assign job_store_dst_base_addr = job_store_dst_base_q[ADDR_WIDTH-1:0];
+    assign job_store_byte_count    = job_store_byte_count_q;
 
 endmodule
 

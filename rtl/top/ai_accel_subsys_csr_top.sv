@@ -42,7 +42,8 @@ module ai_accel_subsys_csr_top #(
 
     parameter int CSR_ADDR_WIDTH = 12,
     parameter int CSR_DATA_WIDTH = 32,
-    parameter logic [31:0] CSR_VERSION_VALUE = 32'h0001_0014
+    parameter logic [31:0] CSR_VERSION_VALUE     = 32'h0001_0014,
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE = 32'h0001_0015
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -210,6 +211,132 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               csr_dma_store_byte_count;
 
     // ============================================================
+    // P15 CSR job descriptor wires
+    //
+    // The CSR block stores a single software-visible job descriptor.
+    // P15C connects these descriptor wires to ai_accel_job_sequencer,
+    // which snapshots them on START_JOB and drives the existing
+    // ai_accel_subsys sideband controls for the active job.
+    // ============================================================
+    logic                      csr_job_start_pulse;
+    logic                      csr_job_clear_done_pulse;
+    logic                      csr_job_clear_error_pulse;
+    logic                      csr_job_clear_perf_pulse;
+
+    logic [1:0]                csr_job_input_mode;
+    logic [1:0]                csr_job_output_mode;
+    logic                      csr_job_accumulate_enable;
+    logic                      csr_job_clear_p14_sticky_on_start;
+
+    logic [ADDR_WIDTH-1:0]     csr_job_base_addr_a;
+    logic [ADDR_WIDTH-1:0]     csr_job_base_addr_b;
+    logic [ADDR_WIDTH-1:0]     csr_job_base_addr_c;
+
+    logic [GEMM_DIM_WIDTH-1:0] csr_job_dim_m;
+    logic [GEMM_DIM_WIDTH-1:0] csr_job_dim_n;
+    logic [GEMM_DIM_WIDTH-1:0] csr_job_dim_k;
+
+    logic [ADDR_WIDTH-1:0]     csr_job_a_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     csr_job_a_dst_base_addr;
+    logic [31:0]               csr_job_a_load_beats;
+
+    logic [ADDR_WIDTH-1:0]     csr_job_b_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     csr_job_b_dst_base_addr;
+    logic [31:0]               csr_job_b_load_beats;
+
+    logic [ADDR_WIDTH-1:0]     csr_job_store_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     csr_job_store_dst_base_addr;
+    logic [31:0]               csr_job_store_byte_count;
+
+    // ============================================================
+    // P15 job sequencer outputs and status
+    // ============================================================
+    logic                      job_acc_start_pulse;
+    logic                      job_gemm_input_stream_mode;
+    logic                      job_accumulate_enable_to_subsys;
+
+    logic [ADDR_WIDTH-1:0]     job_base_addr_a_to_subsys;
+    logic [ADDR_WIDTH-1:0]     job_base_addr_b_to_subsys;
+    logic [ADDR_WIDTH-1:0]     job_base_addr_c_to_subsys;
+
+    logic [GEMM_DIM_WIDTH-1:0] job_dim_m_to_subsys;
+    logic [GEMM_DIM_WIDTH-1:0] job_dim_n_to_subsys;
+    logic [GEMM_DIM_WIDTH-1:0] job_dim_k_to_subsys;
+
+    logic                      job_dma_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     job_dma_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     job_dma_dst_base_addr;
+    logic [31:0]               job_dma_load_beats;
+
+    logic                      job_axis_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     job_axis_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     job_axis_dst_base_addr;
+    logic [31:0]               job_axis_load_beats;
+
+    logic                      job_ds_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     job_ds_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     job_ds_dst_base_addr;
+    logic [31:0]               job_ds_load_beats;
+    logic                      job_ds_operand_sel;
+
+    logic                      job_dma_store_start_pulse;
+    logic [ADDR_WIDTH-1:0]     job_dma_store_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     job_dma_store_dst_base_addr;
+    logic [31:0]               job_dma_store_byte_count;
+
+    logic                      job_busy_i;
+    logic                      job_done_i;
+    logic                      job_gemm_done_i;
+    logic                      job_store_done_i;
+
+    logic                      job_dma_load_error_i;
+    logic                      job_axis_load_error_i;
+    logic                      job_ds_load_error_i;
+    logic                      job_dma_store_error_i;
+    logic                      job_sequence_error_i;
+
+    logic [31:0]               job_state_i;
+    logic [31:0]               job_perf_busy_cycles_i;
+    logic [31:0]               job_perf_mac_count_i;
+    logic [31:0]               job_perf_output_count_i;
+
+    // ============================================================
+    // Muxed control/config wires driven into the existing subsystem
+    // ============================================================
+    logic                      subsys_acc_start_pulse;
+    logic                      subsys_gemm_input_stream_mode;
+    logic                      subsys_accumulate_enable;
+
+    logic [ADDR_WIDTH-1:0]     subsys_base_addr_a;
+    logic [ADDR_WIDTH-1:0]     subsys_base_addr_b;
+    logic [ADDR_WIDTH-1:0]     subsys_base_addr_c;
+
+    logic [GEMM_DIM_WIDTH-1:0] subsys_dim_m;
+    logic [GEMM_DIM_WIDTH-1:0] subsys_dim_n;
+    logic [GEMM_DIM_WIDTH-1:0] subsys_dim_k;
+
+    logic                      subsys_dma_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     subsys_dma_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     subsys_dma_dst_base_addr;
+    logic [31:0]               subsys_dma_load_beats;
+
+    logic                      subsys_axis_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     subsys_axis_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     subsys_axis_dst_base_addr;
+    logic [31:0]               subsys_axis_load_beats;
+
+    logic                      subsys_ds_load_start_pulse;
+    logic [ADDR_WIDTH-1:0]     subsys_ds_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     subsys_ds_dst_base_addr;
+    logic [31:0]               subsys_ds_load_beats;
+    logic                      subsys_ds_operand_sel;
+
+    logic                      subsys_dma_store_start_pulse;
+    logic [ADDR_WIDTH-1:0]     subsys_dma_store_src_base_addr;
+    logic [ADDR_WIDTH-1:0]     subsys_dma_store_dst_base_addr;
+    logic [31:0]               subsys_dma_store_byte_count;
+
+    // ============================================================
     // Existing subsystem status wires
     // ============================================================
     logic                      dma_load_busy_i;
@@ -269,9 +396,10 @@ module ai_accel_subsys_csr_top #(
     ai_accel_csr_regs #(
         .ADDR_WIDTH        (ADDR_WIDTH),
         .GEMM_DIM_WIDTH    (GEMM_DIM_WIDTH),
-        .CSR_ADDR_WIDTH    (CSR_ADDR_WIDTH),
-        .CSR_DATA_WIDTH    (CSR_DATA_WIDTH),
-        .CSR_VERSION_VALUE (CSR_VERSION_VALUE)
+        .CSR_ADDR_WIDTH        (CSR_ADDR_WIDTH),
+        .CSR_DATA_WIDTH        (CSR_DATA_WIDTH),
+        .CSR_VERSION_VALUE     (CSR_VERSION_VALUE),
+        .CSR_JOB_VERSION_VALUE (CSR_JOB_VERSION_VALUE)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
@@ -311,6 +439,52 @@ module ai_accel_subsys_csr_top #(
         .dma_store_dst_base_addr(csr_dma_store_dst_base_addr),
         .dma_store_byte_count   (csr_dma_store_byte_count),
 
+        .job_start_pulse        (csr_job_start_pulse),
+        .job_clear_done_pulse   (csr_job_clear_done_pulse),
+        .job_clear_error_pulse  (csr_job_clear_error_pulse),
+        .job_clear_perf_pulse   (csr_job_clear_perf_pulse),
+
+        .job_input_mode         (csr_job_input_mode),
+        .job_output_mode        (csr_job_output_mode),
+        .job_accumulate_enable  (csr_job_accumulate_enable),
+        .job_clear_p14_sticky_on_start(csr_job_clear_p14_sticky_on_start),
+
+        .job_base_addr_a        (csr_job_base_addr_a),
+        .job_base_addr_b        (csr_job_base_addr_b),
+        .job_base_addr_c        (csr_job_base_addr_c),
+
+        .job_dim_m              (csr_job_dim_m),
+        .job_dim_n              (csr_job_dim_n),
+        .job_dim_k              (csr_job_dim_k),
+
+        .job_a_src_base_addr    (csr_job_a_src_base_addr),
+        .job_a_dst_base_addr    (csr_job_a_dst_base_addr),
+        .job_a_load_beats       (csr_job_a_load_beats),
+
+        .job_b_src_base_addr    (csr_job_b_src_base_addr),
+        .job_b_dst_base_addr    (csr_job_b_dst_base_addr),
+        .job_b_load_beats       (csr_job_b_load_beats),
+
+        .job_store_src_base_addr(csr_job_store_src_base_addr),
+        .job_store_dst_base_addr(csr_job_store_dst_base_addr),
+        .job_store_byte_count   (csr_job_store_byte_count),
+
+        .job_busy               (job_busy_i),
+        .job_done               (job_done_i),
+        .job_gemm_done          (job_gemm_done_i),
+        .job_store_done         (job_store_done_i),
+
+        .job_dma_load_error     (job_dma_load_error_i),
+        .job_axis_load_error    (job_axis_load_error_i),
+        .job_ds_load_error      (job_ds_load_error_i),
+        .job_dma_store_error    (job_dma_store_error_i),
+        .job_sequence_error     (job_sequence_error_i),
+
+        .job_state              (job_state_i),
+        .job_perf_busy_cycles   (job_perf_busy_cycles_i),
+        .job_perf_mac_count     (job_perf_mac_count_i),
+        .job_perf_output_count  (job_perf_output_count_i),
+
         .acc_busy               (acc_busy_i),
         .acc_done               (acc_done_i),
 
@@ -334,6 +508,181 @@ module ai_accel_subsys_csr_top #(
         .gemm_perf_mac_count    (gemm_perf_mac_count_i),
         .gemm_perf_output_count (gemm_perf_output_count_i)
     );
+
+    // ============================================================
+    // P15 single-job sequencer
+    //
+    // The sequencer owns the existing subsystem control/config wires
+    // while a job is active.  When no job is active, the original P14
+    // CSR micro-operation path remains available for debug and for
+    // the existing CSR representative tests.
+    // ============================================================
+    ai_accel_job_sequencer #(
+        .ADDR_WIDTH     (ADDR_WIDTH),
+        .GEMM_DIM_WIDTH (GEMM_DIM_WIDTH)
+    ) u_ai_accel_job_sequencer (
+        .clk                    (dma_clk),
+        .rst_n                  (dma_rst_n),
+
+        .job_start_pulse        (csr_job_start_pulse),
+        .job_clear_done_pulse   (csr_job_clear_done_pulse),
+        .job_clear_error_pulse  (csr_job_clear_error_pulse),
+        .job_clear_perf_pulse   (csr_job_clear_perf_pulse),
+
+        .job_input_mode         (csr_job_input_mode),
+        .job_output_mode        (csr_job_output_mode),
+        .job_accumulate_enable  (csr_job_accumulate_enable),
+
+        .job_base_addr_a        (csr_job_base_addr_a),
+        .job_base_addr_b        (csr_job_base_addr_b),
+        .job_base_addr_c        (csr_job_base_addr_c),
+        .job_dim_m              (csr_job_dim_m),
+        .job_dim_n              (csr_job_dim_n),
+        .job_dim_k              (csr_job_dim_k),
+
+        .job_a_src_base_addr    (csr_job_a_src_base_addr),
+        .job_a_dst_base_addr    (csr_job_a_dst_base_addr),
+        .job_a_load_beats       (csr_job_a_load_beats),
+
+        .job_b_src_base_addr    (csr_job_b_src_base_addr),
+        .job_b_dst_base_addr    (csr_job_b_dst_base_addr),
+        .job_b_load_beats       (csr_job_b_load_beats),
+
+        .job_store_src_base_addr(csr_job_store_src_base_addr),
+        .job_store_dst_base_addr(csr_job_store_dst_base_addr),
+        .job_store_byte_count   (csr_job_store_byte_count),
+
+        .acc_busy               (acc_busy_i),
+        .acc_done               (acc_done_i),
+
+        .dma_load_busy          (dma_load_busy_i),
+        .dma_load_done          (dma_load_done_i),
+        .dma_load_error         (dma_load_error_i),
+
+        .axis_load_busy         (axis_load_busy_i),
+        .axis_load_done         (axis_load_done_i),
+        .axis_load_error        (axis_load_error_i),
+
+        .ds_load_busy           (ds_load_busy_i),
+        .ds_load_done           (ds_load_done_i),
+        .ds_load_error          (ds_load_error_i),
+
+        .dma_store_busy         (dma_store_busy_i),
+        .dma_store_done         (dma_store_done_i),
+        .dma_store_error        (dma_store_error_i),
+
+        .gemm_perf_busy_cycles  (gemm_perf_busy_cycles_i),
+        .gemm_perf_mac_count    (gemm_perf_mac_count_i),
+        .gemm_perf_output_count (gemm_perf_output_count_i),
+
+        .acc_start_pulse        (job_acc_start_pulse),
+        .gemm_input_stream_mode (job_gemm_input_stream_mode),
+        .accumulate_enable      (job_accumulate_enable_to_subsys),
+        .base_addr_a            (job_base_addr_a_to_subsys),
+        .base_addr_b            (job_base_addr_b_to_subsys),
+        .base_addr_c            (job_base_addr_c_to_subsys),
+        .dim_m                  (job_dim_m_to_subsys),
+        .dim_n                  (job_dim_n_to_subsys),
+        .dim_k                  (job_dim_k_to_subsys),
+
+        .dma_load_start_pulse   (job_dma_load_start_pulse),
+        .dma_src_base_addr      (job_dma_src_base_addr),
+        .dma_dst_base_addr      (job_dma_dst_base_addr),
+        .dma_load_beats         (job_dma_load_beats),
+
+        .axis_load_start_pulse  (job_axis_load_start_pulse),
+        .axis_src_base_addr     (job_axis_src_base_addr),
+        .axis_dst_base_addr     (job_axis_dst_base_addr),
+        .axis_load_beats        (job_axis_load_beats),
+
+        .ds_load_start_pulse    (job_ds_load_start_pulse),
+        .ds_src_base_addr       (job_ds_src_base_addr),
+        .ds_dst_base_addr       (job_ds_dst_base_addr),
+        .ds_load_beats          (job_ds_load_beats),
+        .ds_operand_sel         (job_ds_operand_sel),
+
+        .dma_store_start_pulse  (job_dma_store_start_pulse),
+        .dma_store_src_base_addr(job_dma_store_src_base_addr),
+        .dma_store_dst_base_addr(job_dma_store_dst_base_addr),
+        .dma_store_byte_count   (job_dma_store_byte_count),
+
+        .job_busy               (job_busy_i),
+        .job_done               (job_done_i),
+        .job_gemm_done          (job_gemm_done_i),
+        .job_store_done         (job_store_done_i),
+
+        .job_dma_load_error     (job_dma_load_error_i),
+        .job_axis_load_error    (job_axis_load_error_i),
+        .job_ds_load_error      (job_ds_load_error_i),
+        .job_dma_store_error    (job_dma_store_error_i),
+        .job_sequence_error     (job_sequence_error_i),
+
+        .job_state              (job_state_i),
+        .job_perf_busy_cycles   (job_perf_busy_cycles_i),
+        .job_perf_mac_count     (job_perf_mac_count_i),
+        .job_perf_output_count  (job_perf_output_count_i)
+    );
+
+    assign subsys_acc_start_pulse = job_busy_i ?
+                                    job_acc_start_pulse :
+                                    csr_acc_start_pulse;
+
+    assign subsys_gemm_input_stream_mode = job_busy_i ?
+                                           job_gemm_input_stream_mode :
+                                           csr_gemm_input_stream_mode;
+
+    assign subsys_accumulate_enable = job_busy_i ?
+                                      job_accumulate_enable_to_subsys :
+                                      csr_accumulate_enable;
+
+    assign subsys_base_addr_a = job_busy_i ? job_base_addr_a_to_subsys : csr_base_addr_a;
+    assign subsys_base_addr_b = job_busy_i ? job_base_addr_b_to_subsys : csr_base_addr_b;
+    assign subsys_base_addr_c = job_busy_i ? job_base_addr_c_to_subsys : csr_base_addr_c;
+
+    assign subsys_dim_m = job_busy_i ? job_dim_m_to_subsys : csr_dim_m;
+    assign subsys_dim_n = job_busy_i ? job_dim_n_to_subsys : csr_dim_n;
+    assign subsys_dim_k = job_busy_i ? job_dim_k_to_subsys : csr_dim_k;
+
+    assign subsys_dma_load_start_pulse = job_busy_i ?
+                                         job_dma_load_start_pulse :
+                                         csr_dma_load_start_pulse;
+
+    assign subsys_dma_src_base_addr = job_busy_i ? job_dma_src_base_addr : csr_dma_src_base_addr;
+    assign subsys_dma_dst_base_addr = job_busy_i ? job_dma_dst_base_addr : csr_dma_dst_base_addr;
+    assign subsys_dma_load_beats    = job_busy_i ? job_dma_load_beats    : csr_dma_load_beats;
+
+    assign subsys_axis_load_start_pulse = job_busy_i ?
+                                          job_axis_load_start_pulse :
+                                          csr_axis_load_start_pulse;
+
+    assign subsys_axis_src_base_addr = job_busy_i ? job_axis_src_base_addr : csr_axis_src_base_addr;
+    assign subsys_axis_dst_base_addr = job_busy_i ? job_axis_dst_base_addr : csr_axis_dst_base_addr;
+    assign subsys_axis_load_beats    = job_busy_i ? job_axis_load_beats    : csr_axis_load_beats;
+
+    assign subsys_ds_load_start_pulse = job_busy_i ?
+                                        job_ds_load_start_pulse :
+                                        csr_ds_load_start_pulse;
+
+    assign subsys_ds_src_base_addr = job_busy_i ? job_ds_src_base_addr : csr_ds_src_base_addr;
+    assign subsys_ds_dst_base_addr = job_busy_i ? job_ds_dst_base_addr : csr_ds_dst_base_addr;
+    assign subsys_ds_load_beats    = job_busy_i ? job_ds_load_beats    : csr_ds_load_beats;
+    assign subsys_ds_operand_sel   = job_busy_i ? job_ds_operand_sel   : csr_ds_operand_sel;
+
+    assign subsys_dma_store_start_pulse = job_busy_i ?
+                                          job_dma_store_start_pulse :
+                                          csr_dma_store_start_pulse;
+
+    assign subsys_dma_store_src_base_addr = job_busy_i ?
+                                            job_dma_store_src_base_addr :
+                                            csr_dma_store_src_base_addr;
+
+    assign subsys_dma_store_dst_base_addr = job_busy_i ?
+                                            job_dma_store_dst_base_addr :
+                                            csr_dma_store_dst_base_addr;
+
+    assign subsys_dma_store_byte_count = job_busy_i ?
+                                         job_dma_store_byte_count :
+                                         csr_dma_store_byte_count;
 
     // ============================================================
     // Existing validated datapath subsystem
@@ -380,38 +729,38 @@ module ai_accel_subsys_csr_top #(
 
         .axi0_if        (axi0_if),
 
-        .dma_load_start     (csr_dma_load_start_pulse),
-        .dma_src_base_addr  (csr_dma_src_base_addr),
-        .dma_dst_base_addr  (csr_dma_dst_base_addr),
-        .dma_load_beats     (csr_dma_load_beats),
+        .dma_load_start     (subsys_dma_load_start_pulse),
+        .dma_src_base_addr  (subsys_dma_src_base_addr),
+        .dma_dst_base_addr  (subsys_dma_dst_base_addr),
+        .dma_load_beats     (subsys_dma_load_beats),
 
         .dma_load_busy      (dma_load_busy_i),
         .dma_load_done      (dma_load_done_i),
         .dma_load_error     (dma_load_error_i),
 
-        .dma_store_start         (csr_dma_store_start_pulse),
-        .dma_store_src_base_addr (csr_dma_store_src_base_addr),
-        .dma_store_dst_base_addr (csr_dma_store_dst_base_addr),
-        .dma_store_byte_count    (csr_dma_store_byte_count),
+        .dma_store_start         (subsys_dma_store_start_pulse),
+        .dma_store_src_base_addr (subsys_dma_store_src_base_addr),
+        .dma_store_dst_base_addr (subsys_dma_store_dst_base_addr),
+        .dma_store_byte_count    (subsys_dma_store_byte_count),
 
         .dma_store_busy      (dma_store_busy_i),
         .dma_store_done      (dma_store_done_i),
         .dma_store_error     (dma_store_error_i),
 
-        .axis_load_start     (csr_axis_load_start_pulse),
-        .axis_src_base_addr  (csr_axis_src_base_addr),
-        .axis_dst_base_addr  (csr_axis_dst_base_addr),
-        .axis_load_beats     (csr_axis_load_beats),
+        .axis_load_start     (subsys_axis_load_start_pulse),
+        .axis_src_base_addr  (subsys_axis_src_base_addr),
+        .axis_dst_base_addr  (subsys_axis_dst_base_addr),
+        .axis_load_beats     (subsys_axis_load_beats),
 
         .axis_load_busy      (axis_load_busy_i),
         .axis_load_done      (axis_load_done_i),
         .axis_load_error     (axis_load_error_i),
 
-        .ds_load_start       (csr_ds_load_start_pulse),
-        .ds_src_base_addr    (csr_ds_src_base_addr),
-        .ds_dst_base_addr    (csr_ds_dst_base_addr),
-        .ds_load_beats       (csr_ds_load_beats),
-        .ds_operand_sel      (csr_ds_operand_sel),
+        .ds_load_start       (subsys_ds_load_start_pulse),
+        .ds_src_base_addr    (subsys_ds_src_base_addr),
+        .ds_dst_base_addr    (subsys_ds_dst_base_addr),
+        .ds_load_beats       (subsys_ds_load_beats),
+        .ds_operand_sel      (subsys_ds_operand_sel),
 
         .ds_load_busy        (ds_load_busy_i),
         .ds_load_done        (ds_load_done_i),
@@ -481,20 +830,20 @@ module ai_accel_subsys_csr_top #(
         .dma_dst_axi_bvalid  (dma_dst_axi_bvalid),
         .dma_dst_axi_bready  (dma_dst_axi_bready),
 
-        .gemm_input_stream_mode (csr_gemm_input_stream_mode),
-        .accumulate_enable      (csr_accumulate_enable),
+        .gemm_input_stream_mode (subsys_gemm_input_stream_mode),
+        .accumulate_enable      (subsys_accumulate_enable),
 
-        .acc_start      (csr_acc_start_pulse),
+        .acc_start      (subsys_acc_start_pulse),
         .acc_busy       (acc_busy_i),
         .acc_done       (acc_done_i),
 
-        .base_addr_a    (csr_base_addr_a),
-        .base_addr_b    (csr_base_addr_b),
-        .base_addr_c    (csr_base_addr_c),
+        .base_addr_a    (subsys_base_addr_a),
+        .base_addr_b    (subsys_base_addr_b),
+        .base_addr_c    (subsys_base_addr_c),
 
-        .dim_m          (csr_dim_m),
-        .dim_n          (csr_dim_n),
-        .dim_k          (csr_dim_k),
+        .dim_m          (subsys_dim_m),
+        .dim_n          (subsys_dim_n),
+        .dim_k          (subsys_dim_k),
 
         .gemm_perf_busy_cycles  (gemm_perf_busy_cycles_i),
         .gemm_perf_mac_count    (gemm_perf_mac_count_i),

@@ -56,6 +56,38 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_PERF_MAC_COUNT       = 12'h084;
     localparam logic [11:0] CSR_PERF_OUTPUT_COUNT    = 12'h088;
 
+    localparam logic [11:0] CSR_JOB_VERSION          = 12'h100;
+    localparam logic [11:0] CSR_JOB_COMMAND          = 12'h104;
+    localparam logic [11:0] CSR_JOB_STATUS           = 12'h108;
+    localparam logic [11:0] CSR_JOB_DONE_STATUS      = 12'h10C;
+    localparam logic [11:0] CSR_JOB_ERROR_STATUS     = 12'h110;
+    localparam logic [11:0] CSR_JOB_MODE             = 12'h114;
+    localparam logic [11:0] CSR_JOB_REJECT_STATUS    = 12'h118;
+    localparam logic [11:0] CSR_JOB_STATE            = 12'h11C;
+
+    localparam logic [11:0] CSR_JOB_BASE_ADDR_A      = 12'h120;
+    localparam logic [11:0] CSR_JOB_BASE_ADDR_B      = 12'h124;
+    localparam logic [11:0] CSR_JOB_BASE_ADDR_C      = 12'h128;
+    localparam logic [11:0] CSR_JOB_DIM_M            = 12'h12C;
+    localparam logic [11:0] CSR_JOB_DIM_N            = 12'h130;
+    localparam logic [11:0] CSR_JOB_DIM_K            = 12'h134;
+
+    localparam logic [11:0] CSR_JOB_A_SRC_BASE       = 12'h138;
+    localparam logic [11:0] CSR_JOB_A_DST_BASE       = 12'h13C;
+    localparam logic [11:0] CSR_JOB_A_LOAD_BEATS     = 12'h140;
+
+    localparam logic [11:0] CSR_JOB_B_SRC_BASE       = 12'h148;
+    localparam logic [11:0] CSR_JOB_B_DST_BASE       = 12'h14C;
+    localparam logic [11:0] CSR_JOB_B_LOAD_BEATS     = 12'h150;
+
+    localparam logic [11:0] CSR_JOB_STORE_SRC_BASE   = 12'h158;
+    localparam logic [11:0] CSR_JOB_STORE_DST_BASE   = 12'h15C;
+    localparam logic [11:0] CSR_JOB_STORE_BYTE_COUNT = 12'h160;
+
+    localparam logic [11:0] CSR_JOB_PERF_BUSY_CYCLES = 12'h180;
+    localparam logic [11:0] CSR_JOB_PERF_MAC_COUNT   = 12'h184;
+    localparam logic [11:0] CSR_JOB_PERF_OUTPUT_COUNT= 12'h188;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -67,6 +99,11 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int CMD_CLEAR_DONE      = 8;
     localparam int CMD_CLEAR_ERROR     = 9;
     localparam int CMD_CLEAR_PERF      = 10;
+
+    localparam int JOB_CMD_START       = 0;
+    localparam int JOB_CMD_CLEAR_DONE  = 8;
+    localparam int JOB_CMD_CLEAR_ERROR = 9;
+    localparam int JOB_CMD_CLEAR_PERF  = 10;
 
     // ------------------------------------------------------------
     // Sticky status bits
@@ -84,6 +121,26 @@ class ai_accel_csr_access_helper extends uvm_object;
 
     localparam int REJ_UNSUPPORTED = 8;
     localparam int REJ_ZERO_LENGTH = 9;
+
+    localparam int JOB_DONE       = 0;
+    localparam int JOB_GEMM_DONE  = 1;
+    localparam int JOB_STORE_DONE = 2;
+
+    localparam int JOB_ERR_DMA_LOAD  = 0;
+    localparam int JOB_ERR_AXIS_LOAD = 1;
+    localparam int JOB_ERR_DS_LOAD   = 2;
+    localparam int JOB_ERR_DMA_STORE = 3;
+    localparam int JOB_ERR_SEQUENCE  = 8;
+
+    localparam int JOB_REJ_BUSY           = 0;
+    localparam int JOB_REJ_MICRO_OP_BUSY  = 1;
+    localparam int JOB_REJ_UNSUPPORTED    = 2;
+    localparam int JOB_REJ_ZERO_DIM       = 3;
+    localparam int JOB_REJ_ZERO_A_LENGTH  = 4;
+    localparam int JOB_REJ_ZERO_B_LENGTH  = 5;
+    localparam int JOB_REJ_ZERO_STORE_LEN = 6;
+    localparam int JOB_REJ_MANUAL_CMD     = 7;
+    localparam int JOB_REJ_UNSUPPORTED_COMBO = 8;
 
     localparam int unsigned DEFAULT_TIMEOUT_CYCLES = 2000;
 
@@ -318,9 +375,12 @@ class ai_accel_csr_access_helper extends uvm_object;
     end
     endtask
 
-    task automatic issue_command(input logic [31:0] command_bits);
+    task automatic issue_command(
+        input logic [31:0] command_bits,
+        input logic [11:0] command_addr = CSR_COMMAND
+    );
     begin
-        write32_expect_okay(CSR_COMMAND, command_bits, 4'hF);
+        write32_expect_okay(command_addr, command_bits, 4'hF);
     end
     endtask
 

@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   CSR Control Plane P14E: CSR-Controlled Host-Primary GEMM Smoke
+#   CSR Control Plane P14F: CSR-Controlled Frontend Representative Smoke
 #
 # Current baseline:
-#   TOTAL : 84
-#   PASS  : 84
+#   TOTAL : 90
+#   PASS  : 90
 #   FAIL  : 0
-#   84/84 PASS
+#   90/90 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -27,6 +27,9 @@
 #   - P13 C RMW frontend representative coverage
 #   - AXI-Lite CSR control-plane register smoke
 #   - CSR-controlled host-primary GEMM smoke
+#   - CSR-controlled DMA load + GEMM + DMA store smoke
+#   - CSR-controlled AXI-Stream preload + GEMM + DMA store smoke
+#   - CSR-controlled Direct Stream preload + GEMM + DMA store smoke
 #   - back-to-back, reset, corner, mid-run reset coverage
 #   - helper fallback sanity
 #
@@ -45,6 +48,14 @@
 # P14E CSR control-plane additions:
 #   - csr_host_smoke_case100
 #   - csr_host_smoke_case102
+#
+# P14F CSR frontend representative additions:
+#   - csr_dma_load_store_case100
+#   - csr_dma_load_store_case102
+#   - csr_axis_stream_load_store_case100
+#   - csr_axis_stream_load_store_case102
+#   - csr_direct_stream_load_store_case100
+#   - csr_direct_stream_load_store_case102
 # ============================================================
 
 
@@ -220,3 +231,15 @@ ai_accel_subsys_direct_stream_load_store_stress_test CASE_ID 211 GEMM_MAC_LANES 
 ai_accel_subsys_csr_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 084: csr_host_smoke_case102
 ai_accel_subsys_csr_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 085: csr_dma_load_store_case100
+ai_accel_subsys_csr_dma_load_store_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 086: csr_dma_load_store_case102
+ai_accel_subsys_csr_dma_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 087: csr_axis_stream_load_store_case100
+ai_accel_subsys_csr_axis_stream_load_store_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 088: csr_axis_stream_load_store_case102
+ai_accel_subsys_csr_axis_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 089: csr_direct_stream_load_store_case100
+ai_accel_subsys_csr_direct_stream_load_store_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 090: csr_direct_stream_load_store_case102
+ai_accel_subsys_csr_direct_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

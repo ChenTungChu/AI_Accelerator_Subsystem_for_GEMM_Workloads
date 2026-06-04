@@ -44,6 +44,7 @@ set INC_LIST [list \
   "+incdir+../rtl/mem" \
   "+incdir+../rtl/dma" \
   "+incdir+../rtl/csr" \
+  "+incdir+../rtl/sequencer" \
   "+incdir+../tb/interface" \
   "+incdir+../tb/dma" \
   "+incdir+../tb/uvm/pkg" \
@@ -95,9 +96,10 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/subsystem/gemm_inp
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys.sv
 
 # --------------------------------------------------------
-# Compile CSR control-plane RTL
+# Compile CSR control-plane RTL / job sequencer
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/csr/ai_accel_csr_regs.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_job_sequencer.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys_csr_top.sv
 
 # --------------------------------------------------------
@@ -106,17 +108,11 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsy
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
 
 # --------------------------------------------------------
-# Compile UVM top
-#
-# Notes:
-#   - ai_accel_subsys_uvm_top is the existing sideband subsystem top.
-#   - ai_accel_subsys_csr_uvm_top is the CSR-wrapper subsystem top.
-#   - ai_accel_csr_regs_uvm_top is a unit-level CSR register smoke top.
-# --------------------------------------------------------
+# Compile UVM tops
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_uvm_top.sv
-vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_csr_uvm_top.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_csr_regs_uvm_top.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_csr_uvm_top.sv
 
 # --------------------------------------------------------
 # Compile DMA unit-level TB

@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14E2 host-primary CSR validation checkpoint.
+This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint.
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 84/84 after P14E2
+Full UVM regression baseline passing 82/82
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -88,14 +88,17 @@ CSR-controlled host-primary GEMM smoke flow
 CSR-controlled DMA / AXI-Stream / Direct Stream representative flows
 ```
 
-Current P14E2 validated scope:
+Current P14F validated scope:
 
 ```text
 Standalone CSR register smoke through integrated run_uvm.tcl
 CSR wrapper integration around the existing subsystem
 CSR-controlled host-primary GEMM CASE_ID=100
 CSR-controlled host-primary GEMM CASE_ID=102
-Full regression: 84/84 PASS
+CSR-controlled DMA load + GEMM + DMA store CASE_ID=100/102
+CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=100/102
+CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=100/102
+Full regression: 90/90 PASS
 ```
 
 ### 4.2 Not Included
@@ -730,25 +733,22 @@ CSR busy-command reject test
 
 ### 17.2 CSR-Controlled End-to-End Tests
 
-P14E/P14F should add representative tests, not duplicate the entire legacy regression.
+P14E/P14F add representative tests, not duplicate the entire 82-item legacy regression.
 
-P14E2 implemented and validated these initial CSR regression items:
+Validated CSR regression items:
 
 ```text
 csr_host_smoke_case100
 csr_host_smoke_case102
+csr_dma_load_store_case100
+csr_dma_load_store_case102
+csr_axis_stream_load_store_case100
+csr_axis_stream_load_store_case102
+csr_direct_stream_load_store_case100
+csr_direct_stream_load_store_case102
 ```
 
-Future CSR representative items can extend this list with frontend and accumulation coverage:
-
-```text
-csr_dma_load_store_case211
-csr_axis_stream_load_store_case211
-csr_direct_stream_load_store_case211
-csr_c_rmw_accum_host_primary_case211
-```
-
-The legacy 82-item regression should continue to pass unchanged.
+The legacy sideband regression continues to pass unchanged, with CSR representative items increasing the integrated full regression total to 90.
 
 ### 17.3 Acceptance Criteria
 
@@ -757,10 +757,10 @@ P14 closure should require:
 ```text
 CSR standalone tests PASS
 CSR host-primary GEMM representative tests PASS
-CSR frontend representative tests PASS when added
+CSR frontend representative tests PASS
 Legacy sideband full regression still PASS
 New full regression total increases by the CSR representative items
-P14E2 full regression: 84/84 PASS
+P14F full regression: 90/90 PASS
 No BRAM RTL changes
 No GEMM datapath behavioral changes required for P14A/P14B
 ```
@@ -777,9 +777,8 @@ P14B: Standalone AXI-Lite CSR register block                          PASS
 P14C: CSR wrapper integration around existing ai_accel_subsys          PASS
 P14D: UVM CSR access tasks / lightweight CSR agent                     PASS
 P14E: CSR-controlled host-primary GEMM smoke                           PASS
-P14E2: CSR host-primary regression integration                         PASS
-P14F: CSR-controlled DMA / AXI-Stream / Direct Stream representatives  Future
-P14G: Regression and documentation closure                             Future
+P14F: CSR-controlled DMA / AXI-Stream / Direct Stream representatives  PASS
+P14G: Regression and documentation closure                             PASS
 ```
 
 ---
@@ -800,18 +799,24 @@ These should be confirmed before writing RTL:
 
 ---
 
-## 20. Current P14E2 Validation Status
+## 20. Current P14F Validation Status
 
-The current validated P14E2 checkpoint is:
+The current validated P14F checkpoint is:
 
 ```text
 CSR standalone register smoke: PASS
 CSR-controlled host-primary GEMM CASE_ID=100: PASS
 CSR-controlled host-primary GEMM CASE_ID=102: PASS
-Full regression: 84/84 PASS
+CSR-controlled DMA load + GEMM + DMA store CASE_ID=100: PASS
+CSR-controlled DMA load + GEMM + DMA store CASE_ID=102: PASS
+CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=100: PASS
+CSR-controlled AXI-Stream preload + GEMM + DMA store CASE_ID=102: PASS
+CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=100: PASS
+CSR-controlled Direct Stream preload + GEMM + DMA store CASE_ID=102: PASS
+Full regression: 90/90 PASS
 ```
 
-P14E2 keeps the legacy sideband subsystem top available while adding `ai_accel_subsys_csr_uvm_top` for CSR-wrapper validation.  The CSR-controlled tests use host-agent scratchpad preload/readback and direct software-reference comparison for C results.
+P14F keeps the legacy sideband subsystem top available while using `ai_accel_subsys_csr_uvm_top` for CSR-wrapper validation.  The CSR-controlled frontend tests launch each selected data movement frontend through CSR commands, launch GEMM through CSR, launch DMA store through CSR, and compare the DMA destination memory against the software reference.
 
 ---
 
