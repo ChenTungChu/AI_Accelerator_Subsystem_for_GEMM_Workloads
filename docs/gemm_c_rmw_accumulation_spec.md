@@ -56,6 +56,18 @@ Full regression after P13G:
   FAIL  : 0
 ```
 
+Later P16 recipe-sequencer validation proved that the same C RMW recipe can be launched as a CSR-resident two-slot recipe instead of as two software-launched jobs:
+
+```text
+P16D : CSR recipe two-slot C RMW validation PASS
+P16F2: full regression with recipe reject/error coverage PASS
+
+Current integrated full regression after P16F2:
+  TOTAL : 100
+  PASS  : 100
+  FAIL  : 0
+```
+
 The primary target is to support software/external scheduling patterns such as:
 
 ```text
@@ -339,6 +351,15 @@ Job 1: accumulate_enable = 1
 Job 2: accumulate_enable = 1
 ...
 ```
+
+P16 recipe mode maps the same policy onto descriptor slots:
+
+```text
+slot0: ACCUMULATE_ENABLE=0, OUTPUT_MODE=HOST_READBACK
+slot1: ACCUMULATE_ENABLE=1, OUTPUT_MODE=DMA_STORE when final external export is required
+```
+
+The validated P16 C RMW representative is `csr_recipe_c_rmw_two_slot_case208`.
 
 ### 5.3 Compact Partial A/B Payload Policy
 
@@ -1042,6 +1063,28 @@ Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
 Full regression: 82/82 PASS
 ```
 
+### P16D: CSR Recipe-Level C RMW Validation
+
+P16 does not change the GEMM C RMW datapath.  It changes the control model: software programs multiple CSR-resident recipe slots and launches the whole partial-K sequence with `START_RECIPE`.
+
+Validated P16 C RMW recipe:
+
+```text
+csr_recipe_c_rmw_two_slot_case208 PASS
+
+slot0:
+  INPUT_MODE        = DMA_LOAD
+  OUTPUT_MODE       = HOST_READBACK
+  ACCUMULATE_ENABLE = 0
+
+slot1:
+  INPUT_MODE        = DMA_LOAD
+  OUTPUT_MODE       = DMA_STORE
+  ACCUMULATE_ENABLE = 1
+```
+
+This proves that the P13 C RMW primitive composes with the P15 job worker and the P16 recipe sequencer.  P16F further validates reject/error/cleanup recovery around the same recipe-level control path.
+
 ---
 
 ## 17. Regression Inclusion Policy
@@ -1424,9 +1467,10 @@ Use explicit longer timeout only for P13 representative recipes.
 After C RMW partial accumulation is stable, future milestones can consider:
 
 ```text
-P14: external tile scheduler
-P15: A tile cache / multi-row A reuse
-P16: overlapped preload / compute / C RMW scheduling
+P14: AXI-Lite CSR control plane for software-visible micro-operations (completed)
+P15: CSR job descriptor / single-job hardware sequencer (completed)
+P16: CSR-resident multi-job recipe sequencer for P13-style partial-K recipes (completed)
+Future: overlapped preload / compute / C RMW scheduling
 P17: larger Direct Stream tile movement
 P18: optional C direct-store path
 P19: multi-bank or widened local memory
@@ -1464,5 +1508,13 @@ The final regression result after P13G is:
 ```text
 TOTAL : 82
 PASS  : 82
+FAIL  : 0
+```
+
+The current integrated regression after P16 recipe-sequencer validation is:
+
+```text
+TOTAL : 100
+PASS  : 100
 FAIL  : 0
 ```

@@ -4,7 +4,7 @@
 
 This document defines the performance-oriented GEMM architecture milestone sequence on top of the completed subsystem-level GEMM, DMA, AXI-Stream, CDC, Direct Stream B1, and scoreboard verification baseline.
 
-The project has now completed the performance sequence through P13:
+The project has completed the performance GEMM sequence through P13 and the CSR control sequencing path through P16:
 
 ```text
 P0: GEMM performance counter baseline
@@ -21,13 +21,16 @@ P10: K-dimension tiling with row-accumulator partial accumulation
 P11: N-dimension / output-column tiling with row-accumulator partial accumulation
 P12: M-dimension / multi-row output-tile scheduling
 P13: C read-modify-write accumulation for external partial-K jobs
+P14: AXI-Lite CSR control-plane wrapper
+P15: CSR job descriptor / single-job hardware sequencer
+P16: CSR-resident multi-job recipe sequencer
 ```
 
 Current full regression baseline:
 
 ```text
-TOTAL : 82
-PASS  : 82
+TOTAL : 100
+PASS  : 100
 FAIL  : 0
 ```
 
@@ -62,6 +65,10 @@ K-tiling representative regression across DMA / AXI-Stream / Direct Stream
 N-tiling representative regression across DMA / AXI-Stream / Direct Stream
 M-tiling representative regression across DMA / AXI-Stream / Direct Stream
 C RMW accumulation focused DUT recipes and frontend representative regression
+CSR-controlled host/frontend representative regression
+CSR job-level DMA / AXI-Stream / Direct Stream representative regression
+CSR recipe-level DMA / C RMW / AXI-Stream / Direct Stream representative regression
+CSR recipe reject / busy / worker-error / recovery regression
 ```
 
 ---
@@ -276,6 +283,26 @@ gemm_perf_mac_count    = M * N * K_part
 gemm_perf_output_count = M * N
 ```
 
+### P14/P15/P16: CSR Control, Job Sequencer, and Recipe Sequencer
+
+P14, P15, and P16 do not change the GEMM arithmetic datapath.  They raise the control abstraction around the completed GEMM engine:
+
+```text
+P14: CSR micro-operation control
+P15: one CSR job descriptor -> sequencer-controlled preload/GEMM/store
+P16: multiple CSR recipe slots -> repeated P15 worker dispatch
+```
+
+Performance counter policy remains per GEMM worker execution.  For P16 recipe execution, recipe-level performance registers accumulate P15/GEMM snapshots across completed slots:
+
+```text
+recipe_perf_busy_cycles  = sum(slot_i.job_perf_busy_cycles)
+recipe_perf_mac_count    = sum(slot_i.job_perf_mac_count)
+recipe_perf_output_count = sum(slot_i.job_perf_output_count)
+```
+
+Validated P16 recipe tests check the final captured snapshot and the accumulated recipe status after two dispatched slots.
+
 ---
 
 ## 4. P10 Validation
@@ -431,11 +458,42 @@ gemm_4lane_c_rmw_axis_stream_load_store_case211
 gemm_4lane_c_rmw_direct_stream_load_store_case211
 ```
 
-Final regression:
+Final P13 regression:
 
 ```text
 TOTAL : 82
 PASS  : 82
+FAIL  : 0
+```
+
+---
+
+## 4D. P14/P15/P16 CSR Control Validation
+
+CSR/job/recipe control milestones after the performance GEMM datapath:
+
+```text
+P14 CSR micro-operation representative regression        PASS
+P15 CSR job-level DMA/frontend representative regression PASS
+P16 CSR recipe-level representative regression           PASS
+P16 recipe reject / busy / error handling regression     PASS
+```
+
+P16 full-regression representatives:
+
+```text
+csr_recipe_dma_two_slot_case102
+csr_recipe_c_rmw_two_slot_case208
+csr_recipe_axis_stream_two_slot_case102
+csr_recipe_direct_stream_two_slot_case102
+csr_recipe_reject_error_case102
+```
+
+Current full regression:
+
+```text
+TOTAL : 100
+PASS  : 100
 FAIL  : 0
 ```
 
@@ -458,22 +516,28 @@ K-dimension tiling with row accumulator                    DONE
 N-dimension tiling with row accumulator                    DONE
 M-dimension tiling with multi-row output tile accumulator   DONE
 C read-modify-write partial accumulation                    DONE
+AXI-Lite CSR micro-operation control plane                  DONE
+CSR job descriptor / single-job hardware sequencer          DONE
+CSR recipe sequencer / multi-slot control                   DONE
 frontend compatibility for P10 representative case         DONE
 frontend compatibility for P11 representative case         DONE
 frontend compatibility for P12 representative case         DONE
 frontend compatibility for P13 representative case          DONE
 full regression integration                                DONE
+current full regression 100/100 PASS                        DONE
 ```
 
 ---
 
 ## 6. Future Work
 
-After P13, recommended directions are:
+After P16, recommended future directions are:
 
 ```text
 packed tile-preload optimization for K-tiled tails
 larger Direct Stream operand buffers
 coverage closure / constrained-random expansion
-external scheduler / descriptor support for multi-job GEMM recipes
+recipe queue depth / four-slot focused validation if needed
+memory-resident descriptors or descriptor fetch engine
+overlapped preload / compute / store scheduling
 ```

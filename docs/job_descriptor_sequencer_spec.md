@@ -52,7 +52,7 @@ Performance counters
 AXI-Lite CSR control-plane wrapper
 CSR-controlled host-primary GEMM representative tests
 CSR-controlled DMA / AXI-Stream / Direct Stream frontend representative tests
-Full UVM regression passing 95/95 after P15E/P15F closure
+P15E/P15F regression passing 95/95 and current integrated P16F2 regression passing 100/100
 ```
 
 P14 keeps the datapath subsystem intact and adds software-visible CSR control.  P15 should preserve that principle.
@@ -173,8 +173,11 @@ P15D: Job sequencer reject / busy / clear handling             PASS
 P15E: Job sequencer frontend-mode extension                   PASS
 P15F: documentation / closure update                          PASS
 
-Full regression: 95/95 PASS
+Full regression after P15E/P15F: 95/95 PASS
+Current integrated full regression after P16F2: 100/100 PASS
 ```
+
+P16 builds on this P15 sequencer by treating it as the single-job worker for a CSR-resident multi-slot recipe sequencer.  The P15 job path remains available when no recipe is active, but P16 owns job dispatch while `recipe_busy` is high.
 
 ---
 
@@ -733,6 +736,34 @@ This avoids two control sources driving the same underlying engine while the job
 
 ---
 
+## 12A. P16 Recipe Sequencer Worker-Mode Compatibility
+
+P16 reuses the P15 job sequencer as the worker for each recipe slot.  The recipe sequencer snapshots a selected slot descriptor, maps it into the P15 job descriptor bundle, issues an internal job start request, and waits for the job worker to report done/error/reject before advancing.
+
+Ownership policy while a recipe is active:
+
+```text
+recipe_busy == 1:
+  P16 recipe sequencer owns P15 job dispatch
+  external CSR_JOB_COMMAND.START_JOB is rejected
+  P14 manual START_* commands are rejected
+  a second START_RECIPE is rejected
+```
+
+The validated P16F reject/error test checks these conditions explicitly:
+
+```text
+START_RECIPE while recipe_busy reject
+P14 manual START_GEMM while recipe_busy reject
+P15 START_JOB while recipe_busy reject
+slot worker DMA-load error propagation to recipe error status
+post-error cleanup followed by a valid recipe recovery
+```
+
+P15 job sticky status remains useful for debug visibility, but P16 recipe advancement should use the active worker's fresh done/error/reject indication rather than stale sticky bits from a previous job.
+
+---
+
 ## 13. Acceptance Rules
 
 ### 13.1 Common START_JOB Acceptance
@@ -741,6 +772,7 @@ This avoids two control sources driving the same underlying engine while the job
 
 ```text
 job_busy == 0
+recipe_busy == 0 when the P16 recipe sequencer is present
 acc_busy == 0
 dma_load_busy == 0
 axis_load_busy == 0
@@ -840,7 +872,7 @@ JOB_PERF_MAC_COUNT    = M * N * K_part
 JOB_PERF_OUTPUT_COUNT = M * N
 ```
 
-A future multi-descriptor recipe runner can sum per-job counters if recipe-level counters are desired.
+The P16 recipe sequencer now sums per-job counters into recipe-level performance registers when `ACCUMULATE_PERF=1`.  P15 job performance registers still represent the most recent dispatched job/slot, not the whole recipe.
 
 ---
 
@@ -1007,6 +1039,16 @@ csr_job_c_rmw_accum_host_primary_case208
 csr_job_c_rmw_accum_dma_load_store_case208
 ```
 
+P16 recipe-worker interoperability is validated by:
+
+```text
+csr_recipe_dma_two_slot_case102
+csr_recipe_c_rmw_two_slot_case208
+csr_recipe_axis_stream_two_slot_case102
+csr_recipe_direct_stream_two_slot_case102
+csr_recipe_reject_error_case102
+```
+
 ### 17.4 Acceptance Criteria
 
 P15 closure criteria and current status:
@@ -1024,7 +1066,8 @@ New full regression total increases only by targeted P15 items        PASS
 No BRAM RTL changes                                                   PASS
 No GEMM datapath behavioral changes required for P15A-P15E            PASS
 
-Full regression: 95/95 PASS
+Full regression after P15E/P15F: 95/95 PASS
+Current integrated full regression after P16F2: 100/100 PASS
 ```
 
 ---
@@ -1253,7 +1296,7 @@ P14 manual commands rejected while job_busy is high
 
 P15C validates the DMA-load job path.  P15D validates reject, busy, sticky status, cleanup, and manual-command conflict behavior.  P15E validates AXI-Stream and Direct Stream job input modes.
 
-The current closure result is:
+The P15 closure result remains:
 
 ```text
 TOTAL : 95
@@ -1261,4 +1304,12 @@ PASS  : 95
 FAIL  : 0
 ```
 
-This gives the project a realistic job-based accelerator control model while preserving the validated datapath and verification foundation built through P14.
+The current integrated project baseline after P16 recipe-sequencer integration is:
+
+```text
+TOTAL : 100
+PASS  : 100
+FAIL  : 0
+```
+
+This gives the project a realistic job-based accelerator control model while preserving the validated datapath and verification foundation built through P14, and it now also serves as the reusable worker beneath the P16 recipe sequencer.

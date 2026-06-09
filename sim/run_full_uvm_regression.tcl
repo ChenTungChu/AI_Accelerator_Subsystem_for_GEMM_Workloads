@@ -1996,6 +1996,68 @@ run_reg_item "csr_recipe_c_rmw_two_slot_case208" {
 }
 
 # ============================================================
+# P16E2: CSR recipe frontend-mode regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P16E targeted validation into the full regression
+# by issuing START_RECIPE for two-slot frontend-mode recipes.
+#
+# The first item validates AXI-Stream preload recipe slots.  The
+# second item validates Direct Stream preload recipe slots.  Both
+# recipes dispatch slot0 and slot1 through the existing P15
+# single-job worker and compare the final DMA-store destination
+# memory against the software reference.
+# Expected total after P16E2: 99.
+# ============================================================
+run_reg_item "csr_recipe_axis_stream_two_slot_case102" {
+    set UVM_TEST ai_accel_subsys_csr_recipe_axis_stream_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_recipe_direct_stream_two_slot_case102" {
+    set UVM_TEST ai_accel_subsys_csr_recipe_direct_stream_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+
+# ============================================================
+# P16F2: CSR recipe reject / busy / error handling regression representative
+#
+# The CSR-wrapper subsystem top is selected explicitly.  This
+# item extends P16F targeted validation into the full regression
+# by checking recipe-level reject conditions, START_RECIPE while
+# recipe_busy, P14/P15 command reject while recipe_busy, worker
+# error propagation, sticky-status cleanup, and valid recipe
+# recovery after error cleanup.
+# Expected total after P16F2: 100.
+# ============================================================
+run_reg_item "csr_recipe_reject_error_case102" {
+    set UVM_TEST ai_accel_subsys_csr_recipe_reject_error_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"

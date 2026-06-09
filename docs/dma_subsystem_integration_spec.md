@@ -1,3 +1,5 @@
+# DMA Subsystem Integration Spec
+
 1. Integration 目標
 
 目前已完成並驗證的 local pipeline 是：
@@ -12,6 +14,16 @@ source memory
    -> destination memory / scratchpad
 
 v1 subsystem integration 的目標是把這條 pipeline 接進 AI accelerator subsystem，讓 DMA 可以把資料搬進 scratchpad，之後 GEMM core 繼續使用既有 scratchpad path 計算。
+
+目前這條 DMA load/store integration 已經被後續 P14/P15/P16 CSR control flows 重複使用：
+
+```text
+P14 CSR DMA load + GEMM + DMA store representative tests PASS
+P15 CSR job-level DMA load + GEMM + DMA store tests PASS
+P16 CSR recipe-level DMA two-slot tests PASS
+P16 CSR recipe-level C RMW two-slot test PASS
+Current full regression: 100/100 PASS
+```
 
 2. 不變原則
 
@@ -378,6 +390,16 @@ DMA load-store CASE_ID=211 PASS
 Full regression after P13G: 82/82 PASS
 ```
 
+Later CSR/job/recipe validation reuses the same DMA load/store path:
+
+```text
+P14: csr_dma_load_store_case100 / case102 PASS
+P15: csr_job_dma_load_store_case100 / case102 PASS
+P16: csr_recipe_dma_two_slot_case102 PASS
+P16: csr_recipe_c_rmw_two_slot_case208 PASS
+P16F2 full regression: 100/100 PASS
+```
+
 The original v1 rule still holds:
 
 ```text
@@ -385,3 +407,33 @@ DMA load completes before GEMM start.
 DMA load and GEMM compute do not overlap in this baseline.
 BRAM RTL remains unchanged.
 ```
+
+15. P16 recipe sequencer compatibility note
+
+P16 does not change the DMA load/store protocol.  The recipe sequencer dispatches each selected descriptor slot through the existing P15 job worker, and the P15 worker continues to use the same DMA load engine and DMA store engine.
+
+Recipe-level DMA policy:
+
+```text
+for each selected DMA_LOAD slot:
+    DMA load A payload into scratchpad
+    DMA load B payload into scratchpad
+    GEMM consumes scratchpad A/B
+
+for intermediate C RMW slots:
+    C remains in scratchpad
+    no DMA store is required
+
+for final DMA_STORE slot:
+    DMA store exports final C to destination memory
+```
+
+Validated P16 DMA-related regression items:
+
+```text
+csr_recipe_dma_two_slot_case102
+csr_recipe_c_rmw_two_slot_case208
+csr_recipe_reject_error_case102
+```
+
+The original v1 rules still hold: DMA load completes before GEMM start, DMA load and GEMM compute do not overlap in the current baseline, and BRAM RTL remains unchanged.

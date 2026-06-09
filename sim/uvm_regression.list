@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Job Sequencer P15E: Job Descriptor Frontend-Mode Regression Completed
+#   Recipe Sequencer P16F2: Multi-Slot Recipe Queue / Reject-Error Regression Completed
 #
 # Current baseline:
-#   TOTAL : 95
-#   PASS  : 95
+#   TOTAL : 100
+#   PASS  : 100
 #   FAIL  : 0
-#   95/95 PASS
+#   100/100 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -34,6 +34,11 @@
 #   - CSR job-level AXI-Stream preload + GEMM + DMA store smoke
 #   - CSR job-level Direct Stream preload + GEMM + DMA store smoke
 #   - CSR job reject / busy / clear handling smoke
+#   - CSR recipe-level DMA two-slot smoke
+#   - CSR recipe-level C RMW partial-K two-slot smoke
+#   - CSR recipe-level AXI-Stream two-slot smoke
+#   - CSR recipe-level Direct Stream two-slot smoke
+#   - CSR recipe reject / busy / error handling smoke
 #   - back-to-back, reset, corner, mid-run reset coverage
 #   - helper fallback sanity
 #
@@ -71,6 +76,17 @@
 # P15E CSR job-level frontend-mode additions:
 #   - csr_job_axis_stream_load_store_case102
 #   - csr_job_direct_stream_load_store_case102
+#
+# P16D2 CSR recipe sequencer additions:
+#   - csr_recipe_dma_two_slot_case102
+#   - csr_recipe_c_rmw_two_slot_case208
+#
+# P16E2 CSR recipe frontend-mode additions:
+#   - csr_recipe_axis_stream_two_slot_case102
+#   - csr_recipe_direct_stream_two_slot_case102
+#
+# P16F2 CSR recipe reject / busy / error handling addition:
+#   - csr_recipe_reject_error_case102
 # ============================================================
 
 
@@ -269,3 +285,13 @@ ai_accel_subsys_csr_job_reject_error_test CASE_ID 102 UVM_TOP ai_accel_subsys_cs
 ai_accel_subsys_csr_job_axis_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 095: csr_job_direct_stream_load_store_case102
 ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 096: csr_recipe_dma_two_slot_case102
+ai_accel_subsys_csr_recipe_dma_two_slot_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 097: csr_recipe_c_rmw_two_slot_case208
+ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test CASE_ID 208 UVM_TOP ai_accel_subsys_csr_uvm_top GEMM_ENABLE_C_RMW_ACCUM 1 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 098: csr_recipe_axis_stream_two_slot_case102
+ai_accel_subsys_csr_recipe_axis_stream_two_slot_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 099: csr_recipe_direct_stream_two_slot_case102
+ai_accel_subsys_csr_recipe_direct_stream_two_slot_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 100: csr_recipe_reject_error_case102
+ai_accel_subsys_csr_recipe_reject_error_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

@@ -149,6 +149,29 @@ helper fallback mode:
 
 Therefore, seeing `AXI_HOST_MON` messages in helper mode does not mean the host agent actively drove the transaction.
 
+### 1.7 CSR Job / Recipe Test Policy
+
+CSR-controlled P14/P15/P16 tests follow the same general rule: helper memory access is not the primary verification path.
+
+For CSR micro-operation, job, and recipe tests:
+
+```text
+control path      : AXI-Lite CSR writes/reads
+A/B source path   : selected frontend source memory model
+C export path     : DMA destination memory model when DMA_STORE is used
+helper path       : fallback/debug only
+```
+
+P16 recipe tests use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and source/destination memory models for the selected frontend.  This applies to:
+
+```text
+csr_recipe_dma_two_slot_case102
+csr_recipe_c_rmw_two_slot_case208
+csr_recipe_axis_stream_two_slot_case102
+csr_recipe_direct_stream_two_slot_case102
+csr_recipe_reject_error_case102
+```
+
 ---
 
 ## 2. GEMM Runtime Memory Routing Policy
@@ -297,3 +320,13 @@ Keep helper fallback for debug and sanity only.
 ```
 
 P13 C RMW frontend representative items use frontend-specific A/B preload paths and keep C result export through the existing DMA store / result bridge path.
+
+P16 recipe representative items preserve that policy: CSR controls the recipe, the selected frontend provides A/B payloads, C remains scratchpad-backed between slots, and only the final DMA store/export path is compared against the software reference.
+
+Current integrated regression baseline:
+
+```text
+TOTAL : 100
+PASS  : 100
+FAIL  : 0
+```
