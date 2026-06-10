@@ -78,6 +78,11 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_recipe_axis_stream_two_slot_smoke_test \
     ai_accel_subsys_csr_recipe_direct_stream_two_slot_smoke_test \
     ai_accel_subsys_csr_recipe_reject_error_test \
+    ai_accel_subsys_csr_desc_fetch_smoke_test \
+    ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test \
+    ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test \
+    ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test \
+    ai_accel_subsys_csr_desc_fetch_reject_error_test \
 ]
 
 # --------------------------------------------------

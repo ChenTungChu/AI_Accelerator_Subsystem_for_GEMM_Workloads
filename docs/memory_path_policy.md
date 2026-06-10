@@ -149,28 +149,32 @@ helper fallback mode:
 
 Therefore, seeing `AXI_HOST_MON` messages in helper mode does not mean the host agent actively drove the transaction.
 
-### 1.7 CSR Job / Recipe Test Policy
 
-CSR-controlled P14/P15/P16 tests follow the same general rule: helper memory access is not the primary verification path.
+### 1.8 P17 Descriptor-Fetch Test Policy
 
-For CSR micro-operation, job, and recipe tests:
-
-```text
-control path      : AXI-Lite CSR writes/reads
-A/B source path   : selected frontend source memory model
-C export path     : DMA destination memory model when DMA_STORE is used
-helper path       : fallback/debug only
-```
-
-P16 recipe tests use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and source/destination memory models for the selected frontend.  This applies to:
+P17 descriptor-fetch tests add one additional control/source path that is separate from GEMM operand and result movement.
 
 ```text
-csr_recipe_dma_two_slot_case102
-csr_recipe_c_rmw_two_slot_case208
-csr_recipe_axis_stream_two_slot_case102
-csr_recipe_direct_stream_two_slot_case102
-csr_recipe_reject_error_case102
+control path          : AXI-Lite CSR writes/reads
+descriptor source path: descriptor-memory AXI read responder
+fetched descriptor    : internal P16-compatible recipe snapshot
+A/B source path       : selected frontend source memory model
+C export path         : DMA destination memory model when DMA_STORE is used
+helper path           : fallback/debug only
 ```
+
+The descriptor table is not the scratchpad.  P17 descriptor fetch uses a dedicated descriptor-memory AXI read master and does not change the GEMM operand/result memory routing policy.
+
+Validated P17 regression representatives use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and the descriptor/source/destination memory models needed by each selected flow:
+
+```text
+csr_desc_fetch_smoke
+csr_desc_fetch_dma_two_slot_case102
+csr_desc_fetch_c_rmw_two_slot_case208
+csr_desc_fetch_direct_stream_two_slot_case102
+csr_desc_fetch_reject_error_case102
+```
+
 
 ---
 
@@ -321,12 +325,4 @@ Keep helper fallback for debug and sanity only.
 
 P13 C RMW frontend representative items use frontend-specific A/B preload paths and keep C result export through the existing DMA store / result bridge path.
 
-P16 recipe representative items preserve that policy: CSR controls the recipe, the selected frontend provides A/B payloads, C remains scratchpad-backed between slots, and only the final DMA store/export path is compared against the software reference.
-
-Current integrated regression baseline:
-
-```text
-TOTAL : 100
-PASS  : 100
-FAIL  : 0
-```
+P17 descriptor-fetch representative items preserve that policy: descriptor fetch is a control-plane source path, while GEMM A/B payloads and C export continue to use the selected existing frontend and DMA destination memory paths.

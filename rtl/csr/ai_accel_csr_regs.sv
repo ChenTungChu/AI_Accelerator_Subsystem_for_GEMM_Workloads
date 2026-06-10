@@ -10,9 +10,10 @@ module ai_accel_csr_regs #(
     parameter int CSR_DATA_WIDTH  = 32,
 
     parameter logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014,
-    parameter logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015,
-    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016,
-    parameter int          P16_RECIPE_QUEUE_DEPTH   = 4
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE        = 32'h0001_0015,
+    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
+    parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
+    parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     input  logic clk,
     input  logic rst_n,
@@ -133,6 +134,31 @@ module ai_accel_csr_regs #(
     output logic [ADDR_WIDTH-1:0] recipe_slot_store_dst_base_addr [P16_RECIPE_QUEUE_DEPTH],
     output logic [31:0]           recipe_slot_store_byte_count [P16_RECIPE_QUEUE_DEPTH],
     output logic [31:0]           recipe_slot_user_tag         [P16_RECIPE_QUEUE_DEPTH],
+
+    // ------------------------------------------------------------
+    // P17 descriptor-fetch CSR control outputs
+    // ------------------------------------------------------------
+    output logic                  desc_fetch_start_pulse,
+    output logic                  desc_fetch_clear_done_pulse,
+    output logic                  desc_fetch_clear_error_pulse,
+
+    output logic [ADDR_WIDTH-1:0] desc_fetch_base_addr,
+    output logic [3:0]            desc_fetch_count,
+    output logic [15:0]           desc_fetch_stride_bytes,
+
+    // ------------------------------------------------------------
+    // P17 descriptor-fetch status inputs
+    // ------------------------------------------------------------
+    input  logic                  desc_fetch_busy,
+    input  logic                  desc_fetch_done,
+    input  logic                  desc_fetch_error,
+    input  logic                  desc_fetch_reject,
+    input  logic [31:0]           desc_fetch_error_status,
+    input  logic [31:0]           desc_fetch_reject_status,
+    input  logic [3:0]            desc_fetch_current_index,
+    input  logic [3:0]            desc_fetch_fetched_count,
+    input  logic                  desc_fetch_snapshot_valid,
+    input  logic [3:0]            desc_fetch_recipe_count,
 
     // ------------------------------------------------------------
     // Live status inputs from the future P15 job sequencer
@@ -341,6 +367,23 @@ module ai_accel_csr_regs #(
     localparam logic [6:0] SLOT_RESERVED_48_OFFSET      = 7'h48;
     localparam logic [6:0] SLOT_RESERVED_4C_OFFSET      = 7'h4C;
 
+    // P17 descriptor-fetch CSR window.  P17C uses this as a
+    // CSR-level fetch smoke path only; P17D will bridge the fetched
+    // snapshot into the P16 recipe sequencer.
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_VERSION_ADDR      = 12'h500;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_COMMAND_ADDR      = 12'h504;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_STATUS_ADDR       = 12'h508;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_DONE_STATUS_ADDR  = 12'h50C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_ERROR_STATUS_ADDR = 12'h510;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_REJECT_STATUS_ADDR= 12'h514;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_BASE_ADDR_ADDR    = 12'h518;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_COUNT_ADDR        = 12'h51C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_STRIDE_BYTES_ADDR = 12'h520;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_CURRENT_INDEX_ADDR= 12'h524;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_FETCHED_COUNT_ADDR= 12'h528;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_SNAPSHOT_STATUS_ADDR = 12'h52C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_RESERVED_530_ADDR = 12'h530;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -450,6 +493,19 @@ module ai_accel_csr_regs #(
     localparam logic [31:0] RECIPE_CONTROL_MASK = 32'h0000_0FFF;
     localparam logic [31:0] RECIPE_SLOT_CONTROL_MASK = 32'h0000_007F;
     localparam logic [3:0]  P16_RECIPE_QUEUE_DEPTH_U4 = P16_RECIPE_QUEUE_DEPTH;
+
+    // ------------------------------------------------------------
+    // P17 descriptor-fetch command/status bit positions
+    // ------------------------------------------------------------
+    localparam int DESC_FETCH_CMD_START_BIT       = 0;
+    localparam int DESC_FETCH_CMD_CLEAR_DONE_BIT  = 8;
+    localparam int DESC_FETCH_CMD_CLEAR_ERROR_BIT = 9;
+
+    localparam int DESC_FETCH_DONE_BIT            = 0;
+    localparam int DESC_FETCH_SNAPSHOT_VALID_BIT  = 1;
+
+    localparam logic [31:0] DESC_FETCH_COUNT_MASK  = 32'h0000_000F;
+    localparam logic [31:0] DESC_FETCH_STRIDE_MASK = 32'h0000_FFFF;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -583,6 +639,10 @@ module ai_accel_csr_regs #(
     logic [31:0] recipe_slot_store_byte_count_q [P16_RECIPE_QUEUE_DEPTH];
     logic [31:0] recipe_slot_user_tag_q         [P16_RECIPE_QUEUE_DEPTH];
 
+    logic [31:0] desc_fetch_base_addr_q;
+    logic [31:0] desc_fetch_count_q;
+    logic [31:0] desc_fetch_stride_bytes_q;
+
     // ------------------------------------------------------------
     // Internal command decode helpers
     // ------------------------------------------------------------
@@ -603,9 +663,16 @@ module ai_accel_csr_regs #(
     logic        recipe_command_has_start;
     logic        recipe_command_unsupported_combo;
 
+    logic [31:0] desc_fetch_command_masked;
+    logic        desc_fetch_command_has_active_strobe;
+    logic        desc_fetch_command_has_start;
+
     logic [31:0] status_read_data;
     logic [31:0] job_status_read_data;
     logic [31:0] recipe_status_read_data;
+    logic [31:0] desc_fetch_status_read_data;
+    logic [31:0] desc_fetch_done_read_data;
+    logic [31:0] desc_fetch_snapshot_status_read_data;
     logic        micro_op_busy;
     logic        job_preload_required;
     logic        job_store_required;
@@ -973,7 +1040,21 @@ module ai_accel_csr_regs #(
             CSR_RECIPE_PERF_BUSY_CYCLES_ADDR,
             CSR_RECIPE_PERF_MAC_COUNT_ADDR,
             CSR_RECIPE_PERF_OUTPUT_COUNT_ADDR,
-            CSR_RECIPE_RESERVED_28C_ADDR: begin
+            CSR_RECIPE_RESERVED_28C_ADDR,
+
+            CSR_DESC_FETCH_VERSION_ADDR,
+            CSR_DESC_FETCH_COMMAND_ADDR,
+            CSR_DESC_FETCH_STATUS_ADDR,
+            CSR_DESC_FETCH_DONE_STATUS_ADDR,
+            CSR_DESC_FETCH_ERROR_STATUS_ADDR,
+            CSR_DESC_FETCH_REJECT_STATUS_ADDR,
+            CSR_DESC_FETCH_BASE_ADDR_ADDR,
+            CSR_DESC_FETCH_COUNT_ADDR,
+            CSR_DESC_FETCH_STRIDE_BYTES_ADDR,
+            CSR_DESC_FETCH_CURRENT_INDEX_ADDR,
+            CSR_DESC_FETCH_FETCHED_COUNT_ADDR,
+            CSR_DESC_FETCH_SNAPSHOT_STATUS_ADDR,
+            CSR_DESC_FETCH_RESERVED_530_ADDR: begin
                 return 1'b1;
             end
 
@@ -1273,6 +1354,54 @@ module ai_accel_csr_regs #(
                 return recipe_perf_output_count_q;
             end
 
+            CSR_DESC_FETCH_VERSION_ADDR: begin
+                return CSR_DESC_FETCH_VERSION_VALUE;
+            end
+
+            CSR_DESC_FETCH_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_DESC_FETCH_STATUS_ADDR: begin
+                return desc_fetch_status_read_data;
+            end
+
+            CSR_DESC_FETCH_DONE_STATUS_ADDR: begin
+                return desc_fetch_done_read_data;
+            end
+
+            CSR_DESC_FETCH_ERROR_STATUS_ADDR: begin
+                return desc_fetch_error_status;
+            end
+
+            CSR_DESC_FETCH_REJECT_STATUS_ADDR: begin
+                return desc_fetch_reject_status;
+            end
+
+            CSR_DESC_FETCH_BASE_ADDR_ADDR: begin
+                return desc_fetch_base_addr_q;
+            end
+
+            CSR_DESC_FETCH_COUNT_ADDR: begin
+                return desc_fetch_count_q;
+            end
+
+            CSR_DESC_FETCH_STRIDE_BYTES_ADDR: begin
+                return desc_fetch_stride_bytes_q;
+            end
+
+            CSR_DESC_FETCH_CURRENT_INDEX_ADDR: begin
+                return {28'h000_0000, desc_fetch_current_index};
+            end
+
+            CSR_DESC_FETCH_FETCHED_COUNT_ADDR: begin
+                return {28'h000_0000, desc_fetch_fetched_count};
+            end
+
+            CSR_DESC_FETCH_SNAPSHOT_STATUS_ADDR: begin
+                return desc_fetch_snapshot_status_read_data;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -1368,6 +1497,26 @@ module ai_accel_csr_regs #(
         recipe_status_read_data[8]  = job_busy;
         recipe_status_read_data[9]  = micro_op_busy;
         recipe_status_read_data[16] = 1'b1;
+
+        desc_fetch_status_read_data = 32'h0000_0000;
+        desc_fetch_status_read_data[0]  = desc_fetch_busy;
+        desc_fetch_status_read_data[1]  = desc_fetch_done;
+        desc_fetch_status_read_data[2]  = desc_fetch_error | desc_fetch_reject;
+        desc_fetch_status_read_data[3]  = !desc_fetch_busy && !recipe_busy && !job_busy && !micro_op_busy;
+        desc_fetch_status_read_data[4]  = desc_fetch_snapshot_valid;
+        desc_fetch_status_read_data[8]  = recipe_busy;
+        desc_fetch_status_read_data[9]  = job_busy;
+        desc_fetch_status_read_data[10] = micro_op_busy;
+        desc_fetch_status_read_data[16] = 1'b1;
+
+        desc_fetch_done_read_data = 32'h0000_0000;
+        desc_fetch_done_read_data[DESC_FETCH_DONE_BIT]           = desc_fetch_done;
+        desc_fetch_done_read_data[DESC_FETCH_SNAPSHOT_VALID_BIT] = desc_fetch_snapshot_valid;
+
+        desc_fetch_snapshot_status_read_data = 32'h0000_0000;
+        desc_fetch_snapshot_status_read_data[0]    = desc_fetch_snapshot_valid;
+        desc_fetch_snapshot_status_read_data[7:4]  = desc_fetch_recipe_count;
+        desc_fetch_snapshot_status_read_data[15:8] = {4'h0, desc_fetch_fetched_count};
     end
 
     // ------------------------------------------------------------
@@ -1433,6 +1582,10 @@ module ai_accel_csr_regs #(
         recipe_command_unsupported_combo = (recipe_command_has_start &&
                                             recipe_command_masked[RECIPE_CMD_CLEAR_ERROR_BIT] &&
                                             ((|recipe_error_status_q) || (|recipe_reject_status_q)));
+
+        desc_fetch_command_has_active_strobe = |write_strb;
+        desc_fetch_command_masked            = write_data & strobe_to_mask(write_strb);
+        desc_fetch_command_has_start         = desc_fetch_command_masked[DESC_FETCH_CMD_START_BIT];
     end
 
     // ------------------------------------------------------------
@@ -1532,6 +1685,10 @@ module ai_accel_csr_regs #(
             recipe_perf_mac_count_q    <= 32'h0000_0000;
             recipe_perf_output_count_q <= 32'h0000_0000;
 
+            desc_fetch_base_addr_q     <= 32'h0000_0000;
+            desc_fetch_count_q         <= 32'h0000_0000;
+            desc_fetch_stride_bytes_q  <= 32'h0000_0080;
+
             for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
                 recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
                 recipe_slot_base_addr_a_q[slot_i]      <= 32'h0000_0000;
@@ -1568,6 +1725,10 @@ module ai_accel_csr_regs #(
             recipe_clear_error_pulse       <= 1'b0;
             recipe_clear_perf_pulse        <= 1'b0;
             recipe_clear_slot_status_pulse <= 1'b0;
+
+            desc_fetch_start_pulse       <= 1'b0;
+            desc_fetch_clear_done_pulse  <= 1'b0;
+            desc_fetch_clear_error_pulse <= 1'b0;
         end
         else begin
             acc_start_pulse       <= 1'b0;
@@ -1586,6 +1747,10 @@ module ai_accel_csr_regs #(
             recipe_clear_error_pulse       <= 1'b0;
             recipe_clear_perf_pulse        <= 1'b0;
             recipe_clear_slot_status_pulse <= 1'b0;
+
+            desc_fetch_start_pulse       <= 1'b0;
+            desc_fetch_clear_done_pulse  <= 1'b0;
+            desc_fetch_clear_error_pulse <= 1'b0;
 
             // Sticky completion and error capture.
             if (acc_done) begin
@@ -1753,7 +1918,13 @@ module ai_accel_csr_regs #(
                                         perf_output_count_q <= 32'h0000_0000;
                                     end
 
-                                    if (command_has_start && recipe_busy) begin
+                                    if (command_has_start && desc_fetch_busy) begin
+                                        // P17G: descriptor fetch owns the next recipe-launch window.
+                                        // Reject manual P14 micro-op starts while a fetch is active so
+                                        // debug/manual traffic cannot race the fetched recipe snapshot.
+                                        reject_status_q[REJ_UNSUPPORTED_BIT] <= 1'b1;
+                                    end
+                                    else if (command_has_start && recipe_busy) begin
                                         recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                     end
                                     else if (command_has_start && job_busy) begin
@@ -1851,7 +2022,11 @@ module ai_accel_csr_regs #(
                                     end
 
                                     if (job_command_masked[JOB_CMD_START_BIT]) begin
-                                        if (recipe_busy) begin
+                                        if (desc_fetch_busy) begin
+                                            // P17G: block manual P15 jobs while descriptor fetch is active.
+                                            job_reject_status_q[JOB_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                        end
+                                        else if (recipe_busy) begin
                                             recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                         end
                                         else if (job_busy) begin
@@ -1926,7 +2101,12 @@ module ai_accel_csr_regs #(
                                     end
 
                                     if (recipe_command_masked[RECIPE_CMD_START_BIT]) begin
-                                        if (recipe_busy) begin
+                                        if (desc_fetch_busy) begin
+                                            // P17G: block manual P16 recipe starts while descriptor fetch
+                                            // is building the fetched snapshot.
+                                            recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                        end
+                                        else if (recipe_busy) begin
                                             recipe_reject_status_q[RECIPE_REJ_BUSY_BIT] <= 1'b1;
                                         end
                                         else if (job_busy) begin
@@ -1959,6 +2139,48 @@ module ai_accel_csr_regs #(
                                     end
                                 end
                             end
+                        end
+
+                        CSR_DESC_FETCH_COMMAND_ADDR: begin
+                            if (desc_fetch_command_has_active_strobe) begin
+                                if (desc_fetch_command_masked[DESC_FETCH_CMD_CLEAR_DONE_BIT]) begin
+                                    desc_fetch_clear_done_pulse <= 1'b1;
+                                end
+
+                                if (desc_fetch_command_masked[DESC_FETCH_CMD_CLEAR_ERROR_BIT]) begin
+                                    desc_fetch_clear_error_pulse <= 1'b1;
+                                end
+
+                                if (desc_fetch_command_has_start) begin
+                                    desc_fetch_start_pulse <= 1'b1;
+                                end
+                            end
+                        end
+
+                        CSR_DESC_FETCH_DONE_STATUS_ADDR: begin
+                            desc_fetch_clear_done_pulse <= 1'b1;
+                        end
+
+                        CSR_DESC_FETCH_ERROR_STATUS_ADDR: begin
+                            desc_fetch_clear_error_pulse <= 1'b1;
+                        end
+
+                        CSR_DESC_FETCH_REJECT_STATUS_ADDR: begin
+                            desc_fetch_clear_error_pulse <= 1'b1;
+                        end
+
+                        CSR_DESC_FETCH_BASE_ADDR_ADDR: begin
+                            desc_fetch_base_addr_q <= apply_wstrb32(desc_fetch_base_addr_q, write_data, write_strb);
+                        end
+
+                        CSR_DESC_FETCH_COUNT_ADDR: begin
+                            desc_fetch_count_q <= apply_wstrb32(desc_fetch_count_q, write_data, write_strb) &
+                                                  DESC_FETCH_COUNT_MASK;
+                        end
+
+                        CSR_DESC_FETCH_STRIDE_BYTES_ADDR: begin
+                            desc_fetch_stride_bytes_q <= apply_wstrb32(desc_fetch_stride_bytes_q, write_data, write_strb) &
+                                                         DESC_FETCH_STRIDE_MASK;
                         end
 
                         CSR_DONE_STATUS_ADDR: begin
@@ -2415,6 +2637,10 @@ module ai_accel_csr_regs #(
             assign recipe_slot_user_tag[slot_g]            = recipe_slot_user_tag_q[slot_g];
         end
     endgenerate
+
+    assign desc_fetch_base_addr    = desc_fetch_base_addr_q[ADDR_WIDTH-1:0];
+    assign desc_fetch_count        = desc_fetch_count_q[3:0];
+    assign desc_fetch_stride_bytes = desc_fetch_stride_bytes_q[15:0];
 
 endmodule
 

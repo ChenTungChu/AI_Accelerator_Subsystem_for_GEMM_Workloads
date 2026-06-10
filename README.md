@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, and CSR job descriptor / hardware sequencer integration, and CSR recipe sequencer / multi-slot recipe queue integration.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencer / multi-slot recipe queue integration, and P17 memory-backed descriptor fetch for CSR recipes.
 
 Current milestone:
 
 ```text
-Recipe Sequencer P16F2: Multi-Slot Recipe Queue / Reject-Error Regression Completed
+Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
 
 Regression:
-  TOTAL : 100
-  PASS  : 100
+  TOTAL : 105
+  PASS  : 105
   FAIL  : 0
 ```
 
@@ -48,6 +48,7 @@ AXI-Lite CSR standalone smoke and CSR-controlled host/frontend representative re
 CSR job descriptor sequencer representative regression across DMA / AXI-Stream / Direct Stream job modes
 CSR recipe sequencer representative regression across DMA / C RMW / AXI-Stream / Direct Stream recipe modes
 CSR recipe-level reject / busy / worker-error handling regression
+CSR descriptor-fetch regression across CSR smoke, DMA recipe, C RMW recipe, Direct Stream recipe, and reject/error handling
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -117,6 +118,25 @@ Recipe-level reject / busy / manual-command-during-recipe handling
 Recipe worker-error propagation and post-error recovery validation
 ```
 
+P17 extends the P16 CSR-resident recipe sequencer with a memory-backed descriptor fetch prototype.  Software or UVM can place recipe descriptors in external descriptor memory, program the descriptor base/count/stride through CSR, and write `CSR_DESC_FETCH_COMMAND.START_FETCH_RECIPE`.  The descriptor fetch engine reads and validates the table, builds an internal P16-compatible recipe snapshot, and requests the existing P16 recipe sequencer to run it through the P15 job worker.
+
+P17 scope:
+
+```text
+Descriptor-fetch CSR register window at 0x500 and above
+Dedicated descriptor-memory AXI read master
+Fixed 0x80-byte descriptor stride with P16-compatible fields
+Single outstanding descriptor fetch and single launched recipe
+Fetched descriptor to internal P16 recipe snapshot bridge
+No writeback into live P16 CSR slot registers
+DMA two-slot descriptor-fetch recipe validation
+C RMW partial-K descriptor-fetch recipe validation
+Direct Stream frontend descriptor-fetch recipe validation
+Fetch reject / busy / malformed descriptor / AXI RRESP error handling
+Sticky status clear and post-error valid recipe recovery validation
+```
+
+
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
 
 P11 extends the P10 row-accumulator model to output-column tiling.  It supports `N_total` larger than the local B-cache / row-accumulator N capacity by splitting output columns into local N tiles.
@@ -145,6 +165,7 @@ Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchp
 - `ai_accel_subsys_csr_top`
 - `ai_accel_job_sequencer`
 - `ai_accel_recipe_sequencer`
+- `ai_accel_desc_fetch_engine`
 - `ai_accel_csr_regs`
 - `axi_lite_if`
 - `gemm_top`
@@ -731,6 +752,11 @@ Current UVM regression covers:
 - CSR recipe-level two-slot C RMW partial-K recipe regression
 - CSR recipe-level AXI-Stream and Direct Stream frontend-mode recipe regression
 - CSR recipe sequencer reject / busy / worker-error / sticky-clear handling regression
+- CSR descriptor-fetch CSR smoke regression
+- CSR descriptor-fetch DMA two-slot recipe regression
+- CSR descriptor-fetch C RMW partial-K two-slot recipe regression
+- CSR descriptor-fetch Direct Stream two-slot recipe regression
+- CSR descriptor-fetch reject / busy / malformed descriptor / AXI error handling regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -741,11 +767,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 100 items and is passing:
+The current full UVM regression contains 105 items and is passing:
 
 ```text
-TOTAL : 95
-PASS  : 95
+TOTAL : 105
+PASS  : 105
 FAIL  : 0
 ```
 
@@ -908,6 +934,19 @@ TOTAL : 100
 PASS  : 100
 FAIL  : 0
 ```
+
+P17H added these descriptor-fetch representative items:
+
+```text
+csr_desc_fetch_smoke
+csr_desc_fetch_dma_two_slot_case102
+csr_desc_fetch_c_rmw_two_slot_case208
+csr_desc_fetch_direct_stream_two_slot_case102
+csr_desc_fetch_reject_error_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top` and validate CSR-level descriptor fetch, fetched descriptor to P16 recipe snapshot bridging, DMA recipe execution, C RMW partial-K recipe execution, Direct Stream frontend execution, fetch reject/busy/malformed descriptor handling, descriptor AXI RRESP error propagation, sticky clear, and post-error valid recipe recovery.
+
 
 ---
 
@@ -1504,6 +1543,76 @@ do run_uvm.tcl
 
 ---
 
+## Useful P17 Single-Test Runs
+
+### P17C CSR-level descriptor-fetch smoke
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_desc_fetch_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P17D descriptor-fetch DMA two-slot recipe
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P17E descriptor-fetch C RMW two-slot recipe
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 208
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+set GEMM_ENABLE_C_RMW_ACCUM 1
+do run_uvm.tcl
+```
+
+### P17F descriptor-fetch Direct Stream two-slot recipe
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+### P17G descriptor-fetch reject / busy / malformed descriptor handling
+
+```tcl
+set UVM_TEST ai_accel_subsys_csr_desc_fetch_reject_error_test
+set UVM_TOP ai_accel_subsys_csr_uvm_top
+set CASE_ID 102
+set ENABLE_RESULT_CHECK 1
+set FORCE_HELPER_MEM_PATH 0
+set DMA_CLK_PERIOD_NS 10
+set CORE_CLK_PERIOD_NS 14
+do run_uvm.tcl
+```
+
+---
+
+
+
 ## Known Warning
 
 Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
@@ -1521,7 +1630,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Recipe Sequencer P16F2: Multi-Slot Recipe Queue / Reject-Error Regression Completed
+Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -1586,9 +1695,17 @@ Completed:
   P16E2: CSR recipe frontend regression integration        PASS
   P16F: Queue reject / busy / error handling               PASS
   P16F2: CSR recipe reject/error regression integration    PASS
+  P17A: Descriptor fetch prototype spec                     PASS
+  P17B: Descriptor fetch engine RTL / compile smoke         PASS
+  P17C: CSR register plumbing / CSR-level fetch smoke       PASS
+  P17D: Fetched descriptor -> P16 recipe snapshot bridge    PASS
+  P17E: C RMW descriptor-fetch recipe validation            PASS
+  P17F: Frontend descriptor-fetch representative validation PASS
+  P17G: Fetch reject / busy / malformed descriptor handling PASS
+  P17H: Full regression integration                         PASS
 
 Regression:
-  100/100 PASS
+  105/105 PASS
 ```
 
 
@@ -1596,7 +1713,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, and a CSR job descriptor / hardware sequencer, and a CSR recipe sequencer / multi-slot queue.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer / multi-slot queue, and a P17 memory-backed descriptor fetch prototype for launching P16-compatible recipes.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1606,3 +1723,5 @@ P15E proves that the subsystem can also be launched through a job-level hardware
 
 
 P16F2 proves that the subsystem can also be launched through a recipe-level hardware sequencer.  The host programs CSR-resident recipe descriptor slots and writes `START_RECIPE`; the recipe sequencer dispatches each slot through the P15 job worker and reports aggregate done/error/reject status plus per-slot masks.  Validated P16 recipe paths include DMA two-slot recipes, C RMW partial-K two-slot recipes, AXI-Stream two-slot recipes, and Direct Stream two-slot recipes.  P16F also validates recipe-level reject, busy, manual-command-during-recipe, START_JOB-during-recipe, worker-error propagation, sticky clear, slot-status clear, and post-error recovery behavior.
+
+P17H proves that the subsystem can also launch P16-compatible recipes from memory-resident descriptors.  The host writes a descriptor table in external descriptor memory, programs descriptor base/count/stride through CSR, and writes `START_FETCH_RECIPE`; the descriptor fetch engine reads and validates the table, builds an internal recipe snapshot, and launches the existing P16 recipe path.  Validated P17 paths include CSR-level fetch smoke, DMA two-slot recipes, C RMW partial-K two-slot recipes, Direct Stream two-slot recipes, reject/busy/malformed descriptor handling, descriptor AXI RRESP error propagation, sticky clear, and post-error recovery.

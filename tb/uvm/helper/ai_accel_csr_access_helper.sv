@@ -108,6 +108,20 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_RECIPE_SLOT_BASE = 12'h300;
     localparam int unsigned CSR_RECIPE_SLOT_STRIDE = 128;
 
+    // P17 descriptor-fetch CSR window.
+    localparam logic [11:0] CSR_DESC_FETCH_VERSION       = 12'h500;
+    localparam logic [11:0] CSR_DESC_FETCH_COMMAND       = 12'h504;
+    localparam logic [11:0] CSR_DESC_FETCH_STATUS        = 12'h508;
+    localparam logic [11:0] CSR_DESC_FETCH_DONE_STATUS   = 12'h50C;
+    localparam logic [11:0] CSR_DESC_FETCH_ERROR_STATUS  = 12'h510;
+    localparam logic [11:0] CSR_DESC_FETCH_REJECT_STATUS = 12'h514;
+    localparam logic [11:0] CSR_DESC_FETCH_BASE_ADDR     = 12'h518;
+    localparam logic [11:0] CSR_DESC_FETCH_COUNT         = 12'h51C;
+    localparam logic [11:0] CSR_DESC_FETCH_STRIDE_BYTES  = 12'h520;
+    localparam logic [11:0] CSR_DESC_FETCH_CURRENT_INDEX = 12'h524;
+    localparam logic [11:0] CSR_DESC_FETCH_FETCHED_COUNT = 12'h528;
+    localparam logic [11:0] CSR_DESC_FETCH_SNAPSHOT_STATUS = 12'h52C;
+
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
     localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;
@@ -148,6 +162,30 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int RECIPE_CMD_CLEAR_ERROR       = 9;
     localparam int RECIPE_CMD_CLEAR_PERF        = 10;
     localparam int RECIPE_CMD_CLEAR_SLOT_STATUS = 11;
+
+    localparam int DESC_FETCH_CMD_START         = 0;
+    localparam int DESC_FETCH_CMD_CLEAR_DONE    = 8;
+    localparam int DESC_FETCH_CMD_CLEAR_ERROR   = 9;
+
+    // P17 descriptor-fetch reject/status bits.
+    localparam int DESC_FETCH_REJ_BUSY          = 0;
+    localparam int DESC_FETCH_REJ_ZERO_COUNT    = 1;
+    localparam int DESC_FETCH_REJ_COUNT_RANGE   = 2;
+    localparam int DESC_FETCH_REJ_BASE_ALIGN    = 3;
+    localparam int DESC_FETCH_REJ_STRIDE_ALIGN  = 4;
+    localparam int DESC_FETCH_REJ_STRIDE_SMALL  = 5;
+
+    localparam int DESC_FETCH_ERR_AXI_RRESP     = 0;
+    localparam int DESC_FETCH_ERR_AXI_RLAST     = 1;
+    localparam int DESC_FETCH_ERR_DESC_INVALID  = 2;
+    localparam int DESC_FETCH_ERR_INTERNAL      = 8;
+
+    localparam int DESC_FETCH_DESCERR_VALID     = 16;
+    localparam int DESC_FETCH_DESCERR_OUT_MODE  = 17;
+    localparam int DESC_FETCH_DESCERR_DIM_ZERO  = 18;
+    localparam int DESC_FETCH_DESCERR_A_ZERO    = 19;
+    localparam int DESC_FETCH_DESCERR_B_ZERO    = 20;
+    localparam int DESC_FETCH_DESCERR_STORE_ZERO= 21;
 
     // ------------------------------------------------------------
     // Sticky status bits

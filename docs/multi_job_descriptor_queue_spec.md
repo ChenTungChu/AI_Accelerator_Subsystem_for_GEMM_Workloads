@@ -53,7 +53,7 @@ P15 single-job descriptor registers
 P15 single-job hardware sequencer
 P15 job reject / busy / clear handling
 P15 job-level DMA / AXI-Stream / Direct Stream representative tests
-Full UVM regression passing 100/100 after P16F2/P16G closure
+Full UVM regression passing 95/95 after P15E/P15F
 ```
 
 P15 keeps the datapath subsystem intact and adds job-level control.  P16 should preserve that principle.
@@ -159,37 +159,22 @@ AXI interconnect / NoC integration
 
 These can be future milestones after the CSR-resident recipe controller is stable.
 
-### 4.3 Current Implementation Status
+### 4.4 Relationship to P17 Descriptor Fetch
 
-P16 has now completed targeted validation and full-regression integration through P16F2:
+P17 builds on P16 without changing the P16 recipe execution semantics.  P17 may populate an internal P16-compatible recipe snapshot from memory-resident descriptors, but the existing P16 recipe sequencer still owns slot dispatch, completion, error propagation, and per-slot status.
 
-```text
-P16A : Multi-job descriptor queue / recipe sequencer spec              PASS
-P16B : CSR queue registers / descriptor slot extension and tests        PASS
-P16C : Queue runner using P15 single-job sequencer as worker            PASS
-P16D : Two-job C RMW recipe validation                                  PASS
-P16D2: Add P16C/P16D recipe tests into full regression                  PASS
-P16E : Multi-frontend recipe validation                                 PASS
-P16E2: Add P16E frontend recipe tests into full regression              PASS
-P16F : Queue reject / busy / error handling targeted validation         PASS
-P16F2: Add P16F reject/error test into full regression                  PASS
-P16G : Documentation / closure update                                   PASS
-
-Full regression after P16F2:
-  TOTAL : 100
-  PASS  : 100
-  FAIL  : 0
-```
-
-Validated P16 full-regression representatives:
+Validated P17 policy:
 
 ```text
-csr_recipe_dma_two_slot_case102
-csr_recipe_c_rmw_two_slot_case208
-csr_recipe_axis_stream_two_slot_case102
-csr_recipe_direct_stream_two_slot_case102
-csr_recipe_reject_error_case102
+fetched descriptors do not write back to live P16 CSR slot registers
+fetched descriptor table -> internal P16-compatible recipe snapshot
+P16 recipe sequencer -> existing P15 single-job worker
+P14/P15/P16 manual starts are rejected while descriptor fetch is active
+P17 START_FETCH_RECIPE is rejected while recipe_busy is active
 ```
+
+P17H full regression adds descriptor-fetch representatives on top of the P16F2 100/100 baseline and reaches 105/105 PASS.
+
 
 ---
 
@@ -409,16 +394,6 @@ four-slot recipe smoke
 reject / busy / error handling
 ```
 
-Current P16 closure validates the conservative subset needed for regression:
-
-```text
-DMA two-slot recipe                                 PASS
-C RMW two-slot partial-K recipe                     PASS
-AXI-Stream two-slot frontend recipe                 PASS
-Direct Stream two-slot frontend recipe              PASS
-Recipe reject / busy / worker-error / recovery path PASS
-```
-
 ---
 
 ## 8. CSR Recipe Register Extension
@@ -548,15 +523,6 @@ START_RECIPE with invalid selected slot descriptor
 ```
 
 Unsupported combinations do not start a recipe and set `CSR_RECIPE_REJECT_STATUS`.
-
-Validated cleanup policy:
-
-```text
-CLEAR_RECIPE_DONE clears recipe done status and slot_done_mask.
-CLEAR_RECIPE_ERROR clears recipe error/reject status and slot_error/reject masks.
-CLEAR_RECIPE_SLOT_STATUS clears the per-slot done/error/reject masks.
-P16F validation uses a double-clear tolerant helper because the CSR-visible slot mask can observe one cycle of residue while the recipe runner consumes the first clear pulse.
-```
 
 ### 9.3 `CSR_RECIPE_STATUS` at 0x208
 
@@ -1067,107 +1033,103 @@ live CSR slot rewrites do not affect active recipe
 
 ### 17.3 End-to-End Recipe Tests
 
-Validated P16D/P16E/P16F end-to-end tests:
+Recommended initial P16D end-to-end tests:
 
 ```text
-csr_recipe_dma_two_slot_case102
-csr_recipe_c_rmw_two_slot_case208
-csr_recipe_axis_stream_two_slot_case102
-csr_recipe_direct_stream_two_slot_case102
-csr_recipe_reject_error_case102
+csr_recipe_dma_c_rmw_case208
+csr_recipe_dma_c_rmw_case211
 ```
 
-The P16F robustness test covers:
+Recommended P16E frontend extension tests:
 
 ```text
-zero recipe_count reject
-START_RECIPE + CLEAR_ERROR unsupported-combo reject
-slot range reject
-disabled slot reject
-invalid descriptor reject
-START_RECIPE while recipe_busy reject
-P14 manual START_GEMM while recipe_busy reject
-P15 START_JOB while recipe_busy reject
-slot worker DMA-load error propagation
-slot_error_mask reporting
-sticky clear / perf clear / slot-status clear
-post-error valid recipe recovery
+csr_recipe_axis_stream_c_rmw_case208
+csr_recipe_axis_stream_c_rmw_case211
+csr_recipe_direct_stream_c_rmw_case208
+csr_recipe_direct_stream_c_rmw_case211
+```
+
+Recommended P16F robustness tests:
+
+```text
+csr_recipe_reject_zero_count
+csr_recipe_reject_invalid_slot
+csr_recipe_reject_busy
+csr_recipe_job_error_stop
+csr_recipe_manual_cmd_during_busy_reject
 ```
 
 ### 17.4 Acceptance Criteria
 
-P16 closure requires and currently satisfies:
+P16 closure should require:
 
 ```text
-P16A spec reviewed and accepted                                      PASS
-Recipe CSR registers compile                                         PASS
-Recipe sequencer RTL compiles                                        PASS
-Recipe-level two-slot DMA recipe PASS                                PASS
-Recipe-level two-slot C RMW recipe PASS                              PASS
-Recipe-level AXI-Stream and Direct Stream representative tests PASS   PASS
-Recipe reject / busy / worker-error / recovery tests PASS            PASS
-Existing P14 micro-operation tests still PASS                         PASS
-Existing P15 single-job tests still PASS                              PASS
-Legacy sideband full regression still PASS                            PASS
-New full regression total increases only by targeted P16 items        PASS
-No BRAM RTL changes                                                   PASS
-No GEMM datapath behavioral changes required for P16                  PASS
-
-Full regression after P16F2:
-  TOTAL : 100
-  PASS  : 100
-  FAIL  : 0
+P16A spec reviewed and accepted
+Recipe CSR registers compile
+Recipe sequencer RTL compiles
+Recipe-level two-slot DMA C RMW tests PASS
+Recipe-level AXI-Stream and Direct Stream C RMW tests PASS when added
+Recipe reject / busy / error tests PASS
+Existing P14 micro-operation tests still PASS
+Existing P15 single-job tests still PASS
+Legacy sideband full regression still PASS
+New full regression total increases only by targeted P16 representative items
+No BRAM RTL changes
+No GEMM datapath behavioral changes required for P16A/P16B/P16C
 ```
 
 ---
 
 ## 18. P16 Milestone Breakdown
 
-Current P16 split and status:
+Recommended P16 split:
 
 ```text
-P16A : Multi-job descriptor queue / recipe sequencer spec              PASS
-P16B : CSR queue registers / descriptor slot extension and tests        PASS
-P16C : Queue runner using P15 single-job sequencer as worker            PASS
-P16D : Two-job C RMW recipe validation                                  PASS
-P16D2: Add P16C/P16D recipe tests into full regression                  PASS
-P16E : Multi-frontend recipe validation                                 PASS
-P16E2: Add P16E frontend recipe tests into full regression              PASS
-P16F : Queue reject / busy / error handling targeted validation         PASS
-P16F2: Add P16F reject/error test into full regression                  PASS
-P16G : Full regression and documentation closure                        PASS
-```
-
-Validated full-regression additions:
-
-```text
-P16D2: csr_recipe_dma_two_slot_case102
-P16D2: csr_recipe_c_rmw_two_slot_case208
-P16E2: csr_recipe_axis_stream_two_slot_case102
-P16E2: csr_recipe_direct_stream_two_slot_case102
-P16F2: csr_recipe_reject_error_case102
+P16A: Multi-job descriptor queue / recipe sequencer spec        PASS
+P16B: Recipe CSR register extension and slot register tests     Future
+P16C: Recipe sequencer dispatch into P15 job worker             Future
+P16D: Two-slot DMA C RMW recipe validation                      Future
+P16E: AXI-Stream and Direct Stream recipe validation            Future
+P16F: Recipe reject / busy / error handling                     Future
+P16G: Full regression and documentation closure                 Future
 ```
 
 ---
 
-## 19. Resolved P16 Implementation Decisions
+## 19. Open Decisions Before P16B
 
-These decisions were resolved during P16B-P16F implementation:
+These should be confirmed before writing RTL:
 
 ```text
-1. Queue depth: reserve four CSR descriptor slots and validate two-slot recipes first.
-2. Slot registers remain writable while recipe_busy is high; active recipes use START_RECIPE snapshots.
-3. Intermediate C RMW slots use HOST_READBACK; the final slot uses DMA_STORE when external result export is needed.
-4. Slot range wrapping is not supported in the P16 baseline.
-5. Homogeneous DMA, AXI-Stream, and Direct Stream two-slot recipes are validated first.
-6. Hardware timeout counters are not part of P16; timeouts remain in UVM.
-7. Recipe performance output_count is a per-slot accumulated work counter.
-8. P15 job sticky status may be cleared for visibility, but the recipe FSM advances on worker events/status, not stale sticky bits.
-9. Per-slot detailed error codes are not required; P16 exposes slot done/error/reject masks.
-10. Memory-resident descriptors remain future work after CSR-resident sequencing.
-11. START_RECIPE while recipe_busy is rejected.
-12. P15 START_JOB while recipe_busy is rejected.
-13. P14 manual START_* while recipe_busy is rejected.
+1. Queue depth: 2 slots or 4 slots?
+   Recommended: reserve 4 slots in the CSR map, validate 2 slots first.
+
+2. Should slot registers be writable while recipe_busy is high?
+   Recommended: yes, because active recipe uses a START_RECIPE snapshot.
+
+3. Should intermediate C RMW slots use HOST_READBACK output mode or DMA_STORE?
+   Recommended: HOST_READBACK for intermediate slots, DMA_STORE for the final slot.
+
+4. Should P16 support slot range wrapping?
+   Recommended: no for P16B/P16C.
+
+5. Should P16 support mixed frontend recipes?
+   Recommended: allow by descriptor encoding, but validate homogeneous frontend recipes first.
+
+6. Should P16 add hardware timeout counters?
+   Recommended: no for P16C; keep timeouts in UVM first.
+
+7. Should recipe performance output_count represent per-slot outputs or unique final outputs?
+   Recommended: per-slot outputs, because it is accumulated directly from P15 job snapshots.
+
+8. Should P15 job sticky status be cleared automatically before each slot?
+   Recommended: yes as an internal policy, but the recipe FSM should use raw job worker events rather than relying on sticky bits.
+
+9. Should P16 expose per-slot detailed error codes?
+   Recommended: keep masks first; detailed per-slot debug registers can be added later if needed.
+
+10. Should P16 implement memory-resident descriptors after CSR slots?
+    Recommended: future milestone after CSR-resident recipe sequencing is stable.
 ```
 
 ---
@@ -1338,11 +1300,3 @@ P14 and P15 controls preserved when recipe sequencer is idle
 ```
 
 This gives the project a realistic multi-job accelerator control model and naturally connects the P13 C RMW partial-K recipe with the P15 job-level sequencer foundation.
-
-Current closure result:
-
-```text
-TOTAL : 100
-PASS  : 100
-FAIL  : 0
-```

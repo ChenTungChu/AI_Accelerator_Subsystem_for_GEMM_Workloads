@@ -46,14 +46,24 @@ FAIL  : 0
 ```
 
 
-Current project status after P13 C RMW accumulation closure:
+Current project status after P17H descriptor-fetch closure:
 
 ```text
-Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
-Full regression: 82/82 PASS
+Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
+Full regression: 105/105 PASS
 ```
 
 Direct Stream B1 remains compatible with:
+
+
+P17F validated that Direct Stream can be selected from memory-resident descriptors.  The descriptor-fetch flow propagates `INPUT_MODE=DIRECT_STREAM` through the fetched P16-compatible recipe snapshot into the existing P15 job worker, which derives `GEMM_INPUT_STREAM_MODE=1` and preloads A/B into the operand buffers before GEMM execution.
+
+Validated P17 Direct Stream representative:
+
+```text
+csr_desc_fetch_direct_stream_two_slot_case102 PASS
+```
+
 
 ```text
 GEMM_MAC_LANES=1 baseline

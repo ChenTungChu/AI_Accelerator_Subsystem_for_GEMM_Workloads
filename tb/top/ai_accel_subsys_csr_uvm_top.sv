@@ -16,6 +16,11 @@ import ai_accel_subsys_uvm_pkg::*;
 `include "ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test.sv"
 `include "ai_accel_subsys_csr_recipe_frontend_two_slot_smoke_test.sv"
 `include "ai_accel_subsys_csr_recipe_reject_error_test.sv"
+`include "ai_accel_subsys_csr_desc_fetch_smoke_test.sv"
+`include "ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test.sv"
+`include "ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test.sv"
+`include "ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test.sv"
+`include "ai_accel_subsys_csr_desc_fetch_reject_error_test.sv"
 
 module ai_accel_subsys_csr_uvm_top;
 
@@ -82,6 +87,7 @@ module ai_accel_subsys_csr_uvm_top;
     localparam int DMA_SRC_READ_LATENCY_CYCLES  = 2;
     localparam int AXIS_SRC_READ_LATENCY_CYCLES = 2;
     localparam int DS_SRC_READ_LATENCY_CYCLES   = 2;
+    localparam int DESC_SRC_READ_LATENCY_CYCLES = 2;
 
     // DMA destination memory model used by subsystem-level DMA store tests.
     // Byte-addressed so C payloads can be checked naturally.
@@ -314,6 +320,47 @@ module ai_accel_subsys_csr_uvm_top;
     wire ds_src_r_fire  = ds_src_axi_rvalid  && ds_src_axi_rready;
 
     // ============================================================
+    // P17 descriptor source AXI-MM read port
+    // ============================================================
+    logic [ID_WIDTH-1:0]   desc_src_axi_arid;
+    logic [ADDR_WIDTH-1:0] desc_src_axi_araddr;
+    logic [7:0]            desc_src_axi_arlen;
+    logic [2:0]            desc_src_axi_arsize;
+    logic [1:0]            desc_src_axi_arburst;
+    logic                  desc_src_axi_arvalid;
+    logic                  desc_src_axi_arready;
+
+    logic [ID_WIDTH-1:0]   desc_src_axi_rid;
+    logic [DATA_WIDTH-1:0] desc_src_axi_rdata;
+    logic [1:0]            desc_src_axi_rresp;
+    logic                  desc_src_axi_rlast;
+    logic                  desc_src_axi_rvalid;
+    logic                  desc_src_axi_rready;
+
+    logic                  desc_src_rd_pending_valid;
+    logic [ADDR_WIDTH-1:0] desc_src_rd_pending_addr;
+    logic [ID_WIDTH-1:0]   desc_src_rd_pending_id;
+    int unsigned           desc_src_rd_pending_delay;
+
+    logic [ID_WIDTH-1:0]   desc_src_rid_q;
+    logic [DATA_WIDTH-1:0] desc_src_rdata_q;
+    logic [1:0]            desc_src_rresp_q;
+    logic                  desc_src_rlast_q;
+    logic                  desc_src_rvalid_q;
+
+    int unsigned           desc_src_ar_count;
+    int unsigned           desc_src_r_count;
+
+    // P17G descriptor source RRESP injection for error-path validation.
+    logic                  desc_src_inject_rresp_error_q = 1'b0;
+    int signed             desc_src_inject_rresp_error_beat_q = -1;
+    int unsigned           desc_src_inject_base_ar_count = 0;
+    int unsigned           desc_src_rd_pending_beat_idx;
+
+    wire desc_src_ar_fire = desc_src_axi_arvalid && desc_src_axi_arready;
+    wire desc_src_r_fire  = desc_src_axi_rvalid  && desc_src_axi_rready;
+
+    // ============================================================
     // DMA destination AXI-MM write port
     // ============================================================
     logic [ID_WIDTH-1:0]       dma_dst_axi_awid;
@@ -448,7 +495,20 @@ module ai_accel_subsys_csr_uvm_top;
     assign ds_src_axi_rdata   = ds_src_rdata_q;
     assign ds_src_axi_rresp   = ds_src_rresp_q;
     assign ds_src_axi_rlast   = ds_src_rlast_q;
-    assign ds_src_axi_rvalid  = ds_src_rvalid_q;    
+    assign ds_src_axi_rvalid  = ds_src_rvalid_q;
+
+    // ============================================================
+    // P17 descriptor source AXI read response model connections
+    // ============================================================
+    assign desc_src_axi_arready = dma_rst_n &&
+                                  !desc_src_rd_pending_valid &&
+                                  !desc_src_rvalid_q;
+
+    assign desc_src_axi_rid     = desc_src_rid_q;
+    assign desc_src_axi_rdata   = desc_src_rdata_q;
+    assign desc_src_axi_rresp   = desc_src_rresp_q;
+    assign desc_src_axi_rlast   = desc_src_rlast_q;
+    assign desc_src_axi_rvalid  = desc_src_rvalid_q;
 
     // ============================================================
     // DMA destination AXI write response model connections
@@ -864,6 +924,111 @@ module ai_accel_subsys_csr_uvm_top;
     end
 
     // ============================================================
+    // P17G descriptor source error-injection controls
+    // ============================================================
+    task automatic desc_src_set_rresp_error(
+        input bit        enable,
+        input int signed relative_read_beat
+    );
+    begin
+        desc_src_inject_rresp_error_q    = enable;
+        desc_src_inject_rresp_error_beat_q = relative_read_beat;
+        desc_src_inject_base_ar_count    = desc_src_ar_count;
+    end
+    endtask
+
+    // ============================================================
+    // P17 descriptor source AXI read responder
+    //
+    // Uses the existing byte-addressed ctrl_if.dma_src_mem[] storage
+    // so P17C tests can prepare descriptor tables without adding a
+    // new TB directory or a new memory model interface.
+    // ============================================================
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            desc_src_rd_pending_valid <= 1'b0;
+            desc_src_rd_pending_addr  <= '0;
+            desc_src_rd_pending_id    <= '0;
+            desc_src_rd_pending_delay <= 0;
+
+            desc_src_rid_q            <= '0;
+            desc_src_rdata_q          <= '0;
+            desc_src_rresp_q          <= AXI_RESP_OKAY;
+            desc_src_rlast_q          <= 1'b0;
+            desc_src_rvalid_q         <= 1'b0;
+
+            desc_src_ar_count         <= 0;
+            desc_src_r_count          <= 0;
+
+            desc_src_rd_pending_beat_idx       <= 0;
+        end
+        else begin
+            if (desc_src_ar_fire) begin
+                int unsigned ar_base_idx;
+
+                ar_base_idx = src_byte_index(desc_src_axi_araddr);
+
+                if (desc_src_axi_arlen !== 8'd0) begin
+                    $fatal(1,
+                        "[UVM_TOP_DESC_SRC] Unsupported descriptor source ARLEN=%0d, expected 0",
+                        desc_src_axi_arlen
+                    );
+                end
+
+                if ((ar_base_idx + BYTES_PER_BEAT) > DMA_SRC_MEM_BYTES) begin
+                    $fatal(1,
+                        "[UVM_TOP_DESC_SRC] Descriptor source read out of range: addr=0x%08h idx=%0d depth=%0d",
+                        desc_src_axi_araddr, ar_base_idx, DMA_SRC_MEM_BYTES
+                    );
+                end
+
+                desc_src_rd_pending_valid    <= 1'b1;
+                desc_src_rd_pending_addr     <= desc_src_axi_araddr;
+                desc_src_rd_pending_id       <= desc_src_axi_arid;
+                desc_src_rd_pending_delay    <= DESC_SRC_READ_LATENCY_CYCLES;
+                desc_src_rd_pending_beat_idx <= desc_src_ar_count;
+
+                desc_src_ar_count            <= desc_src_ar_count + 1;
+            end
+            else if (desc_src_rd_pending_valid && (desc_src_rd_pending_delay != 0)) begin
+                desc_src_rd_pending_delay <= desc_src_rd_pending_delay - 1;
+            end
+
+            if (desc_src_r_fire) begin
+                desc_src_rvalid_q <= 1'b0;
+                desc_src_rlast_q  <= 1'b0;
+                desc_src_rresp_q  <= AXI_RESP_OKAY;
+                desc_src_rdata_q  <= '0;
+                desc_src_rid_q    <= '0;
+
+                desc_src_r_count  <= desc_src_r_count + 1;
+            end
+
+            if (!desc_src_rvalid_q &&
+                desc_src_rd_pending_valid &&
+                (desc_src_rd_pending_delay == 0)) begin
+
+                desc_src_rvalid_q <= 1'b1;
+                desc_src_rlast_q  <= 1'b1;
+                desc_src_rid_q    <= desc_src_rd_pending_id;
+                desc_src_rdata_q  <= src_pack_word(desc_src_rd_pending_addr);
+
+                if (desc_src_inject_rresp_error_q &&
+                    (desc_src_inject_rresp_error_beat_q >= 0) &&
+                    (desc_src_rd_pending_beat_idx >= desc_src_inject_base_ar_count) &&
+                    (int'(desc_src_rd_pending_beat_idx - desc_src_inject_base_ar_count) ==
+                        desc_src_inject_rresp_error_beat_q)) begin
+                    desc_src_rresp_q <= AXI_RESP_SLVERR;
+                end else begin
+                    desc_src_rresp_q <= AXI_RESP_OKAY;
+                end
+
+                desc_src_rd_pending_valid <= 1'b0;
+            end
+        end
+    end
+
+    // ============================================================
     // DMA destination AXI write responder
     // ============================================================
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
@@ -1088,6 +1253,22 @@ module ai_accel_subsys_csr_uvm_top;
         .ds_src_axi_rlast     (ds_src_axi_rlast),
         .ds_src_axi_rvalid    (ds_src_axi_rvalid),
         .ds_src_axi_rready    (ds_src_axi_rready),
+
+        // P17 descriptor source AXI-MM read master port
+        .desc_src_axi_arid    (desc_src_axi_arid),
+        .desc_src_axi_araddr  (desc_src_axi_araddr),
+        .desc_src_axi_arlen   (desc_src_axi_arlen),
+        .desc_src_axi_arsize  (desc_src_axi_arsize),
+        .desc_src_axi_arburst (desc_src_axi_arburst),
+        .desc_src_axi_arvalid (desc_src_axi_arvalid),
+        .desc_src_axi_arready (desc_src_axi_arready),
+
+        .desc_src_axi_rid     (desc_src_axi_rid),
+        .desc_src_axi_rdata   (desc_src_axi_rdata),
+        .desc_src_axi_rresp   (desc_src_axi_rresp),
+        .desc_src_axi_rlast   (desc_src_axi_rlast),
+        .desc_src_axi_rvalid  (desc_src_axi_rvalid),
+        .desc_src_axi_rready  (desc_src_axi_rready),
 
         // DMA destination AXI-MM write master port
         .dma_dst_axi_awid     (dma_dst_axi_awid),

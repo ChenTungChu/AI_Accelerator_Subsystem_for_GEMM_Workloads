@@ -342,8 +342,9 @@ module ai_accel_csr_regs_uvm_top;
     localparam int CSR_DATA_WIDTH = 32;
 
     localparam logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014;
-    localparam logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015;
-    localparam logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016;
+    localparam logic [31:0] CSR_JOB_VERSION_VALUE        = 32'h0001_0015;
+    localparam logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016;
+    localparam logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017;
     localparam int          P16_RECIPE_QUEUE_DEPTH   = 4;
 
     // ============================================================
@@ -409,6 +410,7 @@ module ai_accel_csr_regs_uvm_top;
         .CSR_VERSION_VALUE        (CSR_VERSION_VALUE),
         .CSR_JOB_VERSION_VALUE    (CSR_JOB_VERSION_VALUE),
         .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
+        .CSR_DESC_FETCH_VERSION_VALUE(CSR_DESC_FETCH_VERSION_VALUE),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_csr_regs (
         .clk                    (clk),
@@ -509,6 +511,24 @@ module ai_accel_csr_regs_uvm_top;
         .recipe_slot_store_dst_base_addr(recipe_slot_store_dst_base_addr),
         .recipe_slot_store_byte_count   (recipe_slot_store_byte_count),
         .recipe_slot_user_tag           (recipe_slot_user_tag),
+
+        .desc_fetch_start_pulse         (),
+        .desc_fetch_clear_done_pulse    (),
+        .desc_fetch_clear_error_pulse   (),
+        .desc_fetch_base_addr           (),
+        .desc_fetch_count               (),
+        .desc_fetch_stride_bytes        (),
+
+        .desc_fetch_busy                (1'b0),
+        .desc_fetch_done                (1'b0),
+        .desc_fetch_error               (1'b0),
+        .desc_fetch_reject              (1'b0),
+        .desc_fetch_error_status        (32'h0000_0000),
+        .desc_fetch_reject_status       (32'h0000_0000),
+        .desc_fetch_current_index       (4'h0),
+        .desc_fetch_fetched_count       (4'h0),
+        .desc_fetch_snapshot_valid      (1'b0),
+        .desc_fetch_recipe_count        (4'h0),
 
         .job_busy               (status_if.job_busy),
         .job_done               (status_if.job_done),

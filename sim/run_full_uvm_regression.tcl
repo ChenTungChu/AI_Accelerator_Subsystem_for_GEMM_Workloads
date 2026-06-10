@@ -2057,6 +2057,78 @@ run_reg_item "csr_recipe_reject_error_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P17H: Descriptor-fetch regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P17 targeted validation into the full regression by
+# covering descriptor-fetch CSR plumbing, fetched descriptor to
+# P16 recipe snapshot launch, C RMW descriptor recipes, frontend
+# descriptor recipes, and descriptor-fetch reject/error handling.
+# Expected total after P17H: 105.
+# ============================================================
+run_reg_item "csr_desc_fetch_smoke" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_dma_two_slot_case102" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_c_rmw_two_slot_case208" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 208
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_ENABLE_C_RMW_ACCUM 1
+}
+
+run_reg_item "csr_desc_fetch_direct_stream_two_slot_case102" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_reject_error_case102" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_reject_error_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+
 # ============================================================
 # Final summary
 # ============================================================

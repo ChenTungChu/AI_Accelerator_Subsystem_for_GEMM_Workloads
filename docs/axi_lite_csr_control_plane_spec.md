@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint, the P15E job-descriptor sequencer CSR extension checkpoint, and the P16F recipe-sequencer / multi-slot queue checkpoint.
+This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint and the P15E job-descriptor sequencer CSR extension checkpoint.
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 builds one level higher by adding CSR-resident recipe descriptor slots and a recipe sequencer that dispatches slots through the P15 single-job worker.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.
 
 ---
 
@@ -46,7 +46,7 @@ ds_load_start / ds_src_base_addr / ds_dst_base_addr / ds_load_beats / ds_operand
 dma_store_start / dma_store_src_base_addr / dma_store_dst_base_addr / dma_store_byte_count
 ```
 
-P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.  P15 preserves that wrapper and adds a higher-level job descriptor window above the P14 micro-operation registers.  P16 preserves both lower layers and adds a recipe descriptor / multi-slot queue window above the P15 job window.
+P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.  P15 preserves that wrapper and adds a higher-level job descriptor window above the P14 micro-operation registers.
 
 ---
 
@@ -65,7 +65,7 @@ The intended programming model is:
 6. Host polls status registers and reads performance/status counters.
 ```
 
-The P14 CSR block does not automatically schedule multi-stage jobs.  Software or the UVM sequence remains responsible for launching DMA load, GEMM, and DMA store in the desired order.  P15 adds a separate job-level sequencer path that can consume one descriptor and automatically launch preload, GEMM, and optional store stages while preserving the P14 micro-operation programming model for debug and compatibility.  P16 adds a recipe-level sequencer path that consumes multiple CSR-resident descriptor slots and dispatches them sequentially through the P15 worker while preserving the P14 and P15 command models when the recipe sequencer is idle.
+The P14 CSR block does not automatically schedule multi-stage jobs.  Software or the UVM sequence remains responsible for launching DMA load, GEMM, and DMA store in the desired order.  P15 adds a separate job-level sequencer path that can consume one descriptor and automatically launch preload, GEMM, and optional store stages while preserving the P14 micro-operation programming model for debug and compatibility.
 
 ---
 
@@ -113,20 +113,6 @@ CSR job-level Direct Stream preload + GEMM + DMA store CASE_ID=102
 Full regression after P15E: 95/95 PASS
 ```
 
-Current P16F validated scope:
-
-```text
-CSR recipe command/status window above the P15 job window
-CSR-resident descriptor slot programming model
-Hardware recipe sequencer integrated in ai_accel_subsys_csr_top
-CSR recipe-level DMA two-slot CASE_ID=102
-CSR recipe-level C RMW partial-K two-slot CASE_ID=208
-CSR recipe-level AXI-Stream two-slot CASE_ID=102
-CSR recipe-level Direct Stream two-slot CASE_ID=102
-CSR recipe reject / busy / worker-error / sticky-clear handling CASE_ID=102
-Full regression after P16F2: 100/100 PASS
-```
-
 ### 4.2 Not Included
 
 P14 does not include:
@@ -136,16 +122,16 @@ Interrupt output
 UVM RAL model
 Linux driver
 C software driver
-Unbounded descriptor queue
+Descriptor queue
 P14 automatic job scheduler
-Out-of-order multi-job hardware command processor
+Multi-job hardware command processor
 Cache-coherent host interface
 AXI interconnect / NoC integration
 Double buffering
 Streaming GEMM compute rewrite
 ```
 
-P16 covers the bounded CSR-resident recipe queue / multi-slot command processor used by the current regression.  Unbounded queues, out-of-order command processors, interrupts, drivers, and cache-coherent host integration remain future milestones.
+These can be future milestones after the CSR control plane and the single-job P15 sequencer are stable.
 
 ---
 
@@ -183,7 +169,8 @@ ai_accel_subsys_csr_top
                     -> existing ai_accel_subsys sideband starts/configs
 ```
 
-Recommended P16 extension:
+
+Recommended P17 extension:
 
 ```text
 ai_accel_subsys_csr_top
@@ -192,12 +179,19 @@ ai_accel_subsys_csr_top
             -> P14 micro-operation CSR outputs
             -> P15 job descriptor/config outputs
             -> P16 recipe command/config/slot outputs
-                -> ai_accel_recipe_sequencer
-                    -> ai_accel_job_sequencer
-                        -> existing ai_accel_subsys sideband starts/configs
+            -> P17 descriptor-fetch command/config outputs
+                -> ai_accel_desc_fetch_engine
+                    -> descriptor-memory AXI read master
+                    -> fetched P16-compatible recipe snapshot
+                        -> ai_accel_recipe_sequencer
+                            -> ai_accel_job_sequencer
+                                -> existing ai_accel_subsys datapath
 ```
 
-The existing `ai_accel_subsys.sv` remains the stable datapath subsystem.  The CSR top wraps it, the P15 job sequencer arbitrates between job-level control and the existing P14 micro-operation controls, and the P16 recipe sequencer arbitrates above P15 by dispatching one slot at a time through the job worker.
+P17 does not overwrite the live P16 CSR slot register window.  It provides an internal fetched recipe snapshot to the same recipe execution path.
+
+
+The existing `ai_accel_subsys.sv` remains the stable datapath subsystem.  The CSR top wraps it, and the P15 job sequencer arbitrates between job-level control and the existing P14 micro-operation controls.
 
 ---
 
@@ -389,42 +383,40 @@ P15 adds a job descriptor / sequencer register window above the P14 micro-operat
 
 The P15 job window is intentionally separate from the P14 micro-operation window.  Software can continue using P14 commands directly when the job sequencer is idle.
 
-P16 adds a recipe descriptor / sequencer register window above the P15 job window.  The P14 micro-operation window and P15 job window remain unchanged.
-
-### 9.2 P16 Recipe Descriptor / Sequencer Register Groups
-
-The P16 recipe window is organized as a small control/status block plus a bounded set of descriptor slots.  The exact slot stride is implementation-owned by the RTL localparams, but the logical register groups are:
-
-| Group | Access | Description |
-|---|---|---|
-| `CSR_RECIPE_VERSION` | RO | Recipe sequencer version / feature ID |
-| `CSR_RECIPE_COMMAND` | W1P | Recipe start and clear commands |
-| `CSR_RECIPE_STATUS` | RO | Live recipe status summary |
-| `CSR_RECIPE_DONE_STATUS` | RO/W1C | Sticky aggregate recipe done status |
-| `CSR_RECIPE_ERROR_STATUS` | RO/W1C | Sticky aggregate recipe error status |
-| `CSR_RECIPE_REJECT_STATUS` | RO/W1C | Sticky recipe command / descriptor reject reasons |
-| `CSR_RECIPE_STATE` | RO | Current recipe sequencer state |
-| `CSR_RECIPE_CONFIG` | RW | Recipe count, slot count, and policy bits |
-| `CSR_RECIPE_CURRENT_SLOT` | RO | Slot currently being dispatched |
-| `CSR_RECIPE_COMPLETED_COUNT` | RO | Number of completed slots in the active recipe |
-| `CSR_RECIPE_SLOT_DONE_MASK` | RO/W1C | Sticky per-slot done mask |
-| `CSR_RECIPE_SLOT_ERROR_MASK` | RO/W1C | Sticky per-slot error mask |
-| `CSR_RECIPE_SLOT_REJECT_MASK` | RO/W1C | Sticky per-slot reject mask |
-| `CSR_RECIPE_SLOTn_CONTROL` | RW | Slot enable/valid and slot options |
-| `CSR_RECIPE_SLOTn_MODE` | RW | Slot input/output mode and accumulate bit |
-| `CSR_RECIPE_SLOTn_BASE_ADDR_A/B/C` | RW | GEMM logical A/B/C base addresses |
-| `CSR_RECIPE_SLOTn_DIM_M/N/K` | RW | GEMM dimensions for this slot |
-| `CSR_RECIPE_SLOTn_A/B_SRC_BASE` | RW | External source bases for preload modes |
-| `CSR_RECIPE_SLOTn_A/B_DST_BASE` | RW | Scratchpad or operand-buffer destinations |
-| `CSR_RECIPE_SLOTn_A/B_LOAD_BEATS` | RW | A/B preload lengths in DATA_WIDTH beats |
-| `CSR_RECIPE_SLOTn_STORE_SRC_BASE` | RW | Scratchpad C source base for DMA store |
-| `CSR_RECIPE_SLOTn_STORE_DST_BASE` | RW | External DMA-store destination base |
-| `CSR_RECIPE_SLOTn_STORE_BYTE_COUNT` | RW | DMA-store byte count |
-| `CSR_RECIPE_SLOTn_TAG` | RW | Debug / software tag captured with the slot |
-
-The P16 recipe window is intentionally above the P15 job window.  Software can continue using P14 manual commands or P15 single-job commands when `recipe_busy` is low.
-
 ---
+
+### 9.3 P17 Descriptor-Fetch Register Window
+
+P17 adds a descriptor-fetch CSR window above the P16 recipe slot range.  The P14 micro-operation window, P15 job window, P16 recipe window, and P16 slot window remain unchanged.
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+```
+
+| Offset | Name | Access | Description |
+|---:|---|---|---|
+| 0x500 | `CSR_DESC_FETCH_VERSION` | RO | Descriptor fetch version / feature ID |
+| 0x504 | `CSR_DESC_FETCH_COMMAND` | W1P | Descriptor fetch start and clear commands |
+| 0x508 | `CSR_DESC_FETCH_STATUS` | RO | Live fetch status summary |
+| 0x50C | `CSR_DESC_FETCH_DONE_STATUS` | RO/W1C | Sticky fetch done status |
+| 0x510 | `CSR_DESC_FETCH_ERROR_STATUS` | RO/W1C | Sticky fetch error status |
+| 0x514 | `CSR_DESC_FETCH_CONTROL` | RW | Fetch policy bits |
+| 0x518 | `CSR_DESC_FETCH_REJECT_STATUS` | RO/W1C | Sticky fetch command reject reasons |
+| 0x51C | `CSR_DESC_FETCH_STATE` | RO | Current fetch engine state |
+| 0x520 | `CSR_DESC_BASE_ADDR` | RW | Base address of descriptor table in external descriptor memory |
+| 0x524 | `CSR_DESC_COUNT` | RW | Number of descriptors to fetch |
+| 0x528 | `CSR_DESC_STRIDE` | RW | Byte stride between descriptors |
+| 0x52C | `CSR_DESC_CURRENT_INDEX` | RO | Descriptor index currently being fetched or validated |
+| 0x530 | `CSR_DESC_FETCHED_COUNT` | RO | Number of descriptors fetched in the last run |
+| 0x534 | `CSR_DESC_ERROR_INDEX` | RO | Descriptor index associated with the last validation/fetch error |
+| 0x538 | `CSR_DESC_ERROR_DETAIL` | RO | Validation/fetch error detail |
+| 0x53C | `CSR_DESC_RESERVED_53C` | RO | Reserved |
+
+
 
 ## 10. Register Bit Definitions
 
@@ -571,33 +563,37 @@ The P15 job registers use the same AXI-Lite access policy and the same W1P/W1C d
 
 The full job register bit definitions are recorded in `docs/job_descriptor_sequencer_spec.md`.
 
-### 10.9 P16 Recipe Command / Status Registers
-
-`CSR_RECIPE_COMMAND` is a write-one-pulse register:
-
-| Bit | Name | Type | Description |
-|---:|---|---|---|
-| 0 | `START_RECIPE` | W1P | Latch the recipe configuration and start dispatch if accepted |
-| 8 | `CLEAR_RECIPE_DONE` | W1P | Clear aggregate recipe done status |
-| 9 | `CLEAR_RECIPE_ERROR` | W1P | Clear aggregate recipe error and reject status |
-| 10 | `CLEAR_RECIPE_PERF` | W1P | Clear recipe performance snapshots / counters |
-| 11 | `CLEAR_SLOT_STATUS` | W1P | Clear sticky per-slot done/error/reject masks |
-
-`CSR_RECIPE_REJECT_STATUS` records recipe command and descriptor rejects:
-
-| Bit | Name | Type | Description |
-|---:|---|---|---|
-| 0 | `RECIPE_BUSY_REJECT` | RO/W1C | `START_RECIPE` requested while `recipe_busy` is high |
-| 3 | `ZERO_RECIPE_COUNT_REJECT` | RO/W1C | `START_RECIPE` requested with zero recipe count |
-| 4 | `SLOT_RANGE_REJECT` | RO/W1C | Configured recipe/slot count exceeds the supported slot window |
-| 5 | `DISABLED_SLOT_REJECT` | RO/W1C | Recipe references a disabled slot |
-| 6 | `INVALID_DESCRIPTOR_REJECT` | RO/W1C | Recipe references a slot with invalid descriptor fields |
-| 7 | `MANUAL_CMD_DURING_RECIPE_REJECT` | RO/W1C | P14 `START_*` or P15 `START_JOB` attempted while recipe is active |
-| 8 | `UNSUPPORTED_COMBO` | RO/W1C | Unsupported recipe command-bit combination was written |
-
-`CSR_RECIPE_ERROR_STATUS` records worker and slot-level errors.  In the current validated flow, bit 0 is used for slot worker error propagation and `CSR_RECIPE_SLOT_ERROR_MASK` identifies the slot that failed.
-
 ---
+
+### 10.11 P17 Descriptor-Fetch Command / Status Policy
+
+`CSR_DESC_FETCH_COMMAND` at `0x504` is a write-one-pulse register:
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `START_FETCH_RECIPE` | W1P | Fetch descriptor table, validate descriptors, build a P16-compatible internal recipe snapshot, and request P16 recipe launch |
+| 8 | `CLEAR_FETCH_DONE` | W1P | Clear sticky descriptor-fetch done bits |
+| 9 | `CLEAR_FETCH_ERROR` | W1P | Clear sticky descriptor-fetch error and reject bits |
+
+`CSR_DESC_FETCH_STATUS` exposes fetch and downstream ownership state:
+
+| Bit | Name | Access | Description |
+|---:|---|---|---|
+| 0 | `FETCH_BUSY` | RO | Descriptor fetch engine is active |
+| 1 | `FETCH_DONE` | RO | Sticky descriptor-fetch done is set |
+| 2 | `FETCH_ERROR` | RO | Sticky fetch error or reject is set |
+| 3 | `FETCH_ACCEPT_READY` | RO | Fetch path can accept a new START_FETCH_RECIPE |
+| 4 | `RECIPE_LAUNCHED` | RO | Last successful fetch launched the P16 recipe path |
+| 8 | `RECIPE_BUSY` | RO | P16 recipe sequencer busy |
+| 9 | `JOB_BUSY` | RO | P15 job worker busy |
+| 10 | `MICRO_OP_BUSY` | RO | Any lower-level P14 micro-operation engine busy |
+| 16 | `CSR_READY` | RO | CSR block ready |
+
+`DESC_FETCH_DONE` means descriptor fetch, descriptor validation, and internal recipe launch acceptance completed.  It does not mean the GEMM recipe has completed; recipe completion remains owned by the P16 recipe registers.
+
+Validated P17 reject/error bits cover zero count, count range, base/stride alignment, stride too small, malformed descriptor fields, descriptor AXI RRESP error, START_FETCH while fetch/recipe busy, and lower-level P14/P15/P16 starts while fetch is active.
+
+
 
 ## 11. Configuration Register Defaults
 
@@ -641,19 +637,6 @@ CSR_JOB_DIM_K             = 0x0000_0004
 CSR_JOB_A_LOAD_BEATS      = 0x0000_0000
 CSR_JOB_B_LOAD_BEATS      = 0x0000_0000
 CSR_JOB_STORE_BYTE_COUNT  = 0x0000_0000
-```
-
-P16 recipe descriptor defaults keep the recipe idle after reset:
-
-```text
-CSR_RECIPE_CONFIG           = 0x0000_0000
-CSR_RECIPE_DONE_STATUS      = 0x0000_0000
-CSR_RECIPE_ERROR_STATUS     = 0x0000_0000
-CSR_RECIPE_REJECT_STATUS    = 0x0000_0000
-CSR_RECIPE_SLOT_DONE_MASK   = 0x0000_0000
-CSR_RECIPE_SLOT_ERROR_MASK  = 0x0000_0000
-CSR_RECIPE_SLOT_REJECT_MASK = 0x0000_0000
-All recipe descriptor slots reset disabled / invalid unless programmed by software.
 ```
 
 ---
@@ -777,27 +760,6 @@ required store byte count is non-zero for DMA_STORE output mode
 
 When a P15 job is active, P14 manual `START_*` commands are rejected and are not forwarded to the datapath.  This policy avoids two CSR control sources driving the same underlying engines.
 
-### 13.8 P16 START_RECIPE Acceptance
-
-`START_RECIPE` is accepted only when:
-
-```text
-recipe_busy == 0
-job_busy == 0
-acc_busy == 0
-dma_load_busy == 0
-axis_load_busy == 0
-ds_load_busy == 0
-dma_store_busy == 0
-recipe_count != 0
-slot_count is within the implemented descriptor-slot window
-all referenced slots are enabled and valid
-each referenced slot has a supported P15 input/output mode
-each referenced slot has non-zero dimensions and required preload/store lengths
-```
-
-When a P16 recipe is active, P14 manual `START_*` commands and P15 `START_JOB` commands are rejected and are not forwarded to the datapath.  This policy keeps the recipe sequencer as the only active owner of the P15 worker and underlying engines during recipe execution.
-
 ---
 
 ## 14. Sideband Outputs From CSR Block
@@ -847,8 +809,6 @@ output logic [31:0]           dma_store_byte_count
 All start outputs are one `dma_clk` cycle pulses.
 
 For P15, the CSR block also exposes the job descriptor fields and job command pulses to `ai_accel_job_sequencer`.  The sequencer then drives the same style of subsystem sideband control/config wires during an active job.
-
-For P16, the CSR block exposes recipe command/config fields and descriptor-slot fields to the recipe sequencer.  The recipe sequencer owns the P15 job worker while a recipe is active and issues one job at a time.  No new datapath sideband protocol is introduced by P16.
 
 Recommended job-facing outputs include:
 
@@ -923,21 +883,6 @@ input logic [31:0] job_state,
 input logic [31:0] job_perf_busy_cycles,
 input logic [31:0] job_perf_mac_count,
 input logic [31:0] job_perf_output_count
-```
-
-For P16, the CSR block receives recipe sequencer status and exposes them through the recipe CSR window:
-
-```systemverilog
-input logic        recipe_busy,
-input logic [31:0] recipe_done_status,
-input logic [31:0] recipe_error_status,
-input logic [31:0] recipe_reject_status,
-input logic [31:0] recipe_state,
-input logic [31:0] recipe_current_slot,
-input logic [31:0] recipe_completed_count,
-input logic [31:0] recipe_slot_done_mask,
-input logic [31:0] recipe_slot_error_mask,
-input logic [31:0] recipe_slot_reject_mask
 ```
 
 ---
@@ -1068,43 +1013,9 @@ Sequencer starts GEMM with GEMM_INPUT_STREAM_MODE=1.
 Sequencer runs DMA store after GEMM completion.
 ```
 
-### 16.8 P16 Recipe Descriptor Two-Slot Sequence
-
-```text
-1. CSR programs recipe global config: recipe_count / slot_count.
-2. CSR programs slot0 descriptor fields.
-3. CSR programs slot1 descriptor fields.
-4. CSR writes CSR_RECIPE_COMMAND.START_RECIPE.
-5. Recipe sequencer dispatches slot0 through the P15 job worker.
-6. Recipe sequencer waits for slot0 job done or error.
-7. Recipe sequencer dispatches slot1 through the P15 job worker.
-8. Recipe sequencer waits for slot1 job done or error.
-9. CSR polls CSR_RECIPE_DONE_STATUS / CSR_RECIPE_ERROR_STATUS.
-10. Test checks slot masks and final DMA destination memory.
-```
-
-### 16.9 P16 Recipe C RMW Partial-K Sequence
-
-```text
-Slot 0:
-  INPUT_MODE        = DMA_LOAD or selected frontend mode
-  OUTPUT_MODE       = DMA_STORE
-  ACCUMULATE_ENABLE = 0
-  K_part            = first partial-K segment
-
-Slot 1:
-  INPUT_MODE        = DMA_LOAD or selected frontend mode
-  OUTPUT_MODE       = DMA_STORE
-  ACCUMULATE_ENABLE = 1
-  K_part            = second partial-K segment
-
-START_RECIPE launches slot0 then slot1.
-The final C result is compared after the last slot's DMA store.
-```
-
 ---
 
-## 17. Verification Plan For P14 / P15 / P16
+## 17. Verification Plan For P14 / P15 / P16 / P17
 
 ### 17.1 P14 CSR Register Tests
 
@@ -1156,23 +1067,9 @@ csr_job_direct_stream_load_store_case102
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, program one CSR-resident job descriptor, issue `CSR_JOB_COMMAND.START_JOB`, let the hardware job sequencer launch the selected preload/GEMM/store stages, and compare the final DMA destination memory against the software reference.
 
-### 17.4 P16 Recipe-Level End-to-End Tests
+### 17.4 Acceptance Criteria
 
-Validated P16 recipe-level regression items:
-
-```text
-csr_recipe_dma_two_slot_case102
-csr_recipe_c_rmw_two_slot_case208
-csr_recipe_axis_stream_two_slot_case102
-csr_recipe_direct_stream_two_slot_case102
-csr_recipe_reject_error_case102
-```
-
-These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, program CSR-resident recipe descriptor slots, issue `CSR_RECIPE_COMMAND.START_RECIPE`, let the hardware recipe sequencer dispatch through the P15 job worker, and compare final DMA destination memory against the software reference when the recipe is valid.  The reject/error test validates command rejection, descriptor rejection, worker-error propagation, sticky clear, slot mask reporting, and valid-recipe recovery after cleanup.
-
-### 17.5 Acceptance Criteria
-
-P14/P15/P16 closure should require:
+P14 closure should require:
 
 ```text
 CSR standalone tests PASS
@@ -1182,14 +1079,13 @@ Legacy sideband full regression still PASS
 New full regression total increases by the CSR representative items
 P14F full regression: 90/90 PASS
 P15E full regression: 95/95 PASS
-P16F2 full regression: 100/100 PASS
 No BRAM RTL changes
 No GEMM datapath behavioral changes required for P14A/P14B
 ```
 
 ---
 
-## 18. P14 / P15 / P16 Milestone Breakdown
+## 18. P14 / P15 / P16 / P17 Milestone Breakdown
 
 Completed P14 split:
 
@@ -1203,7 +1099,7 @@ P14F: CSR-controlled DMA / AXI-Stream / Direct Stream representatives  PASS
 P14G: Regression and documentation closure                             PASS
 ```
 
-Completed P15 job-sequencer split:
+Completed P15 job-sequencer split through the current checkpoint:
 
 ```text
 P15A: Job descriptor / sequencer spec                                  PASS
@@ -1212,20 +1108,6 @@ P15C: Single-job DMA load -> GEMM -> DMA store hardware FSM            PASS
 P15D: Job sequencer reject / busy / clear handling                     PASS
 P15E: Job sequencer frontend-mode extension                            PASS
 P15F: Documentation / closure update                                   PASS
-```
-
-Completed P16 recipe-sequencer split through the current checkpoint:
-
-```text
-P16A : Multi-job descriptor queue / recipe sequencer spec              PASS
-P16B : CSR queue registers / descriptor slot extension                 PASS
-P16C : Queue runner using P15 single-job sequencer as worker           PASS
-P16D : Two-job C RMW recipe validation                                 PASS
-P16D2: CSR recipe DMA/C RMW regression integration                     PASS
-P16E : Multi-frontend recipe validation                                PASS
-P16E2: CSR recipe frontend regression integration                      PASS
-P16F : Queue reject / busy / error handling                            PASS
-P16F2: CSR recipe reject/error regression integration                  PASS
 ```
 
 ---
@@ -1246,7 +1128,7 @@ The original P14 questions have been resolved for the current baseline:
 
 ---
 
-## 20. Current P14F / P15E / P16F Validation Status
+## 20. Current P14F / P15E Validation Status
 
 The validated P14F checkpoint is:
 
@@ -1278,19 +1160,6 @@ P14F keeps the legacy sideband subsystem top available while using `ai_accel_sub
 
 P15E uses the same CSR wrapper top, but software/UVM now programs a single job descriptor and writes `START_JOB`.  The hardware job sequencer then launches the selected frontend, GEMM, and DMA store stages automatically.
 
-The validated P16F checkpoint is:
-
-```text
-CSR recipe-level DMA two-slot CASE_ID=102: PASS
-CSR recipe-level C RMW partial-K two-slot CASE_ID=208: PASS
-CSR recipe-level AXI-Stream two-slot CASE_ID=102: PASS
-CSR recipe-level Direct Stream two-slot CASE_ID=102: PASS
-CSR recipe reject / busy / error handling CASE_ID=102: PASS
-Full regression after P16F2: 100/100 PASS
-```
-
-P16F uses the same CSR wrapper top and the existing P15 job worker, but software/UVM now programs recipe descriptor slots and writes `START_RECIPE`.  The hardware recipe sequencer dispatches each slot sequentially, reports aggregate recipe status, records per-slot masks, and blocks lower-level manual starts while the recipe is active.
-
 ---
 
 ## 21. Summary
@@ -1315,13 +1184,38 @@ Hardware sequencer launches preload A, preload B, GEMM, and optional DMA store.
 CSR reads expose job busy/done/error/reject status and job performance snapshots.
 ```
 
-P16 extends the same CSR wrapper into a recipe-level accelerator control model:
+The current P15E checkpoint validates DMA, AXI-Stream, and Direct Stream job-level frontend modes while keeping P14 micro-operation CSR commands available when the job sequencer is idle.  Full regression is passing 95/95.
+
+
+
+Current P17H validated scope:
 
 ```text
-CSR writes recipe descriptor slots.
-CSR writes START_RECIPE.
-Hardware recipe sequencer dispatches each slot through the P15 job worker.
-CSR reads expose recipe busy/done/error/reject status and per-slot masks.
+Descriptor-fetch CSR register window at 0x500 and above
+Descriptor-memory AXI read master integrated in ai_accel_subsys_csr_top
+START_FETCH_RECIPE command and fetch done/error/reject status
+Fetched descriptor to internal P16 recipe snapshot bridge
+Descriptor-fetch CSR smoke
+Descriptor-fetch DMA two-slot CASE_ID=102
+Descriptor-fetch C RMW partial-K two-slot CASE_ID=208
+Descriptor-fetch Direct Stream two-slot CASE_ID=102
+Descriptor-fetch reject / busy / malformed descriptor / AXI RRESP handling CASE_ID=102
+Full regression after P17H: 105/105 PASS
 ```
 
-The current P16F2 checkpoint validates DMA, C RMW partial-K, AXI-Stream, and Direct Stream recipe-level modes while keeping P14 micro-operation CSR commands and P15 single-job commands available when the recipe sequencer is idle.  Full regression is passing 100/100.
+
+### P17H Descriptor-Fetch Validation Checkpoint
+
+The P17H checkpoint validates that the CSR control plane can launch P16-compatible recipes from memory-resident descriptors.  The descriptor fetch engine reads descriptor memory through a dedicated AXI read master, validates the table, builds an internal P16-compatible recipe snapshot, and requests the existing P16 recipe sequencer to run.
+
+Validated full-regression representatives:
+
+```text
+csr_desc_fetch_smoke
+csr_desc_fetch_dma_two_slot_case102
+csr_desc_fetch_c_rmw_two_slot_case208
+csr_desc_fetch_direct_stream_two_slot_case102
+csr_desc_fetch_reject_error_case102
+
+Full regression after P17H: 105/105 PASS
+```

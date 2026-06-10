@@ -43,9 +43,10 @@ module ai_accel_subsys_csr_top #(
     parameter int CSR_ADDR_WIDTH = 12,
     parameter int CSR_DATA_WIDTH = 32,
     parameter logic [31:0] CSR_VERSION_VALUE        = 32'h0001_0014,
-    parameter logic [31:0] CSR_JOB_VERSION_VALUE    = 32'h0001_0015,
-    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE = 32'h0001_0016,
-    parameter int          P16_RECIPE_QUEUE_DEPTH   = 4
+    parameter logic [31:0] CSR_JOB_VERSION_VALUE        = 32'h0001_0015,
+    parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
+    parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
+    parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -122,6 +123,24 @@ module ai_accel_subsys_csr_top #(
     input  logic                      ds_src_axi_rlast,
     input  logic                      ds_src_axi_rvalid,
     output logic                      ds_src_axi_rready,
+
+    // ------------------------------------------------------------
+    // P17 descriptor source AXI-MM read master port
+    // ------------------------------------------------------------
+    output logic [ID_WIDTH-1:0]       desc_src_axi_arid,
+    output logic [ADDR_WIDTH-1:0]     desc_src_axi_araddr,
+    output logic [7:0]                desc_src_axi_arlen,
+    output logic [2:0]                desc_src_axi_arsize,
+    output logic [1:0]                desc_src_axi_arburst,
+    output logic                      desc_src_axi_arvalid,
+    input  logic                      desc_src_axi_arready,
+
+    input  logic [ID_WIDTH-1:0]       desc_src_axi_rid,
+    input  logic [DATA_WIDTH-1:0]     desc_src_axi_rdata,
+    input  logic [1:0]                desc_src_axi_rresp,
+    input  logic                      desc_src_axi_rlast,
+    input  logic                      desc_src_axi_rvalid,
+    output logic                      desc_src_axi_rready,
 
     // ------------------------------------------------------------
     // DMA destination AXI-MM write master port
@@ -341,6 +360,89 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               csr_recipe_slot_user_tag [P16_RECIPE_QUEUE_DEPTH];
 
     // ============================================================
+    // P17 descriptor fetch control/status and fetched snapshot
+    //
+    // P17C connects the fetch engine to CSR and descriptor memory.
+    // The fetched snapshot is not yet bridged into the P16 recipe
+    // sequencer; that is reserved for P17D.
+    // ============================================================
+    logic                      csr_desc_fetch_start_pulse;
+    logic                      csr_desc_fetch_clear_done_pulse;
+    logic                      csr_desc_fetch_clear_error_pulse;
+    logic [ADDR_WIDTH-1:0]     csr_desc_fetch_base_addr;
+    logic [3:0]                csr_desc_fetch_count;
+    logic [15:0]               csr_desc_fetch_stride_bytes;
+
+    logic                      desc_fetch_busy_i;
+    logic                      desc_fetch_done_i;
+    logic                      desc_fetch_error_i;
+    logic                      desc_fetch_reject_i;
+    logic [31:0]               desc_fetch_error_status_i;
+    logic [31:0]               desc_fetch_reject_status_i;
+
+    // P17G external start gating/rejects.  These rejects are generated
+    // by the CSR/top-level integration layer before a START_FETCH pulse
+    // reaches the descriptor fetch engine.
+    logic                      desc_fetch_start_blocked_i;
+    logic                      desc_fetch_start_to_engine;
+    logic                      desc_fetch_external_reject_q;
+    logic [31:0]               desc_fetch_external_reject_status_q;
+    logic                      desc_fetch_reject_to_csr;
+    logic [31:0]               desc_fetch_reject_status_to_csr;
+    logic [3:0]                desc_fetch_current_index_i;
+    logic [3:0]                desc_fetch_fetched_count_i;
+    logic                      desc_fetch_snapshot_valid_i;
+    logic [3:0]                desc_fetch_recipe_count_i;
+
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_control;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_base_addr_a;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_base_addr_b;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_base_addr_c;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_dim_m;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_dim_n;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_dim_k;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_a_src_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_a_dst_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_a_load_beats;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_b_src_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_b_dst_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_b_load_beats;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_store_src_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][ADDR_WIDTH-1:0] desc_fetch_slot_store_dst_base;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_store_byte_count;
+    logic [P16_RECIPE_QUEUE_DEPTH-1:0][31:0]           desc_fetch_slot_user_tag;
+
+    // ------------------------------------------------------------
+    // P17D fetched-descriptor -> P16 recipe launch bridge
+    // ------------------------------------------------------------
+    logic                      desc_fetch_done_q;
+    logic                      desc_fetch_recipe_start_pulse;
+    logic                      eff_recipe_start_pulse;
+    logic [3:0]                eff_recipe_count;
+    logic [3:0]                eff_recipe_start_slot;
+    logic                      eff_recipe_stop_on_error;
+    logic                      eff_recipe_clear_job_sticky_each_slot;
+    logic                      eff_recipe_accumulate_perf;
+
+    logic [31:0]               eff_recipe_slot_control [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_base_addr_a [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_base_addr_b [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_base_addr_c [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] eff_recipe_slot_dim_m [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] eff_recipe_slot_dim_n [P16_RECIPE_QUEUE_DEPTH];
+    logic [GEMM_DIM_WIDTH-1:0] eff_recipe_slot_dim_k [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_a_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_a_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               eff_recipe_slot_a_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_b_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_b_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               eff_recipe_slot_b_load_beats [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_store_src_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [ADDR_WIDTH-1:0]     eff_recipe_slot_store_dst_base_addr [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               eff_recipe_slot_store_byte_count [P16_RECIPE_QUEUE_DEPTH];
+    logic [31:0]               eff_recipe_slot_user_tag [P16_RECIPE_QUEUE_DEPTH];
+
+    // ============================================================
     // P16 recipe sequencer outputs and status
     // ============================================================
     logic                      recipe_job_start_pulse;
@@ -509,6 +611,50 @@ module ai_accel_subsys_csr_top #(
     assign gemm_perf_output_count = gemm_perf_output_count_i;
 
     // ============================================================
+    // P17G descriptor-fetch top-level start gating
+    //
+    // START_FETCH is allowed to reach the fetch engine only when no
+    // descriptor fetch, P16 recipe, P15 job, or P14 micro-operation is
+    // active.  Rejected START_FETCH writes are reported through the
+    // descriptor-fetch reject CSR window without modifying the in-flight
+    // operation.
+    // ============================================================
+    assign desc_fetch_start_blocked_i = desc_fetch_busy_i ||
+                                        recipe_busy_i     ||
+                                        job_busy_i        ||
+                                        acc_busy_i        ||
+                                        dma_load_busy_i   ||
+                                        axis_load_busy_i  ||
+                                        ds_load_busy_i    ||
+                                        dma_store_busy_i;
+
+    assign desc_fetch_start_to_engine = csr_desc_fetch_start_pulse &&
+                                        !desc_fetch_start_blocked_i;
+
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            desc_fetch_external_reject_q        <= 1'b0;
+            desc_fetch_external_reject_status_q <= 32'h0000_0000;
+        end else begin
+            if (csr_desc_fetch_clear_error_pulse) begin
+                desc_fetch_external_reject_q        <= 1'b0;
+                desc_fetch_external_reject_status_q <= 32'h0000_0000;
+            end
+
+            if (csr_desc_fetch_start_pulse && desc_fetch_start_blocked_i) begin
+                desc_fetch_external_reject_q           <= 1'b1;
+                desc_fetch_external_reject_status_q[0] <= 1'b1;
+            end
+        end
+    end
+
+    assign desc_fetch_reject_to_csr = desc_fetch_reject_i |
+                                      desc_fetch_external_reject_q;
+
+    assign desc_fetch_reject_status_to_csr = desc_fetch_reject_status_i |
+                                             desc_fetch_external_reject_status_q;
+
+    // ============================================================
     // AXI-Lite CSR register block
     //
     // The CSR block lives entirely in dma_clk domain. It generates
@@ -524,6 +670,7 @@ module ai_accel_subsys_csr_top #(
         .CSR_VERSION_VALUE        (CSR_VERSION_VALUE),
         .CSR_JOB_VERSION_VALUE    (CSR_JOB_VERSION_VALUE),
         .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
+        .CSR_DESC_FETCH_VERSION_VALUE(CSR_DESC_FETCH_VERSION_VALUE),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
@@ -625,6 +772,24 @@ module ai_accel_subsys_csr_top #(
         .recipe_slot_store_byte_count   (csr_recipe_slot_store_byte_count),
         .recipe_slot_user_tag           (csr_recipe_slot_user_tag),
 
+        .desc_fetch_start_pulse         (csr_desc_fetch_start_pulse),
+        .desc_fetch_clear_done_pulse    (csr_desc_fetch_clear_done_pulse),
+        .desc_fetch_clear_error_pulse   (csr_desc_fetch_clear_error_pulse),
+        .desc_fetch_base_addr           (csr_desc_fetch_base_addr),
+        .desc_fetch_count               (csr_desc_fetch_count),
+        .desc_fetch_stride_bytes        (csr_desc_fetch_stride_bytes),
+
+        .desc_fetch_busy                (desc_fetch_busy_i),
+        .desc_fetch_done                (desc_fetch_done_i),
+        .desc_fetch_error               (desc_fetch_error_i),
+        .desc_fetch_reject              (desc_fetch_reject_to_csr),
+        .desc_fetch_error_status        (desc_fetch_error_status_i),
+        .desc_fetch_reject_status       (desc_fetch_reject_status_to_csr),
+        .desc_fetch_current_index       (desc_fetch_current_index_i),
+        .desc_fetch_fetched_count       (desc_fetch_fetched_count_i),
+        .desc_fetch_snapshot_valid      (desc_fetch_snapshot_valid_i),
+        .desc_fetch_recipe_count        (desc_fetch_recipe_count_i),
+
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
         .job_gemm_done          (job_gemm_done_i),
@@ -687,6 +852,164 @@ module ai_accel_subsys_csr_top #(
     );
 
     // ============================================================
+    // P17 descriptor fetch engine
+    //
+    // P17C wires the fetch engine into the CSR wrapper and the UVM
+    // descriptor memory read port.  It only fetches and validates
+    // memory-backed descriptors into an internal P16-compatible
+    // snapshot.  P17D will bridge this snapshot into the recipe
+    // sequencer start path.
+    // ============================================================
+    ai_accel_desc_fetch_engine #(
+        .ADDR_WIDTH         (ADDR_WIDTH),
+        .DATA_WIDTH         (DATA_WIDTH),
+        .AXI_ID_WIDTH       (ID_WIDTH),
+        .RECIPE_QUEUE_DEPTH (P16_RECIPE_QUEUE_DEPTH)
+    ) u_ai_accel_desc_fetch_engine (
+        .clk                    (dma_clk),
+        .rst_n                  (dma_rst_n),
+
+        .fetch_start            (desc_fetch_start_to_engine),
+        .desc_base_addr         (csr_desc_fetch_base_addr),
+        .desc_count             (csr_desc_fetch_count),
+        .desc_stride_bytes      (csr_desc_fetch_stride_bytes),
+        .clear_done             (csr_desc_fetch_clear_done_pulse),
+        .clear_error            (csr_desc_fetch_clear_error_pulse),
+
+        .fetch_busy             (desc_fetch_busy_i),
+        .fetch_done             (desc_fetch_done_i),
+        .fetch_error            (desc_fetch_error_i),
+        .fetch_reject           (desc_fetch_reject_i),
+        .fetch_error_status     (desc_fetch_error_status_i),
+        .fetch_reject_status    (desc_fetch_reject_status_i),
+        .current_desc_index     (desc_fetch_current_index_i),
+        .fetched_count          (desc_fetch_fetched_count_i),
+        .fetched_snapshot_valid (desc_fetch_snapshot_valid_i),
+        .fetched_recipe_count   (desc_fetch_recipe_count_i),
+
+        .slot_control           (desc_fetch_slot_control),
+        .slot_base_addr_a       (desc_fetch_slot_base_addr_a),
+        .slot_base_addr_b       (desc_fetch_slot_base_addr_b),
+        .slot_base_addr_c       (desc_fetch_slot_base_addr_c),
+        .slot_dim_m             (desc_fetch_slot_dim_m),
+        .slot_dim_n             (desc_fetch_slot_dim_n),
+        .slot_dim_k             (desc_fetch_slot_dim_k),
+        .slot_a_src_base        (desc_fetch_slot_a_src_base),
+        .slot_a_dst_base        (desc_fetch_slot_a_dst_base),
+        .slot_a_load_beats      (desc_fetch_slot_a_load_beats),
+        .slot_b_src_base        (desc_fetch_slot_b_src_base),
+        .slot_b_dst_base        (desc_fetch_slot_b_dst_base),
+        .slot_b_load_beats      (desc_fetch_slot_b_load_beats),
+        .slot_store_src_base    (desc_fetch_slot_store_src_base),
+        .slot_store_dst_base    (desc_fetch_slot_store_dst_base),
+        .slot_store_byte_count  (desc_fetch_slot_store_byte_count),
+        .slot_user_tag          (desc_fetch_slot_user_tag),
+
+        .desc_axi_arid          (desc_src_axi_arid),
+        .desc_axi_araddr        (desc_src_axi_araddr),
+        .desc_axi_arlen         (desc_src_axi_arlen),
+        .desc_axi_arsize        (desc_src_axi_arsize),
+        .desc_axi_arburst       (desc_src_axi_arburst),
+        .desc_axi_arvalid       (desc_src_axi_arvalid),
+        .desc_axi_arready       (desc_src_axi_arready),
+
+        .desc_axi_rid           (desc_src_axi_rid),
+        .desc_axi_rdata         (desc_src_axi_rdata),
+        .desc_axi_rresp         (desc_src_axi_rresp),
+        .desc_axi_rlast         (desc_src_axi_rlast),
+        .desc_axi_rvalid        (desc_src_axi_rvalid),
+        .desc_axi_rready        (desc_src_axi_rready)
+    );
+
+    // ------------------------------------------------------------
+    // P17D bridge policy
+    //
+    // A successful descriptor fetch creates a stable P16-compatible
+    // snapshot inside ai_accel_desc_fetch_engine.  The bridge launches
+    // the existing P16 recipe sequencer on the rising edge of the
+    // descriptor-fetch done status, without writing fetched descriptors
+    // back into the live CSR recipe slot registers.
+    // ------------------------------------------------------------
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            desc_fetch_done_q <= 1'b0;
+        end else begin
+            desc_fetch_done_q <= desc_fetch_done_i;
+        end
+    end
+
+    assign desc_fetch_recipe_start_pulse = desc_fetch_done_i &&
+                                           !desc_fetch_done_q &&
+                                           desc_fetch_snapshot_valid_i &&
+                                           !desc_fetch_error_i &&
+                                           !desc_fetch_reject_i;
+
+    assign eff_recipe_start_pulse = csr_recipe_start_pulse |
+                                    desc_fetch_recipe_start_pulse;
+
+    assign eff_recipe_count = desc_fetch_recipe_start_pulse ?
+                              desc_fetch_recipe_count_i :
+                              csr_recipe_count;
+
+    assign eff_recipe_start_slot = desc_fetch_recipe_start_pulse ?
+                                   4'd0 :
+                                   csr_recipe_start_slot;
+
+    assign eff_recipe_stop_on_error = desc_fetch_recipe_start_pulse ?
+                                      1'b1 :
+                                      csr_recipe_stop_on_error;
+
+    assign eff_recipe_clear_job_sticky_each_slot =
+        desc_fetch_recipe_start_pulse ? 1'b1 : csr_recipe_clear_job_sticky_each_slot;
+
+    assign eff_recipe_accumulate_perf = desc_fetch_recipe_start_pulse ?
+                                        1'b1 :
+                                        csr_recipe_accumulate_perf;
+
+    always_comb begin
+        for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
+            if (desc_fetch_recipe_start_pulse) begin
+                eff_recipe_slot_control[slot_i]             = desc_fetch_slot_control[slot_i];
+                eff_recipe_slot_base_addr_a[slot_i]         = desc_fetch_slot_base_addr_a[slot_i];
+                eff_recipe_slot_base_addr_b[slot_i]         = desc_fetch_slot_base_addr_b[slot_i];
+                eff_recipe_slot_base_addr_c[slot_i]         = desc_fetch_slot_base_addr_c[slot_i];
+                eff_recipe_slot_dim_m[slot_i]               = desc_fetch_slot_dim_m[slot_i][GEMM_DIM_WIDTH-1:0];
+                eff_recipe_slot_dim_n[slot_i]               = desc_fetch_slot_dim_n[slot_i][GEMM_DIM_WIDTH-1:0];
+                eff_recipe_slot_dim_k[slot_i]               = desc_fetch_slot_dim_k[slot_i][GEMM_DIM_WIDTH-1:0];
+                eff_recipe_slot_a_src_base_addr[slot_i]     = desc_fetch_slot_a_src_base[slot_i];
+                eff_recipe_slot_a_dst_base_addr[slot_i]     = desc_fetch_slot_a_dst_base[slot_i];
+                eff_recipe_slot_a_load_beats[slot_i]        = desc_fetch_slot_a_load_beats[slot_i];
+                eff_recipe_slot_b_src_base_addr[slot_i]     = desc_fetch_slot_b_src_base[slot_i];
+                eff_recipe_slot_b_dst_base_addr[slot_i]     = desc_fetch_slot_b_dst_base[slot_i];
+                eff_recipe_slot_b_load_beats[slot_i]        = desc_fetch_slot_b_load_beats[slot_i];
+                eff_recipe_slot_store_src_base_addr[slot_i] = desc_fetch_slot_store_src_base[slot_i];
+                eff_recipe_slot_store_dst_base_addr[slot_i] = desc_fetch_slot_store_dst_base[slot_i];
+                eff_recipe_slot_store_byte_count[slot_i]    = desc_fetch_slot_store_byte_count[slot_i];
+                eff_recipe_slot_user_tag[slot_i]            = desc_fetch_slot_user_tag[slot_i];
+            end else begin
+                eff_recipe_slot_control[slot_i]             = csr_recipe_slot_control[slot_i];
+                eff_recipe_slot_base_addr_a[slot_i]         = csr_recipe_slot_base_addr_a[slot_i];
+                eff_recipe_slot_base_addr_b[slot_i]         = csr_recipe_slot_base_addr_b[slot_i];
+                eff_recipe_slot_base_addr_c[slot_i]         = csr_recipe_slot_base_addr_c[slot_i];
+                eff_recipe_slot_dim_m[slot_i]               = csr_recipe_slot_dim_m[slot_i];
+                eff_recipe_slot_dim_n[slot_i]               = csr_recipe_slot_dim_n[slot_i];
+                eff_recipe_slot_dim_k[slot_i]               = csr_recipe_slot_dim_k[slot_i];
+                eff_recipe_slot_a_src_base_addr[slot_i]     = csr_recipe_slot_a_src_base_addr[slot_i];
+                eff_recipe_slot_a_dst_base_addr[slot_i]     = csr_recipe_slot_a_dst_base_addr[slot_i];
+                eff_recipe_slot_a_load_beats[slot_i]        = csr_recipe_slot_a_load_beats[slot_i];
+                eff_recipe_slot_b_src_base_addr[slot_i]     = csr_recipe_slot_b_src_base_addr[slot_i];
+                eff_recipe_slot_b_dst_base_addr[slot_i]     = csr_recipe_slot_b_dst_base_addr[slot_i];
+                eff_recipe_slot_b_load_beats[slot_i]        = csr_recipe_slot_b_load_beats[slot_i];
+                eff_recipe_slot_store_src_base_addr[slot_i] = csr_recipe_slot_store_src_base_addr[slot_i];
+                eff_recipe_slot_store_dst_base_addr[slot_i] = csr_recipe_slot_store_dst_base_addr[slot_i];
+                eff_recipe_slot_store_byte_count[slot_i]    = csr_recipe_slot_store_byte_count[slot_i];
+                eff_recipe_slot_user_tag[slot_i]            = csr_recipe_slot_user_tag[slot_i];
+            end
+        end
+    end
+
+
+    // ============================================================
     // P16 multi-job recipe sequencer
     //
     // The recipe sequencer dispatches CSR-resident descriptor slots
@@ -703,36 +1026,35 @@ module ai_accel_subsys_csr_top #(
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
 
-        .recipe_start_pulse     (csr_recipe_start_pulse),
+        .recipe_start_pulse     (eff_recipe_start_pulse),
         .recipe_clear_done_pulse(csr_recipe_clear_done_pulse),
         .recipe_clear_error_pulse(csr_recipe_clear_error_pulse),
         .recipe_clear_perf_pulse(csr_recipe_clear_perf_pulse),
         .recipe_clear_slot_status_pulse(csr_recipe_clear_slot_status_pulse),
 
-        .recipe_count           (csr_recipe_count),
-        .recipe_start_slot      (csr_recipe_start_slot),
-        .recipe_stop_on_error   (csr_recipe_stop_on_error),
-        .recipe_clear_job_sticky_each_slot(csr_recipe_clear_job_sticky_each_slot),
-        .recipe_accumulate_perf (csr_recipe_accumulate_perf),
+        .recipe_count           (eff_recipe_count),
+        .recipe_start_slot      (eff_recipe_start_slot),
+        .recipe_stop_on_error   (eff_recipe_stop_on_error),
+        .recipe_clear_job_sticky_each_slot(eff_recipe_clear_job_sticky_each_slot),
+        .recipe_accumulate_perf (eff_recipe_accumulate_perf),
 
-        .recipe_slot_control            (csr_recipe_slot_control),
-        .recipe_slot_base_addr_a        (csr_recipe_slot_base_addr_a),
-        .recipe_slot_base_addr_b        (csr_recipe_slot_base_addr_b),
-        .recipe_slot_base_addr_c        (csr_recipe_slot_base_addr_c),
-        .recipe_slot_dim_m              (csr_recipe_slot_dim_m),
-        .recipe_slot_dim_n              (csr_recipe_slot_dim_n),
-        .recipe_slot_dim_k              (csr_recipe_slot_dim_k),
-        .recipe_slot_a_src_base_addr    (csr_recipe_slot_a_src_base_addr),
-        .recipe_slot_a_dst_base_addr    (csr_recipe_slot_a_dst_base_addr),
-        .recipe_slot_a_load_beats       (csr_recipe_slot_a_load_beats),
-        .recipe_slot_b_src_base_addr    (csr_recipe_slot_b_src_base_addr),
-        .recipe_slot_b_dst_base_addr    (csr_recipe_slot_b_dst_base_addr),
-        .recipe_slot_b_load_beats       (csr_recipe_slot_b_load_beats),
-        .recipe_slot_store_src_base_addr(csr_recipe_slot_store_src_base_addr),
-        .recipe_slot_store_dst_base_addr(csr_recipe_slot_store_dst_base_addr),
-        .recipe_slot_store_byte_count   (csr_recipe_slot_store_byte_count),
-        .recipe_slot_user_tag           (csr_recipe_slot_user_tag),
-
+        .recipe_slot_control            (eff_recipe_slot_control),
+        .recipe_slot_base_addr_a        (eff_recipe_slot_base_addr_a),
+        .recipe_slot_base_addr_b        (eff_recipe_slot_base_addr_b),
+        .recipe_slot_base_addr_c        (eff_recipe_slot_base_addr_c),
+        .recipe_slot_dim_m              (eff_recipe_slot_dim_m),
+        .recipe_slot_dim_n              (eff_recipe_slot_dim_n),
+        .recipe_slot_dim_k              (eff_recipe_slot_dim_k),
+        .recipe_slot_a_src_base_addr    (eff_recipe_slot_a_src_base_addr),
+        .recipe_slot_a_dst_base_addr    (eff_recipe_slot_a_dst_base_addr),
+        .recipe_slot_a_load_beats       (eff_recipe_slot_a_load_beats),
+        .recipe_slot_b_src_base_addr    (eff_recipe_slot_b_src_base_addr),
+        .recipe_slot_b_dst_base_addr    (eff_recipe_slot_b_dst_base_addr),
+        .recipe_slot_b_load_beats       (eff_recipe_slot_b_load_beats),
+        .recipe_slot_store_src_base_addr(eff_recipe_slot_store_src_base_addr),
+        .recipe_slot_store_dst_base_addr(eff_recipe_slot_store_dst_base_addr),
+        .recipe_slot_store_byte_count   (eff_recipe_slot_store_byte_count),
+        .recipe_slot_user_tag           (eff_recipe_slot_user_tag),
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
         .job_gemm_done          (job_gemm_done_i),
