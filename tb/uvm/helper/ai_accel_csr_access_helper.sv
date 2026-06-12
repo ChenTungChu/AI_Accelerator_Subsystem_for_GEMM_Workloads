@@ -122,6 +122,24 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_DESC_FETCH_FETCHED_COUNT = 12'h528;
     localparam logic [11:0] CSR_DESC_FETCH_SNAPSHOT_STATUS = 12'h52C;
 
+    // P18 completion-writeback CSR window.
+    localparam logic [11:0] CSR_COMPLETION_WB_VERSION        = 12'h540;
+    localparam logic [11:0] CSR_COMPLETION_WB_COMMAND        = 12'h544;
+    localparam logic [11:0] CSR_COMPLETION_WB_STATUS         = 12'h548;
+    localparam logic [11:0] CSR_COMPLETION_WB_DONE_STATUS    = 12'h54C;
+    localparam logic [11:0] CSR_COMPLETION_WB_ERROR_STATUS   = 12'h550;
+    localparam logic [11:0] CSR_COMPLETION_WB_REJECT_STATUS  = 12'h554;
+    localparam logic [11:0] CSR_COMPLETION_WB_CONTROL        = 12'h558;
+    localparam logic [11:0] CSR_COMPLETION_WB_BASE_ADDR      = 12'h55C;
+    localparam logic [11:0] CSR_COMPLETION_WB_STATUS_FLAGS   = 12'h560;
+    localparam logic [11:0] CSR_COMPLETION_WB_USER_TAG       = 12'h564;
+    localparam logic [11:0] CSR_COMPLETION_WB_COUNTS         = 12'h568;
+    localparam logic [11:0] CSR_COMPLETION_WB_RECIPE_DONE    = 12'h56C;
+    localparam logic [11:0] CSR_COMPLETION_WB_RECIPE_ERROR   = 12'h570;
+    localparam logic [11:0] CSR_COMPLETION_WB_RECIPE_REJECT  = 12'h574;
+    localparam logic [11:0] CSR_COMPLETION_WB_PERF_MAC_COUNT = 12'h578;
+    localparam logic [11:0] CSR_COMPLETION_WB_ERROR_DETAIL   = 12'h57C;
+
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
     localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;
@@ -174,6 +192,10 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int DESC_FETCH_REJ_BASE_ALIGN    = 3;
     localparam int DESC_FETCH_REJ_STRIDE_ALIGN  = 4;
     localparam int DESC_FETCH_REJ_STRIDE_SMALL  = 5;
+
+    localparam int COMP_WB_CMD_START       = 0;
+    localparam int COMP_WB_CMD_CLEAR_DONE  = 8;
+    localparam int COMP_WB_CMD_CLEAR_ERROR = 9;
 
     localparam int DESC_FETCH_ERR_AXI_RRESP     = 0;
     localparam int DESC_FETCH_ERR_AXI_RLAST     = 1;

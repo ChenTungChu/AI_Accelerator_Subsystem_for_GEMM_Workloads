@@ -46,6 +46,7 @@ module ai_accel_subsys_csr_top #(
     parameter logic [31:0] CSR_JOB_VERSION_VALUE        = 32'h0001_0015,
     parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
+    parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     // ------------------------------------------------------------
@@ -141,6 +142,28 @@ module ai_accel_subsys_csr_top #(
     input  logic                      desc_src_axi_rlast,
     input  logic                      desc_src_axi_rvalid,
     output logic                      desc_src_axi_rready,
+
+    // ------------------------------------------------------------
+    // P18 completion-memory AXI-MM write master port
+    // ------------------------------------------------------------
+    output logic [ID_WIDTH-1:0]       comp_axi_awid,
+    output logic [ADDR_WIDTH-1:0]     comp_axi_awaddr,
+    output logic [7:0]                comp_axi_awlen,
+    output logic [2:0]                comp_axi_awsize,
+    output logic [1:0]                comp_axi_awburst,
+    output logic                      comp_axi_awvalid,
+    input  logic                      comp_axi_awready,
+
+    output logic [DATA_WIDTH-1:0]     comp_axi_wdata,
+    output logic [DATA_WIDTH/8-1:0]   comp_axi_wstrb,
+    output logic                      comp_axi_wlast,
+    output logic                      comp_axi_wvalid,
+    input  logic                      comp_axi_wready,
+
+    input  logic [ID_WIDTH-1:0]       comp_axi_bid,
+    input  logic [1:0]                comp_axi_bresp,
+    input  logic                      comp_axi_bvalid,
+    output logic                      comp_axi_bready,
 
     // ------------------------------------------------------------
     // DMA destination AXI-MM write master port
@@ -443,6 +466,105 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               eff_recipe_slot_user_tag [P16_RECIPE_QUEUE_DEPTH];
 
     // ============================================================
+    // P18 completion writeback CSR payload and engine status
+    // ============================================================
+    logic                      csr_completion_wb_start_pulse;
+    logic                      csr_completion_wb_clear_done_pulse;
+    logic                      csr_completion_wb_clear_error_pulse;
+    logic                      csr_completion_wb_enable;
+    logic                      csr_completion_wb_overall_done;
+    logic                      csr_completion_wb_overall_error;
+    logic                      csr_completion_wb_overall_reject;
+    logic [ADDR_WIDTH-1:0]     csr_completion_wb_base_addr;
+    logic [31:0]               csr_completion_wb_status_flags;
+    logic [31:0]               csr_completion_wb_user_tag;
+    logic [7:0]                csr_completion_wb_programmed_count;
+    logic [7:0]                csr_completion_wb_fetched_count;
+    logic [7:0]                csr_completion_wb_completed_count;
+    logic [31:0]               csr_completion_wb_recipe_done_status;
+    logic [31:0]               csr_completion_wb_recipe_error_status;
+    logic [31:0]               csr_completion_wb_recipe_reject_status;
+    logic [31:0]               csr_completion_wb_perf_mac_count;
+    logic [31:0]               csr_completion_wb_error_detail;
+
+    logic                      completion_wb_busy_i;
+    logic                      completion_wb_done_i;
+    logic                      completion_wb_error_i;
+    logic                      completion_wb_reject_i;
+    logic [31:0]               completion_wb_error_status_i;
+    logic [31:0]               completion_wb_reject_status_i;
+    logic [31:0]               completion_wb_state_i;
+    logic [3:0]                completion_wb_current_write_step_i;
+    logic [7:0]                completion_wb_written_beats_i;
+
+    // ============================================================
+    // P18E descriptor-fetch completion writeback auto context
+    //
+    // P18D keeps the explicit CSR-triggered completion writeback path.
+    // P18E adds an automatic path for descriptor-fetch-launched
+    // recipes: when P17 fetches a descriptor table and launches the
+    // P16 recipe sequencer, the wrapper remembers the fetched recipe
+    // context and issues one completion writeback after the recipe
+    // reaches a terminal done pulse.
+    // ============================================================
+    logic                      completion_wb_auto_pending_q;
+    logic                      completion_wb_auto_start_pulse;
+    logic                      completion_wb_start_to_engine;
+    logic                      completion_wb_payload_auto_sel;
+
+    logic                      desc_fetch_context_valid_q;
+    logic [7:0]                desc_fetch_programmed_count_q;
+    logic [7:0]                desc_fetch_fetched_count_q;
+    logic [7:0]                desc_fetch_completed_count_q;
+    logic [31:0]               desc_fetch_first_user_tag_q;
+    logic [31:0]               desc_fetch_last_user_tag_q;
+    logic [31:0]               desc_fetch_done_status_q;
+    logic [31:0]               desc_fetch_error_status_q;
+    logic [31:0]               desc_fetch_reject_status_q;
+
+    logic [31:0]               desc_fetch_last_user_tag_selected;
+
+    logic [31:0]               completion_wb_auto_status_flags_q;
+    logic [31:0]               completion_wb_auto_recipe_done_status_q;
+    logic [31:0]               completion_wb_auto_recipe_error_status_q;
+    logic [31:0]               completion_wb_auto_recipe_reject_status_q;
+    logic [31:0]               completion_wb_auto_slot_done_mask_q;
+    logic [31:0]               completion_wb_auto_slot_error_mask_q;
+    logic [31:0]               completion_wb_auto_slot_reject_mask_q;
+    logic [31:0]               completion_wb_auto_perf_busy_cycles_q;
+    logic [31:0]               completion_wb_auto_perf_mac_count_q;
+    logic [31:0]               completion_wb_auto_perf_output_count_q;
+    logic [31:0]               completion_wb_auto_error_detail_q;
+
+    logic [31:0]               completion_wb_auto_status_flags_next;
+    logic [31:0]               completion_wb_auto_recipe_done_status_next;
+    logic [31:0]               completion_wb_auto_recipe_error_status_next;
+    logic [31:0]               completion_wb_auto_recipe_reject_status_next;
+
+    logic                      completion_wb_overall_done_to_engine;
+    logic                      completion_wb_overall_error_to_engine;
+    logic                      completion_wb_overall_reject_to_engine;
+    logic [31:0]               completion_wb_status_flags_to_engine;
+    logic [31:0]               completion_wb_first_user_tag_to_engine;
+    logic [31:0]               completion_wb_last_user_tag_to_engine;
+    logic [7:0]                completion_wb_programmed_count_to_engine;
+    logic [7:0]                completion_wb_fetched_count_to_engine;
+    logic [7:0]                completion_wb_completed_count_to_engine;
+    logic [31:0]               completion_wb_desc_done_status_to_engine;
+    logic [31:0]               completion_wb_desc_error_status_to_engine;
+    logic [31:0]               completion_wb_desc_reject_status_to_engine;
+    logic [31:0]               completion_wb_recipe_done_status_to_engine;
+    logic [31:0]               completion_wb_recipe_error_status_to_engine;
+    logic [31:0]               completion_wb_recipe_reject_status_to_engine;
+    logic [31:0]               completion_wb_slot_done_mask_to_engine;
+    logic [31:0]               completion_wb_slot_error_mask_to_engine;
+    logic [31:0]               completion_wb_slot_reject_mask_to_engine;
+    logic [31:0]               completion_wb_perf_busy_cycles_to_engine;
+    logic [31:0]               completion_wb_perf_mac_count_to_engine;
+    logic [31:0]               completion_wb_perf_output_count_to_engine;
+    logic [31:0]               completion_wb_error_detail_to_engine;
+
+    // ============================================================
     // P16 recipe sequencer outputs and status
     // ============================================================
     logic                      recipe_job_start_pulse;
@@ -671,6 +793,7 @@ module ai_accel_subsys_csr_top #(
         .CSR_JOB_VERSION_VALUE    (CSR_JOB_VERSION_VALUE),
         .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
         .CSR_DESC_FETCH_VERSION_VALUE(CSR_DESC_FETCH_VERSION_VALUE),
+        .CSR_COMPLETION_WB_VERSION_VALUE(CSR_COMPLETION_WB_VERSION_VALUE),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
@@ -789,6 +912,35 @@ module ai_accel_subsys_csr_top #(
         .desc_fetch_fetched_count       (desc_fetch_fetched_count_i),
         .desc_fetch_snapshot_valid      (desc_fetch_snapshot_valid_i),
         .desc_fetch_recipe_count        (desc_fetch_recipe_count_i),
+
+        .completion_wb_start_pulse      (csr_completion_wb_start_pulse),
+        .completion_wb_clear_done_pulse (csr_completion_wb_clear_done_pulse),
+        .completion_wb_clear_error_pulse(csr_completion_wb_clear_error_pulse),
+        .completion_wb_enable           (csr_completion_wb_enable),
+        .completion_wb_overall_done     (csr_completion_wb_overall_done),
+        .completion_wb_overall_error    (csr_completion_wb_overall_error),
+        .completion_wb_overall_reject   (csr_completion_wb_overall_reject),
+        .completion_wb_base_addr        (csr_completion_wb_base_addr),
+        .completion_wb_status_flags     (csr_completion_wb_status_flags),
+        .completion_wb_user_tag         (csr_completion_wb_user_tag),
+        .completion_wb_programmed_count (csr_completion_wb_programmed_count),
+        .completion_wb_fetched_count    (csr_completion_wb_fetched_count),
+        .completion_wb_completed_count  (csr_completion_wb_completed_count),
+        .completion_wb_recipe_done_status  (csr_completion_wb_recipe_done_status),
+        .completion_wb_recipe_error_status (csr_completion_wb_recipe_error_status),
+        .completion_wb_recipe_reject_status(csr_completion_wb_recipe_reject_status),
+        .completion_wb_perf_mac_count      (csr_completion_wb_perf_mac_count),
+        .completion_wb_error_detail        (csr_completion_wb_error_detail),
+
+        .completion_wb_busy             (completion_wb_busy_i),
+        .completion_wb_done             (completion_wb_done_i),
+        .completion_wb_error            (completion_wb_error_i),
+        .completion_wb_reject           (completion_wb_reject_i),
+        .completion_wb_error_status     (completion_wb_error_status_i),
+        .completion_wb_reject_status    (completion_wb_reject_status_i),
+        .completion_wb_state            (completion_wb_state_i),
+        .completion_wb_current_write_step(completion_wb_current_write_step_i),
+        .completion_wb_written_beats    (completion_wb_written_beats_i),
 
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
@@ -919,6 +1071,284 @@ module ai_accel_subsys_csr_top #(
         .desc_axi_rlast         (desc_src_axi_rlast),
         .desc_axi_rvalid        (desc_src_axi_rvalid),
         .desc_axi_rready        (desc_src_axi_rready)
+    );
+
+    // ============================================================
+    // P18E automatic descriptor-fetch completion context
+    // ============================================================
+    always_comb begin
+        desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[0];
+        unique case (desc_fetch_recipe_count_i)
+            4'd0: desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[0];
+            4'd1: desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[0];
+            4'd2: desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[1];
+            4'd3: desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[2];
+            default: desc_fetch_last_user_tag_selected = desc_fetch_slot_user_tag[3];
+        endcase
+    end
+
+    always_comb begin
+        completion_wb_auto_recipe_done_status_next = 32'h0000_0000;
+        completion_wb_auto_recipe_done_status_next[0] = recipe_done_i;
+        completion_wb_auto_recipe_done_status_next[1] = recipe_all_slots_done_i;
+        completion_wb_auto_recipe_done_status_next[2] = recipe_final_store_done_i;
+
+        completion_wb_auto_recipe_error_status_next = 32'h0000_0000;
+        completion_wb_auto_recipe_error_status_next[0] = recipe_slot_job_error_i;
+        completion_wb_auto_recipe_error_status_next[2] = recipe_sequence_error_i;
+        completion_wb_auto_recipe_error_status_next[3] = recipe_slot_range_error_i;
+        completion_wb_auto_recipe_error_status_next[4] = recipe_slot_descriptor_error_i;
+
+        completion_wb_auto_recipe_reject_status_next = 32'h0000_0000;
+        completion_wb_auto_recipe_reject_status_next[0] = recipe_slot_job_reject_i;
+
+        completion_wb_auto_status_flags_next = 32'h0000_0000;
+        completion_wb_auto_status_flags_next[0]  = desc_fetch_context_valid_q;
+        completion_wb_auto_status_flags_next[1]  = desc_fetch_done_status_q[0];
+        completion_wb_auto_status_flags_next[2]  = desc_fetch_done_status_q[1];
+        completion_wb_auto_status_flags_next[3]  = recipe_done_i;
+        completion_wb_auto_status_flags_next[4]  = recipe_all_slots_done_i;
+        completion_wb_auto_status_flags_next[5]  = recipe_final_store_done_i;
+        completion_wb_auto_status_flags_next[8]  = |desc_fetch_error_status_q;
+        completion_wb_auto_status_flags_next[9]  = |desc_fetch_reject_status_q;
+        completion_wb_auto_status_flags_next[10] = |completion_wb_auto_recipe_error_status_next;
+        completion_wb_auto_status_flags_next[11] = |completion_wb_auto_recipe_reject_status_next;
+    end
+
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            desc_fetch_context_valid_q              <= 1'b0;
+            desc_fetch_programmed_count_q           <= 8'd0;
+            desc_fetch_fetched_count_q              <= 8'd0;
+            desc_fetch_completed_count_q            <= 8'd0;
+            desc_fetch_first_user_tag_q             <= 32'h0000_0000;
+            desc_fetch_last_user_tag_q              <= 32'h0000_0000;
+            desc_fetch_done_status_q                <= 32'h0000_0000;
+            desc_fetch_error_status_q               <= 32'h0000_0000;
+            desc_fetch_reject_status_q              <= 32'h0000_0000;
+
+            completion_wb_auto_pending_q            <= 1'b0;
+            completion_wb_auto_status_flags_q       <= 32'h0000_0000;
+            completion_wb_auto_recipe_done_status_q <= 32'h0000_0000;
+            completion_wb_auto_recipe_error_status_q <= 32'h0000_0000;
+            completion_wb_auto_recipe_reject_status_q <= 32'h0000_0000;
+            completion_wb_auto_slot_done_mask_q     <= 32'h0000_0000;
+            completion_wb_auto_slot_error_mask_q    <= 32'h0000_0000;
+            completion_wb_auto_slot_reject_mask_q   <= 32'h0000_0000;
+            completion_wb_auto_perf_busy_cycles_q   <= 32'h0000_0000;
+            completion_wb_auto_perf_mac_count_q     <= 32'h0000_0000;
+            completion_wb_auto_perf_output_count_q  <= 32'h0000_0000;
+            completion_wb_auto_error_detail_q       <= 32'h0000_0000;
+        end else begin
+            if (csr_desc_fetch_clear_error_pulse || csr_desc_fetch_clear_done_pulse) begin
+                if (!recipe_busy_i && !completion_wb_busy_i) begin
+                    desc_fetch_context_valid_q <= 1'b0;
+                end
+            end
+
+            if (desc_fetch_recipe_start_pulse) begin
+                desc_fetch_context_valid_q    <= 1'b1;
+                desc_fetch_programmed_count_q <= {4'h0, csr_desc_fetch_count};
+                desc_fetch_fetched_count_q    <= {4'h0, desc_fetch_fetched_count_i};
+                desc_fetch_completed_count_q  <= {4'h0, desc_fetch_recipe_count_i};
+                desc_fetch_first_user_tag_q   <= desc_fetch_slot_user_tag[0];
+                desc_fetch_last_user_tag_q    <= desc_fetch_last_user_tag_selected;
+                desc_fetch_done_status_q      <= {30'd0, desc_fetch_snapshot_valid_i, desc_fetch_done_i};
+                desc_fetch_error_status_q     <= desc_fetch_error_status_i;
+                desc_fetch_reject_status_q    <= desc_fetch_reject_status_i;
+            end
+
+            if (desc_fetch_context_valid_q && recipe_done_i) begin
+                completion_wb_auto_pending_q              <= 1'b1;
+                completion_wb_auto_status_flags_q         <= completion_wb_auto_status_flags_next;
+                completion_wb_auto_recipe_done_status_q   <= completion_wb_auto_recipe_done_status_next;
+                completion_wb_auto_recipe_error_status_q  <= completion_wb_auto_recipe_error_status_next;
+                completion_wb_auto_recipe_reject_status_q <= completion_wb_auto_recipe_reject_status_next;
+                completion_wb_auto_slot_done_mask_q       <= recipe_slot_done_mask_i;
+                completion_wb_auto_slot_error_mask_q      <= recipe_slot_error_mask_i;
+                completion_wb_auto_slot_reject_mask_q     <= recipe_slot_reject_mask_i;
+                completion_wb_auto_perf_busy_cycles_q     <= recipe_perf_busy_cycles_i;
+                completion_wb_auto_perf_mac_count_q       <= recipe_perf_mac_count_i;
+                completion_wb_auto_perf_output_count_q    <= recipe_perf_output_count_i;
+                completion_wb_auto_error_detail_q         <= 32'h0000_0000;
+            end
+
+            if (completion_wb_auto_start_pulse) begin
+                completion_wb_auto_pending_q <= 1'b0;
+                desc_fetch_context_valid_q   <= 1'b0;
+            end
+        end
+    end
+
+    assign completion_wb_auto_start_pulse = completion_wb_auto_pending_q &&
+                                            !completion_wb_busy_i &&
+                                            csr_completion_wb_enable;
+
+    assign completion_wb_start_to_engine = csr_completion_wb_start_pulse |
+                                           completion_wb_auto_start_pulse;
+
+    assign completion_wb_payload_auto_sel = completion_wb_auto_start_pulse;
+
+    assign completion_wb_overall_done_to_engine = completion_wb_payload_auto_sel ?
+                                                  1'b1 :
+                                                  csr_completion_wb_overall_done;
+
+    assign completion_wb_overall_error_to_engine = completion_wb_payload_auto_sel ?
+                                                   (|completion_wb_auto_recipe_error_status_q |
+                                                    |desc_fetch_error_status_q) :
+                                                   csr_completion_wb_overall_error;
+
+    assign completion_wb_overall_reject_to_engine = completion_wb_payload_auto_sel ?
+                                                    (|completion_wb_auto_recipe_reject_status_q |
+                                                     |desc_fetch_reject_status_q) :
+                                                    csr_completion_wb_overall_reject;
+
+    assign completion_wb_status_flags_to_engine = completion_wb_payload_auto_sel ?
+                                                  completion_wb_auto_status_flags_q :
+                                                  csr_completion_wb_status_flags;
+
+    assign completion_wb_first_user_tag_to_engine = completion_wb_payload_auto_sel ?
+                                                    desc_fetch_first_user_tag_q :
+                                                    csr_completion_wb_user_tag;
+
+    assign completion_wb_last_user_tag_to_engine = completion_wb_payload_auto_sel ?
+                                                   desc_fetch_last_user_tag_q :
+                                                   csr_completion_wb_user_tag;
+
+    assign completion_wb_programmed_count_to_engine = completion_wb_payload_auto_sel ?
+                                                      desc_fetch_programmed_count_q :
+                                                      csr_completion_wb_programmed_count;
+
+    assign completion_wb_fetched_count_to_engine = completion_wb_payload_auto_sel ?
+                                                   desc_fetch_fetched_count_q :
+                                                   csr_completion_wb_fetched_count;
+
+    assign completion_wb_completed_count_to_engine = completion_wb_payload_auto_sel ?
+                                                     recipe_completed_count_i[7:0] :
+                                                     csr_completion_wb_completed_count;
+
+    assign completion_wb_desc_done_status_to_engine = completion_wb_payload_auto_sel ?
+                                                      desc_fetch_done_status_q :
+                                                      32'h0000_0000;
+
+    assign completion_wb_desc_error_status_to_engine = completion_wb_payload_auto_sel ?
+                                                       desc_fetch_error_status_q :
+                                                       32'h0000_0000;
+
+    assign completion_wb_desc_reject_status_to_engine = completion_wb_payload_auto_sel ?
+                                                        desc_fetch_reject_status_q :
+                                                        32'h0000_0000;
+
+    assign completion_wb_recipe_done_status_to_engine = completion_wb_payload_auto_sel ?
+                                                        completion_wb_auto_recipe_done_status_q :
+                                                        csr_completion_wb_recipe_done_status;
+
+    assign completion_wb_recipe_error_status_to_engine = completion_wb_payload_auto_sel ?
+                                                         completion_wb_auto_recipe_error_status_q :
+                                                         csr_completion_wb_recipe_error_status;
+
+    assign completion_wb_recipe_reject_status_to_engine = completion_wb_payload_auto_sel ?
+                                                          completion_wb_auto_recipe_reject_status_q :
+                                                          csr_completion_wb_recipe_reject_status;
+
+    assign completion_wb_slot_done_mask_to_engine = completion_wb_payload_auto_sel ?
+                                                    completion_wb_auto_slot_done_mask_q :
+                                                    32'h0000_0000;
+
+    assign completion_wb_slot_error_mask_to_engine = completion_wb_payload_auto_sel ?
+                                                     completion_wb_auto_slot_error_mask_q :
+                                                     32'h0000_0000;
+
+    assign completion_wb_slot_reject_mask_to_engine = completion_wb_payload_auto_sel ?
+                                                      completion_wb_auto_slot_reject_mask_q :
+                                                      32'h0000_0000;
+
+    assign completion_wb_perf_busy_cycles_to_engine = completion_wb_payload_auto_sel ?
+                                                      completion_wb_auto_perf_busy_cycles_q :
+                                                      32'h0000_0000;
+
+    assign completion_wb_perf_mac_count_to_engine = completion_wb_payload_auto_sel ?
+                                                    completion_wb_auto_perf_mac_count_q :
+                                                    csr_completion_wb_perf_mac_count;
+
+    assign completion_wb_perf_output_count_to_engine = completion_wb_payload_auto_sel ?
+                                                       completion_wb_auto_perf_output_count_q :
+                                                       32'h0000_0000;
+
+    assign completion_wb_error_detail_to_engine = completion_wb_payload_auto_sel ?
+                                                  completion_wb_auto_error_detail_q :
+                                                  csr_completion_wb_error_detail;
+
+    // ============================================================
+    // P18 completion writeback engine
+    //
+    // P18D wires the standalone CSR-triggered path.  P18E keeps
+    // that debug path and adds an automatic descriptor-fetch recipe
+    // terminal path selected by completion_wb_payload_auto_sel.
+    // ============================================================
+    ai_accel_completion_wb_engine #(
+        .ADDR_WIDTH   (ADDR_WIDTH),
+        .DATA_WIDTH   (DATA_WIDTH),
+        .AXI_ID_WIDTH (ID_WIDTH)
+    ) u_ai_accel_completion_wb_engine (
+        .clk                    (dma_clk),
+        .rst_n                  (dma_rst_n),
+
+        .wb_start               (completion_wb_start_to_engine),
+        .wb_enable              (csr_completion_wb_enable),
+        .completion_base_addr   (csr_completion_wb_base_addr),
+        .clear_done             (csr_completion_wb_clear_done_pulse),
+        .clear_error            (csr_completion_wb_clear_error_pulse),
+
+        .overall_done           (completion_wb_overall_done_to_engine),
+        .overall_error          (completion_wb_overall_error_to_engine),
+        .overall_reject         (completion_wb_overall_reject_to_engine),
+        .status_flags           (completion_wb_status_flags_to_engine),
+        .first_user_tag         (completion_wb_first_user_tag_to_engine),
+        .last_user_tag          (completion_wb_last_user_tag_to_engine),
+        .programmed_count       (completion_wb_programmed_count_to_engine),
+        .fetched_count          (completion_wb_fetched_count_to_engine),
+        .completed_count        (completion_wb_completed_count_to_engine),
+        .desc_fetch_done_status (completion_wb_desc_done_status_to_engine),
+        .desc_fetch_error_status(completion_wb_desc_error_status_to_engine),
+        .desc_fetch_reject_status(completion_wb_desc_reject_status_to_engine),
+        .recipe_done_status     (completion_wb_recipe_done_status_to_engine),
+        .recipe_error_status    (completion_wb_recipe_error_status_to_engine),
+        .recipe_reject_status   (completion_wb_recipe_reject_status_to_engine),
+        .slot_done_mask         (completion_wb_slot_done_mask_to_engine),
+        .slot_error_mask        (completion_wb_slot_error_mask_to_engine),
+        .slot_reject_mask       (completion_wb_slot_reject_mask_to_engine),
+        .perf_busy_cycles       (completion_wb_perf_busy_cycles_to_engine),
+        .perf_mac_count         (completion_wb_perf_mac_count_to_engine),
+        .perf_output_count      (completion_wb_perf_output_count_to_engine),
+        .error_detail           (completion_wb_error_detail_to_engine),
+
+        .wb_busy                (completion_wb_busy_i),
+        .wb_done                (completion_wb_done_i),
+        .wb_error               (completion_wb_error_i),
+        .wb_reject              (completion_wb_reject_i),
+        .wb_error_status        (completion_wb_error_status_i),
+        .wb_reject_status       (completion_wb_reject_status_i),
+        .wb_state               (completion_wb_state_i),
+        .current_write_step     (completion_wb_current_write_step_i),
+        .wb_written_beats       (completion_wb_written_beats_i),
+
+        .comp_axi_awid          (comp_axi_awid),
+        .comp_axi_awaddr        (comp_axi_awaddr),
+        .comp_axi_awlen         (comp_axi_awlen),
+        .comp_axi_awsize        (comp_axi_awsize),
+        .comp_axi_awburst       (comp_axi_awburst),
+        .comp_axi_awvalid       (comp_axi_awvalid),
+        .comp_axi_awready       (comp_axi_awready),
+        .comp_axi_wdata         (comp_axi_wdata),
+        .comp_axi_wstrb         (comp_axi_wstrb),
+        .comp_axi_wlast         (comp_axi_wlast),
+        .comp_axi_wvalid        (comp_axi_wvalid),
+        .comp_axi_wready        (comp_axi_wready),
+        .comp_axi_bid           (comp_axi_bid),
+        .comp_axi_bresp         (comp_axi_bresp),
+        .comp_axi_bvalid        (comp_axi_bvalid),
+        .comp_axi_bready        (comp_axi_bready)
     );
 
     // ------------------------------------------------------------

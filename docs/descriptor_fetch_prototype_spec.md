@@ -57,7 +57,7 @@ P15 single-job descriptor and hardware sequencer
 P16 CSR-resident multi-slot recipe sequencer
 P16 recipe-level DMA / C RMW / AXI-Stream / Direct Stream validation
 P16 recipe reject / busy / error handling validation
-Full UVM regression passing 105/105 after P17H closure
+Full UVM regression passing 100/100 after P16F2/P16G closure
 ```
 
 P17 must preserve the existing hierarchy:
@@ -174,35 +174,19 @@ AXI interconnect / NoC integration
 
 These can remain future work.  The P17 prototype should stay small and explainable as a single-person project milestone.
 
-### 4.3 Current Implementation Status
+### 4.4 Relationship to P18 Completion Writeback
 
-P17 has completed targeted validation and full-regression integration through P17H:
+P18 builds on P17 without changing descriptor-fetch semantics.  P17 still fetches and validates descriptors, builds an internal P16-compatible recipe snapshot, and launches the existing P16 recipe path.  P18 observes the accepted descriptor-fetch context and downstream terminal status, then writes a host-visible completion record.
 
-```text
-P17A: Descriptor fetch prototype spec                         PASS
-P17B: Descriptor fetch engine RTL / compile smoke              PASS
-P17C: CSR register plumbing / CSR-level fetch smoke            PASS
-P17D: Fetched descriptor -> P16 recipe snapshot bridge         PASS
-P17E: C RMW descriptor-fetch recipe validation                 PASS
-P17F: Frontend descriptor-fetch representative validation      PASS
-P17G: Fetch reject / busy / malformed descriptor handling      PASS
-P17H: Full regression integration                              PASS
-
-Full regression after P17H:
-  TOTAL : 105
-  PASS  : 105
-  FAIL  : 0
-```
-
-Validated P17 full-regression representatives:
+Validated P18 descriptor-fetch completion representatives:
 
 ```text
-csr_desc_fetch_smoke
-csr_desc_fetch_dma_two_slot_case102
-csr_desc_fetch_c_rmw_two_slot_case208
-csr_desc_fetch_direct_stream_two_slot_case102
-csr_desc_fetch_reject_error_case102
+csr_desc_fetch_dma_completion_wb_case102
+csr_desc_fetch_direct_stream_completion_wb_case102
+csr_desc_fetch_c_rmw_completion_wb_case208
 ```
+
+P17 descriptor-fetch reject/error coverage remains separate from P18 completion-writeback BRESP/busy/clear coverage.
 
 
 ---
@@ -217,11 +201,12 @@ Recommended new RTL:
 rtl/sequencer/ai_accel_desc_fetch_engine.sv
 ```
 
-Modified RTL:
+Recommended modified RTL:
 
 ```text
 rtl/csr/ai_accel_csr_regs.sv
 rtl/top/ai_accel_subsys_csr_top.sv
+rtl/sequencer/ai_accel_recipe_sequencer.sv
 ```
 
 Recommended partition:
@@ -874,55 +859,139 @@ CASE_ID=102
 
 ---
 
-## 17. P17 Validation Status
+## 17. Verification Plan For P17
 
-P17 validation is complete through P17H.  The final targeted and full-regression coverage proves both happy-path descriptor fetch and control/error handling.
+### 17.1 P17A Spec
 
-### 17.1 CSR-Level Fetch Smoke
-
-Validated test:
+Deliverable:
 
 ```text
-ai_accel_subsys_csr_desc_fetch_smoke_test
+docs/descriptor_fetch_prototype_spec.md
 ```
 
-Coverage:
+Acceptance:
+
+```text
+P17-lite scope reviewed
+memory descriptor format accepted
+CSR register map accepted
+non-goals accepted
+first test sequence accepted
+```
+
+### 17.2 P17B Descriptor Format / CSR Register Map
+
+Deliverables:
+
+```text
+CSR address constants
+Descriptor format constants
+Updated CSR docs
+Compile-safe register plumbing plan
+```
+
+Acceptance:
+
+```text
+CSR register offsets do not overlap P14/P15/P16 windows
+Descriptor stride and descriptor field layout are frozen for P17-lite
+```
+
+### 17.3 P17C Descriptor Fetch Engine Standalone Validation
+
+Recommended tests:
+
+```text
+fetch one descriptor
+fetch two descriptors
+fetch maximum supported descriptor count
+zero count reject
+count greater than queue depth reject
+unaligned base reject
+AXI RRESP error
+malformed descriptor validation error
+clear sticky done/error and retry valid fetch
+```
+
+### 17.4 P17D CSR Top Integration
+
+Recommended tests:
 
 ```text
 CSR writes DESC_BASE_ADDR / DESC_COUNT / DESC_STRIDE
-START_FETCH_RECIPE launches the descriptor fetch engine
-fetch_busy / fetch_done / fetch_error / reject / current_index / fetched_count are visible through CSR
-fetched_snapshot_valid is visible after successful fetch
+START_FETCH_RECIPE launches fetch engine
+fetch_busy / fetch_done / fetch_error visible through CSR
+P14/P15/P16 existing paths still compile and run
 ```
 
-### 17.2 End-to-End Descriptor-Fetch Recipes
+### 17.5 P17E Snapshot Bridge Validation
 
-Validated tests:
+Recommended tests:
 
 ```text
-ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test           CASE_ID=102
-ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test         CASE_ID=208
-ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test CASE_ID=102
+fetched descriptor 0 maps to recipe slot snapshot 0
+fetched descriptor 1 maps to recipe slot snapshot 1
+fetched INPUT_MODE / OUTPUT_MODE / ACCUMULATE_ENABLE propagate correctly
+P16 CSR slot registers are not overwritten by fetch
+P16 recipe consumes fetched snapshot rather than live CSR slots
 ```
 
-Coverage:
+### 17.6 P17F End-to-End DMA Descriptor-Fetch Recipe
+
+Recommended test:
 
 ```text
-fetch descriptor table from memory
-build internal P16-compatible recipe snapshot
-launch existing P16 recipe sequencer
-dispatch through existing P15 job worker
-validate final DMA destination memory against software reference
+ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test
+CASE_ID=102
 ```
 
-The C RMW descriptor-fetch recipe validates `slot0 accumulate_enable=0` and `slot1 accumulate_enable=1`.  The Direct Stream descriptor-fetch recipe validates that fetched `INPUT_MODE=DIRECT_STREAM` propagates through P16/P15 and selects GEMM input stream mode.
-
-### 17.3 Reject / Busy / Error Handling
-
-Validated test:
+Expected:
 
 ```text
-ai_accel_subsys_csr_desc_fetch_reject_error_test CASE_ID=102
+UVM_WARNING=0
+UVM_ERROR=0
+UVM_FATAL=0
+final DMA destination memory compare PASS
+```
+
+### 17.7 P17G End-to-End C RMW Descriptor-Fetch Recipe
+
+Recommended test:
+
+```text
+ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test
+CASE_ID=208
+```
+
+Expected:
+
+```text
+slot0 accumulate_enable=0
+slot1 accumulate_enable=1
+recipe-level C RMW result compare PASS
+```
+
+### 17.8 P17H Frontend Descriptor-Fetch Representative
+
+Recommended targeted tests:
+
+```text
+ai_accel_subsys_csr_desc_fetch_axis_stream_two_slot_smoke_test
+ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test
+```
+
+Recommended full-regression representative:
+
+```text
+csr_desc_fetch_direct_stream_two_slot_case102
+```
+
+### 17.9 P17I Fetch Reject / Busy / Error Handling
+
+Recommended test:
+
+```text
+ai_accel_subsys_csr_desc_fetch_reject_error_test
 ```
 
 Coverage:
@@ -933,73 +1002,98 @@ DESC_COUNT > P16_RECIPE_QUEUE_DEPTH reject
 unaligned DESC_BASE_ADDR reject
 unaligned DESC_STRIDE reject
 DESC_STRIDE too small reject
-missing descriptor VALID bit error
-unsupported descriptor output mode error
-zero M/N/K dimension error
-zero A preload length error
-zero B preload length error
-zero DMA store byte_count error
+invalid descriptor valid bit error
+invalid descriptor dimensions error
+invalid descriptor preload length error
+invalid descriptor store length error
 START_FETCH_RECIPE while fetch_busy reject
 START_FETCH_RECIPE while recipe_busy reject
 P16 START_RECIPE while fetch_busy reject
 P15 START_JOB while fetch_busy reject
 P14 START_* while fetch_busy reject
-descriptor AXI RRESP error propagation
-sticky clear and valid retry/recovery
+AXI descriptor fetch RRESP error propagation
+sticky clear and valid retry
 ```
 
-### 17.4 Full Regression Integration
+### 17.10 P17J Regression Integration / Documentation Closure
 
-P17H added five descriptor-fetch representatives into the full UVM regression:
+Recommended full regression additions:
 
 ```text
-csr_desc_fetch_smoke
 csr_desc_fetch_dma_two_slot_case102
 csr_desc_fetch_c_rmw_two_slot_case208
 csr_desc_fetch_direct_stream_two_slot_case102
 csr_desc_fetch_reject_error_case102
 ```
 
-Current integrated baseline:
+Expected integrated regression target:
 
 ```text
-TOTAL : 105
-PASS  : 105
-FAIL  : 0
+Current after P16F2:
+  100/100 PASS
+
+After P17J:
+  104/104 PASS
 ```
 
 ---
 
 ## 18. Milestone Breakdown
 
+Recommended P17 split:
+
 ```text
-P17A: Descriptor fetch prototype spec                         PASS
-P17B: Descriptor fetch engine RTL / compile smoke              PASS
-P17C: CSR register plumbing / CSR-level fetch smoke            PASS
-P17D: Fetched descriptor -> P16 recipe snapshot bridge         PASS
-P17E: C RMW descriptor-fetch recipe validation                 PASS
-P17F: Frontend descriptor-fetch representative validation      PASS
-P17G: Fetch reject / busy / malformed descriptor handling      PASS
-P17H: Full regression integration                              PASS
-P17I: Documentation / closure update                           PASS target
+P17A: Descriptor fetch prototype spec                         PASS target
+P17B: Memory descriptor format and CSR register map            Future
+P17C: Descriptor fetch engine standalone RTL / unit smoke      Future
+P17D: Fetch engine integration into CSR top                    Future
+P17E: Fetched descriptor to P16 recipe snapshot bridge         Future
+P17F: DMA two-slot descriptor-fetch recipe validation          Future
+P17G: C RMW two-slot descriptor-fetch recipe validation        Future
+P17H: Frontend descriptor-fetch representative validation      Future
+P17I: Fetch reject / busy / malformed descriptor handling      Future
+P17J: Full regression integration and documentation closure    Future
 ```
 
 ---
 
-## 19. Closed P17 Design Decisions
+## 19. Open Decisions Before P17B
+
+These should be confirmed before RTL work starts:
 
 ```text
-Dedicated descriptor-memory AXI read master: yes
-Descriptor field layout mirrors P16 slot descriptor: yes
-Default descriptor stride: 0x80 bytes
-START_FETCH_RECIPE auto-launches the P16 recipe after successful validation: yes
-Fetch-only debug command: not included
-Fetched descriptors write into live P16 CSR slots: no
-DESC_FETCH_DONE waits for recipe completion: no
-AXI read retry: not included
-Linked-list or circular queue support: not included
-Interrupt or descriptor completion writeback: not included
+1. Should P17 use a dedicated descriptor-memory AXI read master?
+   Recommended: yes for prototype simplicity.
+
+2. Should memory descriptors use the same field layout as P16 slot descriptors?
+   Recommended: yes.
+
+3. Should descriptor stride default to 0x80 bytes?
+   Recommended: yes, matching P16 slot stride and leaving reserved space.
+
+4. Should START_FETCH_RECIPE automatically launch the P16 recipe after successful fetch?
+   Recommended: yes for P17-lite.
+
+5. Should a fetch-only debug command exist?
+   Recommended: not required for P17-lite.
+
+6. Should fetched descriptors be written into P16 CSR slot registers?
+   Recommended: no.  Use an internal fetched recipe snapshot.
+
+7. Should P17 wait for the launched recipe to complete before setting DESC_FETCH_DONE?
+   Recommended: no.  DESC_FETCH_DONE means fetch and recipe launch completed; P16 owns recipe completion.
+
+8. Should AXI read errors be retried automatically?
+   Recommended: no for P17-lite.
+
+9. Should P17 support linked-list or circular queues?
+   Recommended: no.
+
+10. Should P17 add interrupt or completion writeback support?
+    Recommended: no.
 ```
+
+---
 
 ## 20. Risks and Mitigations
 
@@ -1118,7 +1212,7 @@ P17 adds too many recipe tests and makes full regression slow.
 Mitigation:
 
 ```text
-Add CSR smoke, three happy-path representatives, and one reject/error test to full regression.
+Add only 3 happy-path representatives plus 1 reject/error test to full regression.
 Keep AXI-Stream descriptor-fetch as targeted if Direct Stream is selected for full regression.
 ```
 
@@ -1164,3 +1258,24 @@ preserve P14/P15/P16 debug paths when idle
 ```
 
 This provides a realistic host-programmable accelerator control extension while keeping the scope appropriate for a single-person digital design project.
+
+
+---
+
+## P18H Completion-Writeback Context
+
+```text
+P18A: Completion writeback prototype spec                              PASS
+P18B: Completion record format / CSR map freeze                        PASS
+P18C: Completion writeback engine RTL / compile smoke                  PASS
+P18D: CSR plumbing + standalone completion writeback smoke              PASS
+P18E: Descriptor-fetch DMA recipe + completion writeback validation     PASS
+P18F: C RMW + Direct Stream completion writeback validation             PASS
+P18G: Completion writeback error / busy / sticky clear handling         PASS
+P18H: Full regression integration                                      PASS
+
+Full regression after P18H:
+  TOTAL : 110
+  PASS  : 110
+  FAIL  : 0
+```

@@ -29,9 +29,25 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
     localparam logic [31:0] DESC_FETCH_STATUS_DONE  = 32'h0000_0002;
     localparam logic [31:0] DESC_FETCH_STATUS_ERR   = 32'h0000_0004;
 
+    virtual desc_src_inject_if desc_src_inject_vif;
+
     function new(string name = "ai_accel_subsys_csr_desc_fetch_reject_error_test",
                  uvm_component parent = null);
         super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+
+        if (!uvm_config_db#(virtual desc_src_inject_if)::get(
+                this,
+                "",
+                "desc_src_inject_vif",
+                desc_src_inject_vif
+            )) begin
+            `uvm_fatal("NO_DESC_SRC_INJECT_VIF",
+                "Missing descriptor-source injection virtual interface")
+        end
     endfunction
 
     function automatic logic [31:0] bit_mask(input int bit_idx);
@@ -316,13 +332,13 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         csr_desc_fetch_clear_sticky_status();
         program_single_descriptor(profile_item, SLOT0_CONTROL_DMA_HOST_READBACK, a_bytes, b_bytes, c_bytes, 32'hD17C_0000);
 
-        ai_accel_subsys_csr_uvm_top.desc_src_set_rresp_error(1'b1, 0);
+        desc_src_inject_vif.set_rresp_error(1'b1, 0);
         csr_start_desc_fetch_raw(P17G_BAD_DESC_BASE, 1, P17G_DESC_STRIDE);
         expect_desc_fetch_error(
             "descriptor AXI RRESP error propagation",
             bit_mask(ai_accel_csr_access_helper::DESC_FETCH_ERR_AXI_RRESP)
         );
-        ai_accel_subsys_csr_uvm_top.desc_src_set_rresp_error(1'b0, -1);
+        desc_src_inject_vif.set_rresp_error(1'b0, -1);
         csr_desc_fetch_clear_sticky_status();
     end
     endtask

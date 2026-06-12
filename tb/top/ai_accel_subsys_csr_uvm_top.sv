@@ -4,23 +4,6 @@
 import uvm_pkg::*;
 import ai_accel_subsys_uvm_pkg::*;
 `include "uvm_macros.svh"
-`include "ai_accel_csr_access_helper.sv"
-`include "ai_accel_subsys_csr_smoke_test.sv"
-`include "ai_accel_subsys_csr_dma_load_store_smoke_test.sv"
-`include "ai_accel_subsys_csr_axis_stream_load_store_smoke_test.sv"
-`include "ai_accel_subsys_csr_direct_stream_load_store_smoke_test.sv"
-`include "ai_accel_subsys_csr_job_dma_load_store_smoke_test.sv"
-`include "ai_accel_subsys_csr_job_reject_error_test.sv"
-`include "ai_accel_subsys_csr_job_frontend_mode_smoke_test.sv"
-`include "ai_accel_subsys_csr_recipe_dma_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_recipe_frontend_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_recipe_reject_error_test.sv"
-`include "ai_accel_subsys_csr_desc_fetch_smoke_test.sv"
-`include "ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test.sv"
-`include "ai_accel_subsys_csr_desc_fetch_reject_error_test.sv"
 
 module ai_accel_subsys_csr_uvm_top;
 
@@ -119,6 +102,9 @@ module ai_accel_subsys_csr_uvm_top;
         .DATA_WIDTH (CSR_DATA_WIDTH)
     ) csr_vif_t;
 
+    typedef virtual desc_src_inject_if desc_src_inject_vif_t;
+    typedef virtual comp_wb_inject_if  comp_wb_inject_vif_t;
+
     // ============================================================
     // Clocks / resets
     // ============================================================
@@ -135,6 +121,8 @@ module ai_accel_subsys_csr_uvm_top;
     // Final resets feeding DUT / interfaces
     logic dma_rst_n;
     logic core_rst_n;
+
+
 
     // ============================================================
     // DUT control / status
@@ -354,6 +342,7 @@ module ai_accel_subsys_csr_uvm_top;
     // P17G descriptor source RRESP injection for error-path validation.
     logic                  desc_src_inject_rresp_error_q = 1'b0;
     int signed             desc_src_inject_rresp_error_beat_q = -1;
+    int unsigned           desc_src_rresp_error_gen_q = 0;
     int unsigned           desc_src_inject_base_ar_count = 0;
     int unsigned           desc_src_rd_pending_beat_idx;
 
@@ -381,6 +370,59 @@ module ai_accel_subsys_csr_uvm_top;
     logic [1:0]                dma_dst_axi_bresp;
     logic                      dma_dst_axi_bvalid;
     logic                      dma_dst_axi_bready;
+
+
+    // ============================================================
+    // P18 completion writeback AXI-MM write port
+    // ============================================================
+    logic [ID_WIDTH-1:0]       comp_axi_awid;
+    logic [ADDR_WIDTH-1:0]     comp_axi_awaddr;
+    logic [7:0]                comp_axi_awlen;
+    logic [2:0]                comp_axi_awsize;
+    logic [1:0]                comp_axi_awburst;
+    logic                      comp_axi_awvalid;
+    logic                      comp_axi_awready;
+
+    logic [DATA_WIDTH-1:0]     comp_axi_wdata;
+    logic [DATA_WIDTH/8-1:0]   comp_axi_wstrb;
+    logic                      comp_axi_wlast;
+    logic                      comp_axi_wvalid;
+    logic                      comp_axi_wready;
+
+    logic [ID_WIDTH-1:0]       comp_axi_bid;
+    logic [1:0]                comp_axi_bresp;
+    logic                      comp_axi_bvalid;
+    logic                      comp_axi_bready;
+
+    // ============================================================
+    // P18 completion writeback memory responder model state
+    // ============================================================
+    logic                      comp_aw_pending_valid;
+    logic [ID_WIDTH-1:0]       comp_aw_pending_id;
+    logic [ADDR_WIDTH-1:0]     comp_aw_pending_addr;
+    int unsigned               comp_aw_pending_beat_idx;
+
+    logic                      comp_w_pending_valid;
+    logic [DATA_WIDTH-1:0]     comp_w_pending_data;
+    logic [DATA_WIDTH/8-1:0]   comp_w_pending_strb;
+    logic                      comp_w_pending_last;
+
+    logic [ID_WIDTH-1:0]       comp_bid_q;
+    logic [1:0]                comp_bresp_q;
+    logic                      comp_bvalid_q;
+
+    int unsigned               comp_aw_count;
+    int unsigned               comp_w_count;
+    int unsigned               comp_b_count;
+
+    logic                      comp_wb_inject_bresp_error_q;
+    int signed                 comp_wb_inject_bresp_error_beat_q;
+    int unsigned               comp_wb_inject_base_aw_count;
+    int unsigned               comp_wb_bresp_error_gen_q;
+
+    wire comp_aw_fire = comp_axi_awvalid && comp_axi_awready;
+    wire comp_w_fire  = comp_axi_wvalid  && comp_axi_wready;
+    wire comp_b_fire  = comp_axi_bvalid  && comp_axi_bready;
 
     // ============================================================
     // DMA destination memory write responder model state
@@ -444,6 +486,20 @@ module ai_accel_subsys_csr_uvm_top;
         .DMA_SRC_MEM_BYTES (DMA_SRC_MEM_BYTES),
         .DMA_DST_MEM_BYTES (DMA_DST_MEM_BYTES)
     ) ctrl_if (
+        .clk (dma_clk)
+    );
+
+    // ============================================================
+    // Descriptor-source injection control interface
+    // ============================================================
+    desc_src_inject_if desc_src_inject_vif (
+        .clk (dma_clk)
+    );
+
+    // ============================================================
+    // Completion-writeback destination injection control interface
+    // ============================================================
+    comp_wb_inject_if comp_wb_inject_vif (
         .clk (dma_clk)
     );
 
@@ -519,6 +575,18 @@ module ai_accel_subsys_csr_uvm_top;
     //   - AW and W may handshake in either order
     //   - WSTRB controls byte writes
     // ============================================================
+    assign comp_axi_awready = dma_rst_n &&
+                              !comp_aw_pending_valid &&
+                              !comp_bvalid_q;
+
+    assign comp_axi_wready  = dma_rst_n &&
+                              !comp_w_pending_valid &&
+                              !comp_bvalid_q;
+
+    assign comp_axi_bid     = comp_bid_q;
+    assign comp_axi_bresp   = comp_bresp_q;
+    assign comp_axi_bvalid  = comp_bvalid_q;
+
     assign dma_dst_axi_awready = dma_rst_n &&
                                  !dma_dst_aw_pending_valid &&
                                  !dma_dst_bvalid_q;
@@ -615,6 +683,159 @@ module ai_accel_subsys_csr_uvm_top;
         end
     end
     endtask
+
+    task automatic comp_apply_write(
+        input logic [ADDR_WIDTH-1:0]   addr,
+        input logic [DATA_WIDTH-1:0]   data,
+        input logic [DATA_WIDTH/8-1:0] strb
+    );
+        int unsigned base_idx;
+        int unsigned lane;
+    begin
+        base_idx = dma_dst_byte_index(addr);
+
+        if ((base_idx + BYTES_PER_BEAT) > DMA_DST_MEM_BYTES) begin
+            $fatal(1,
+                "[UVM_TOP_COMP_WB] completion write out of range: addr=0x%08h idx=%0d depth=%0d",
+                addr, base_idx, DMA_DST_MEM_BYTES
+            );
+        end
+
+        for (lane = 0; lane < BYTES_PER_BEAT; lane++) begin
+            if (strb[lane]) begin
+                ctrl_if.dma_dst_mem[base_idx + lane] = data[8*lane +: 8];
+            end
+        end
+    end
+    endtask
+
+    function automatic logic [1:0] comp_next_bresp(
+        input int unsigned aw_beat_idx
+    );
+        int signed rel_beat;
+    begin
+        if (aw_beat_idx >= comp_wb_inject_base_aw_count) begin
+            rel_beat = int'(aw_beat_idx - comp_wb_inject_base_aw_count);
+        end
+        else begin
+            rel_beat = -1;
+        end
+
+        if (comp_wb_inject_bresp_error_q &&
+            (comp_wb_inject_bresp_error_beat_q >= 0) &&
+            (rel_beat == comp_wb_inject_bresp_error_beat_q)) begin
+            return AXI_RESP_SLVERR;
+        end
+
+        return AXI_RESP_OKAY;
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // P18 completion writeback destination model.
+    //
+    // The P18D smoke reuses the existing DMA destination byte array
+    // as host-visible completion memory.  The completion writeback
+    // engine is the only writer in the standalone smoke, so this does
+    // not interfere with DMA-store result checking.
+    // ------------------------------------------------------------
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            comp_aw_pending_valid    <= 1'b0;
+            comp_aw_pending_id       <= '0;
+            comp_aw_pending_addr     <= '0;
+            comp_aw_pending_beat_idx <= 0;
+
+            comp_w_pending_valid  <= 1'b0;
+            comp_w_pending_data   <= '0;
+            comp_w_pending_strb   <= '0;
+            comp_w_pending_last   <= 1'b0;
+
+            comp_bid_q            <= '0;
+            comp_bresp_q          <= AXI_RESP_OKAY;
+            comp_bvalid_q         <= 1'b0;
+            comp_aw_count         <= 0;
+            comp_w_count          <= 0;
+            comp_b_count          <= 0;
+
+            comp_wb_inject_bresp_error_q      <= 1'b0;
+            comp_wb_inject_bresp_error_beat_q <= -1;
+            comp_wb_inject_base_aw_count      <= 0;
+            comp_wb_bresp_error_gen_q         <= 0;
+        end else begin
+            if (comp_wb_inject_vif.bresp_error_gen !=
+                comp_wb_bresp_error_gen_q) begin
+                comp_wb_inject_bresp_error_q      <= comp_wb_inject_vif.bresp_error_enable;
+                comp_wb_inject_bresp_error_beat_q <= comp_wb_inject_vif.bresp_error_beat;
+                comp_wb_inject_base_aw_count      <= comp_aw_count;
+                comp_wb_bresp_error_gen_q         <= comp_wb_inject_vif.bresp_error_gen;
+            end
+
+            if (comp_aw_fire) begin
+                if (comp_axi_awlen !== 8'd0) begin
+                    `uvm_error("COMP_WB_MEM/AWLEN", $sformatf("Completion writeback expected single-beat AWLEN=0, got %0d", comp_axi_awlen))
+                end
+                comp_aw_pending_valid    <= 1'b1;
+                comp_aw_pending_id       <= comp_axi_awid;
+                comp_aw_pending_addr     <= comp_axi_awaddr;
+                comp_aw_pending_beat_idx <= comp_aw_count;
+                comp_aw_count            <= comp_aw_count + 1;
+            end
+
+            if (comp_w_fire) begin
+                if (comp_axi_wlast !== 1'b1) begin
+                    `uvm_error("COMP_WB_MEM/WLAST", "Completion writeback expected WLAST=1 for single-beat write")
+                end
+                comp_w_pending_valid <= 1'b1;
+                comp_w_pending_data  <= comp_axi_wdata;
+                comp_w_pending_strb  <= comp_axi_wstrb;
+                comp_w_pending_last  <= comp_axi_wlast;
+                comp_w_count         <= comp_w_count + 1;
+            end
+
+            if (comp_b_fire) begin
+                comp_bvalid_q <= 1'b0;
+                comp_bresp_q  <= AXI_RESP_OKAY;
+                comp_bid_q    <= '0;
+                comp_b_count  <= comp_b_count + 1;
+            end
+
+            if (!comp_bvalid_q &&
+                (comp_aw_pending_valid || comp_aw_fire) &&
+                (comp_w_pending_valid  || comp_w_fire)) begin
+                logic [ID_WIDTH-1:0]       aw_id_now;
+                logic [ADDR_WIDTH-1:0]     aw_addr_now;
+                logic [DATA_WIDTH-1:0]     w_data_now;
+                logic [DATA_WIDTH/8-1:0]   w_strb_now;
+                logic [1:0]                bresp_now;
+                int unsigned               aw_beat_idx_now;
+
+                aw_id_now       = comp_aw_fire ? comp_axi_awid   : comp_aw_pending_id;
+                aw_addr_now     = comp_aw_fire ? comp_axi_awaddr : comp_aw_pending_addr;
+                aw_beat_idx_now = comp_aw_fire ? comp_aw_count   : comp_aw_pending_beat_idx;
+                w_data_now      = comp_w_fire  ? comp_axi_wdata  : comp_w_pending_data;
+                w_strb_now      = comp_w_fire  ? comp_axi_wstrb  : comp_w_pending_strb;
+                bresp_now       = comp_next_bresp(aw_beat_idx_now);
+
+                if (bresp_now == AXI_RESP_OKAY) begin
+                    comp_apply_write(aw_addr_now, w_data_now, w_strb_now);
+                end
+
+                comp_bid_q    <= aw_id_now;
+                comp_bresp_q  <= bresp_now;
+                comp_bvalid_q <= 1'b1;
+
+                comp_aw_pending_valid    <= 1'b0;
+                comp_aw_pending_id       <= '0;
+                comp_aw_pending_addr     <= '0;
+                comp_aw_pending_beat_idx <= 0;
+                comp_w_pending_valid     <= 1'b0;
+                comp_w_pending_data      <= '0;
+                comp_w_pending_strb      <= '0;
+                comp_w_pending_last      <= 1'b0;
+            end
+        end
+    end
 
     // ============================================================
     // DMA source AXI read responder
@@ -925,6 +1146,10 @@ module ai_accel_subsys_csr_uvm_top;
 
     // ============================================================
     // P17G descriptor source error-injection controls
+    //
+    // The normal UVM path uses desc_src_inject_if through config_db.
+    // This local task is kept for interactive debug/backward
+    // compatibility when directly poking the top module in simulation.
     // ============================================================
     task automatic desc_src_set_rresp_error(
         input bit        enable,
@@ -961,8 +1186,18 @@ module ai_accel_subsys_csr_uvm_top;
             desc_src_r_count          <= 0;
 
             desc_src_rd_pending_beat_idx       <= 0;
+            desc_src_rresp_error_gen_q         <= 0;
         end
         else begin
+            if (desc_src_inject_vif.rresp_error_gen !=
+                desc_src_rresp_error_gen_q) begin
+
+                desc_src_inject_rresp_error_q      <= desc_src_inject_vif.rresp_error_enable;
+                desc_src_inject_rresp_error_beat_q <= desc_src_inject_vif.rresp_error_beat;
+                desc_src_inject_base_ar_count      <= desc_src_ar_count;
+                desc_src_rresp_error_gen_q         <= desc_src_inject_vif.rresp_error_gen;
+            end
+
             if (desc_src_ar_fire) begin
                 int unsigned ar_base_idx;
 
@@ -1290,6 +1525,27 @@ module ai_accel_subsys_csr_uvm_top;
         .dma_dst_axi_bvalid   (dma_dst_axi_bvalid),
         .dma_dst_axi_bready   (dma_dst_axi_bready),
 
+
+        // P18 completion writeback AXI-MM write master port
+        .comp_axi_awid        (comp_axi_awid),
+        .comp_axi_awaddr      (comp_axi_awaddr),
+        .comp_axi_awlen       (comp_axi_awlen),
+        .comp_axi_awsize      (comp_axi_awsize),
+        .comp_axi_awburst     (comp_axi_awburst),
+        .comp_axi_awvalid     (comp_axi_awvalid),
+        .comp_axi_awready     (comp_axi_awready),
+
+        .comp_axi_wdata       (comp_axi_wdata),
+        .comp_axi_wstrb       (comp_axi_wstrb),
+        .comp_axi_wlast       (comp_axi_wlast),
+        .comp_axi_wvalid      (comp_axi_wvalid),
+        .comp_axi_wready      (comp_axi_wready),
+
+        .comp_axi_bid         (comp_axi_bid),
+        .comp_axi_bresp       (comp_axi_bresp),
+        .comp_axi_bvalid      (comp_axi_bvalid),
+        .comp_axi_bready      (comp_axi_bready),
+
         // Live status observation
         .dma_load_busy        (dma_load_busy),
         .dma_load_done        (dma_load_done),
@@ -1557,6 +1813,14 @@ module ai_accel_subsys_csr_uvm_top;
 
         uvm_config_db#(csr_vif_t)::set(
             null, "*", "csr_vif", csr_if
+        );
+
+        uvm_config_db#(desc_src_inject_vif_t)::set(
+            null, "*", "desc_src_inject_vif", desc_src_inject_vif
+        );
+
+        uvm_config_db#(comp_wb_inject_vif_t)::set(
+            null, "*", "comp_wb_inject_vif", comp_wb_inject_vif
         );
 
         run_test();

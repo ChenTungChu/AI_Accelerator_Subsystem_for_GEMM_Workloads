@@ -176,6 +176,27 @@ P15F: documentation / closure update                          PASS
 Full regression: 95/95 PASS
 ```
 
+### 4.4 Relationship to P16/P17/P18
+
+P15 remains the reusable single-job worker beneath later control layers:
+
+```text
+P16 recipe sequencer dispatches each slot through P15.
+P17 descriptor fetch builds a P16-compatible recipe snapshot.
+P18 completion writeback observes P17/P16 terminal status after the P15 worker completes selected slots.
+```
+
+P18 does not change P15 job sequencing or frontend-mode derivation.
+
+Current integrated regression after P18H:
+
+```text
+TOTAL : 110
+PASS  : 110
+FAIL  : 0
+```
+
+
 ---
 
 ## 5. Recommended RTL Partition
@@ -1262,17 +1283,3 @@ FAIL  : 0
 ```
 
 This gives the project a realistic job-based accelerator control model while preserving the validated datapath and verification foundation built through P14.
-
-
-
-P17 builds on P16 by fetching memory-resident descriptors into an internal P16-compatible recipe snapshot.  The P15 job sequencer remains the single-job worker for both CSR-resident P16 recipes and fetched-descriptor P17 recipes.  P17 does not add a second job worker path or duplicate the P15 preload/GEMM/store FSM.
-
-Validated P17 descriptor-fetch paths using the P15 worker:
-
-```text
-DMA descriptor-fetch two-slot recipe              PASS
-C RMW descriptor-fetch two-slot recipe            PASS
-Direct Stream descriptor-fetch two-slot recipe    PASS
-reject / busy / malformed descriptor handling     PASS
-current integrated full regression                105/105 PASS
-```

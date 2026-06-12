@@ -2102,6 +2102,7 @@ run_reg_item "csr_desc_fetch_c_rmw_two_slot_case208" {
     set CORE_CLK_PERIOD_NS 14
 
     set GEMM_ENABLE_C_RMW_ACCUM 1
+    set ACCUMULATE_ENABLE 0
 }
 
 run_reg_item "csr_desc_fetch_direct_stream_two_slot_case102" {
@@ -2121,6 +2122,76 @@ run_reg_item "csr_desc_fetch_reject_error_case102" {
     set UVM_TOP ai_accel_subsys_csr_uvm_top
     set ENABLE_RESULT_CHECK 1
     set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+
+# ============================================================
+# P18H: Completion writeback regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P18 targeted validation into the full regression by
+# covering standalone completion writeback, descriptor-fetch DMA /
+# Direct Stream / C RMW completion records, and completion writeback
+# busy / reject / BRESP error / sticky clear handling.
+# Expected total after P18H: 110.
+# ============================================================
+run_reg_item "csr_completion_wb_smoke" {
+    set UVM_TEST ai_accel_subsys_csr_completion_wb_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_dma_completion_wb_case102" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_dma_completion_wb_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_direct_stream_completion_wb_case102" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_direct_stream_completion_wb_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_desc_fetch_c_rmw_completion_wb_case208" {
+    set UVM_TEST ai_accel_subsys_csr_desc_fetch_c_rmw_completion_wb_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 208
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_ENABLE_C_RMW_ACCUM 1
+    set ACCUMULATE_ENABLE 0
+}
+
+run_reg_item "csr_completion_wb_error_busy_clear" {
+    set UVM_TEST ai_accel_subsys_csr_completion_wb_error_busy_clear_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
 
     set FORCE_HELPER_MEM_PATH 0
 

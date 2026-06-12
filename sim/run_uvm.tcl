@@ -83,6 +83,11 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test \
     ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test \
     ai_accel_subsys_csr_desc_fetch_reject_error_test \
+    ai_accel_subsys_csr_completion_wb_smoke_test \
+    ai_accel_subsys_csr_desc_fetch_dma_completion_wb_test \
+    ai_accel_subsys_csr_desc_fetch_c_rmw_completion_wb_test \
+    ai_accel_subsys_csr_desc_fetch_direct_stream_completion_wb_test \
+    ai_accel_subsys_csr_completion_wb_error_busy_clear_test \
 ]
 
 # --------------------------------------------------

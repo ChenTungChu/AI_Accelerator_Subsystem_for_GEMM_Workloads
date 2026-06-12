@@ -71,6 +71,8 @@ vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_apply_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_mm_commit_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../rtl/interface/axi_lite_if.sv
 vlog -sv -L uvm12 {*}$INC_LIST ../tb/interface/ai_accel_subsys_ctrl_if.sv
+vlog -sv -L uvm12 {*}$INC_LIST ../tb/interface/desc_src_inject_if.sv
+vlog -sv -L uvm12 {*}$INC_LIST ../tb/interface/comp_wb_inject_if.sv
 
 # --------------------------------------------------------
 # Compile RTL / DUT
@@ -102,6 +104,7 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/csr/ai_accel_csr_r
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_job_sequencer.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_recipe_sequencer.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_desc_fetch_engine.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_completion_wb_engine.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys_csr_top.sv
 
 # --------------------------------------------------------
@@ -115,6 +118,7 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/uvm/pkg/ai_accel_su
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_uvm_top.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_csr_regs_uvm_top.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_csr_uvm_top.sv
+
 
 # --------------------------------------------------------
 # Compile DMA unit-level TB

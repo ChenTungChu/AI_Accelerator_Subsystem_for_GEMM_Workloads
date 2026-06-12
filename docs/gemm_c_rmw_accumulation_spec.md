@@ -1427,8 +1427,8 @@ After C RMW partial accumulation is stable, future milestones can consider:
 P14: external tile scheduler
 P15: A tile cache / multi-row A reuse
 P16: overlapped preload / compute / C RMW scheduling
-P17: larger Direct Stream tile movement
-P18: optional C direct-store path
+P17: memory-resident descriptor fetch into P16-compatible recipe snapshots (completed)
+P18: memory-resident completion writeback after descriptor-fetch recipe terminal status (completed)
 P19: multi-bank or widened local memory
 P20: constrained-random tile coverage expansion
 ```
@@ -1468,24 +1468,37 @@ FAIL  : 0
 ```
 
 
+---
 
-Later P17 descriptor-fetch validation proved that the same C RMW recipe can also be launched from memory-resident descriptors instead of CSR-resident P16 slots:
+## 23. P18 C RMW Completion Writeback Validation
+
+P18F validates that a descriptor-fetch C RMW recipe can complete the P13 partial-K accumulation path and then write a committed completion record.
+
+Validated representative:
 
 ```text
-P17E: Descriptor-fetch C RMW two-slot recipe validation PASS
-P17H: Full regression integration with descriptor-fetch C RMW representative PASS
+csr_desc_fetch_c_rmw_completion_wb_case208 PASS
+```
 
-Representative full-regression item:
-  csr_desc_fetch_c_rmw_two_slot_case208
+Required run configuration:
 
-Policy:
-  descriptor slot0 accumulate_enable=0
-  descriptor slot1 accumulate_enable=1
-  fetched descriptors build an internal P16-compatible recipe snapshot
-  GEMM C RMW datapath remains unchanged
+```text
+CASE_ID=208
+GEMM_ENABLE_C_RMW_ACCUM=1
+ACCUMULATE_ENABLE=0
+```
 
-Current integrated full regression after P17H:
-  TOTAL : 105
-  PASS  : 105
-  FAIL  : 0
+The top-level `ACCUMULATE_ENABLE` remains 0 because each descriptor / recipe slot carries its own `accumulate_enable` control bit:
+
+```text
+slot0 accumulate_enable=0
+slot1 accumulate_enable=1
+```
+
+Current integrated regression after P18H:
+
+```text
+TOTAL : 110
+PASS  : 110
+FAIL  : 0
 ```

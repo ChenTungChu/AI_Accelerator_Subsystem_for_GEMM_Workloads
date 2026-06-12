@@ -26,8 +26,8 @@ P13: C read-modify-write accumulation for external partial-K jobs
 Current full regression baseline:
 
 ```text
-TOTAL : 82
-PASS  : 82
+TOTAL : 110
+PASS  : 110
 FAIL  : 0
 ```
 
@@ -439,6 +439,24 @@ PASS  : 82
 FAIL  : 0
 ```
 
+P17/P18 control-plane validation is layered on top of the performance GEMM datapath:
+
+```text
+P17 descriptor-fetch representative regression              PASS
+P18 completion-writeback representative regression          PASS
+P18 completion writeback error / busy / sticky clear        PASS
+```
+
+P18 full-regression representatives:
+
+```text
+csr_completion_wb_smoke
+csr_desc_fetch_dma_completion_wb_case102
+csr_desc_fetch_direct_stream_completion_wb_case102
+csr_desc_fetch_c_rmw_completion_wb_case208
+csr_completion_wb_error_busy_clear
+```
+
 ---
 
 ## 5. Acceptance Status
@@ -476,16 +494,4 @@ packed tile-preload optimization for K-tiled tails
 larger Direct Stream operand buffers
 coverage closure / constrained-random expansion
 external scheduler / descriptor support for multi-job GEMM recipes
-```
-
-
-
-P17 sits above P16 as a control-plane descriptor fetch prototype.  It does not change MAC scheduling, tiling, C RMW arithmetic, or performance counter semantics.  For fetched-descriptor recipes, the existing P16 recipe-level performance accumulation policy still applies because each fetched descriptor is dispatched through the existing P15/GEMM worker path.
-
-Validated P17 performance-related observations are correctness/sanity checks rather than new performance targets:
-
-```text
-csr_desc_fetch_dma_two_slot_case102        : recipe perf snapshot PASS
-csr_desc_fetch_c_rmw_two_slot_case208      : C RMW recipe perf snapshot PASS
-csr_desc_fetch_direct_stream_two_slot_case102: recipe perf snapshot PASS
 ```

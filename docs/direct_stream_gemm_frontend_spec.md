@@ -46,24 +46,14 @@ FAIL  : 0
 ```
 
 
-Current project status after P17H descriptor-fetch closure:
+Current project status after P13 C RMW accumulation closure:
 
 ```text
-Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
-Full regression: 105/105 PASS
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
 ```
 
 Direct Stream B1 remains compatible with:
-
-
-P17F validated that Direct Stream can be selected from memory-resident descriptors.  The descriptor-fetch flow propagates `INPUT_MODE=DIRECT_STREAM` through the fetched P16-compatible recipe snapshot into the existing P15 job worker, which derives `GEMM_INPUT_STREAM_MODE=1` and preloads A/B into the operand buffers before GEMM execution.
-
-Validated P17 Direct Stream representative:
-
-```text
-csr_desc_fetch_direct_stream_two_slot_case102 PASS
-```
-
 
 ```text
 GEMM_MAC_LANES=1 baseline
@@ -1934,7 +1924,7 @@ Open questions:
 - how should backpressure propagate into compute?
 - what is the tile-level ordering contract?
 
-B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P12 subsystem checkpoint is `74/74 PASS`.
+B2 should not begin until B1 has a stable passing regression baseline. B1 satisfies that requirement historically with `33/33 PASS`, and the current P18H subsystem checkpoint is `110/110 PASS`.
 
 
 ### Direct Stream load-store, 4-lane + C RMW CASE_ID=211
@@ -1967,4 +1957,13 @@ set GEMM_M_TILE_SIZE 2
 set GEMM_ENABLE_C_RMW_ACCUM 1
 set ACCUMULATE_ENABLE 0
 do run_uvm.tcl
+```
+
+
+P18F validated Direct Stream completion writeback.  The descriptor-fetch Direct Stream recipe can now run through P17/P16/P15, complete the Direct Stream operand-buffer path, DMA-store C, and write a committed P18 completion record.
+
+Validated P18 Direct Stream representative:
+
+```text
+csr_desc_fetch_direct_stream_completion_wb_case102 PASS
 ```

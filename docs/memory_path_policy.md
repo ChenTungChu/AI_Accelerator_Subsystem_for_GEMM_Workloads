@@ -149,30 +149,28 @@ helper fallback mode:
 
 Therefore, seeing `AXI_HOST_MON` messages in helper mode does not mean the host agent actively drove the transaction.
 
+### 1.9 P18 Completion Writeback Test Policy
 
-### 1.8 P17 Descriptor-Fetch Test Policy
-
-P17 descriptor-fetch tests add one additional control/source path that is separate from GEMM operand and result movement.
+P18 completion writeback adds one additional host-visible egress path that is separate from GEMM operand and result movement.
 
 ```text
-control path          : AXI-Lite CSR writes/reads
-descriptor source path: descriptor-memory AXI read responder
-fetched descriptor    : internal P16-compatible recipe snapshot
-A/B source path       : selected frontend source memory model
-C export path         : DMA destination memory model when DMA_STORE is used
-helper path           : fallback/debug only
+control path             : AXI-Lite CSR writes/reads
+command source path       : P17 descriptor-memory AXI read responder
+A/B source path           : selected existing frontend source memory model
+C export path             : DMA destination memory model when DMA_STORE is used
+completion writeback path : dedicated completion-memory AXI write responder
 ```
 
-The descriptor table is not the scratchpad.  P17 descriptor fetch uses a dedicated descriptor-memory AXI read master and does not change the GEMM operand/result memory routing policy.
+The completion record is not the scratchpad.  P18 completion writeback uses a dedicated completion-memory AXI write master and does not change the GEMM operand/result memory routing policy.
 
-Validated P17 regression representatives use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and the descriptor/source/destination memory models needed by each selected flow:
+Validated P18 regression representatives use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and the descriptor/source/destination/completion memory models needed by each selected flow:
 
 ```text
-csr_desc_fetch_smoke
-csr_desc_fetch_dma_two_slot_case102
-csr_desc_fetch_c_rmw_two_slot_case208
-csr_desc_fetch_direct_stream_two_slot_case102
-csr_desc_fetch_reject_error_case102
+csr_completion_wb_smoke
+csr_desc_fetch_dma_completion_wb_case102
+csr_desc_fetch_direct_stream_completion_wb_case102
+csr_desc_fetch_c_rmw_completion_wb_case208
+csr_completion_wb_error_busy_clear
 ```
 
 
@@ -324,5 +322,3 @@ Keep helper fallback for debug and sanity only.
 ```
 
 P13 C RMW frontend representative items use frontend-specific A/B preload paths and keep C result export through the existing DMA store / result bridge path.
-
-P17 descriptor-fetch representative items preserve that policy: descriptor fetch is a control-plane source path, while GEMM A/B payloads and C export continue to use the selected existing frontend and DMA destination memory paths.

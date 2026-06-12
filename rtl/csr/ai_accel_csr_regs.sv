@@ -13,6 +13,7 @@ module ai_accel_csr_regs #(
     parameter logic [31:0] CSR_JOB_VERSION_VALUE        = 32'h0001_0015,
     parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
+    parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     input  logic clk,
@@ -159,6 +160,42 @@ module ai_accel_csr_regs #(
     input  logic [3:0]            desc_fetch_fetched_count,
     input  logic                  desc_fetch_snapshot_valid,
     input  logic [3:0]            desc_fetch_recipe_count,
+
+    // ------------------------------------------------------------
+    // P18 completion-writeback CSR control outputs
+    // ------------------------------------------------------------
+    output logic                  completion_wb_start_pulse,
+    output logic                  completion_wb_clear_done_pulse,
+    output logic                  completion_wb_clear_error_pulse,
+
+    output logic                  completion_wb_enable,
+    output logic                  completion_wb_overall_done,
+    output logic                  completion_wb_overall_error,
+    output logic                  completion_wb_overall_reject,
+    output logic [ADDR_WIDTH-1:0] completion_wb_base_addr,
+    output logic [31:0]           completion_wb_status_flags,
+    output logic [31:0]           completion_wb_user_tag,
+    output logic [7:0]            completion_wb_programmed_count,
+    output logic [7:0]            completion_wb_fetched_count,
+    output logic [7:0]            completion_wb_completed_count,
+    output logic [31:0]           completion_wb_recipe_done_status,
+    output logic [31:0]           completion_wb_recipe_error_status,
+    output logic [31:0]           completion_wb_recipe_reject_status,
+    output logic [31:0]           completion_wb_perf_mac_count,
+    output logic [31:0]           completion_wb_error_detail,
+
+    // ------------------------------------------------------------
+    // P18 completion-writeback status inputs
+    // ------------------------------------------------------------
+    input  logic                  completion_wb_busy,
+    input  logic                  completion_wb_done,
+    input  logic                  completion_wb_error,
+    input  logic                  completion_wb_reject,
+    input  logic [31:0]           completion_wb_error_status,
+    input  logic [31:0]           completion_wb_reject_status,
+    input  logic [31:0]           completion_wb_state,
+    input  logic [3:0]            completion_wb_current_write_step,
+    input  logic [7:0]            completion_wb_written_beats,
 
     // ------------------------------------------------------------
     // Live status inputs from the future P15 job sequencer
@@ -384,6 +421,24 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_SNAPSHOT_STATUS_ADDR = 12'h52C;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_DESC_FETCH_RESERVED_530_ADDR = 12'h530;
 
+    // P18 completion-writeback CSR window.
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_VERSION_ADDR        = 12'h540;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_COMMAND_ADDR        = 12'h544;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_STATUS_ADDR         = 12'h548;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_DONE_STATUS_ADDR    = 12'h54C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_ERROR_STATUS_ADDR   = 12'h550;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_REJECT_STATUS_ADDR  = 12'h554;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_CONTROL_ADDR        = 12'h558;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_BASE_ADDR_ADDR      = 12'h55C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_STATUS_FLAGS_ADDR   = 12'h560;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_USER_TAG_ADDR       = 12'h564;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_COUNTS_ADDR         = 12'h568;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_RECIPE_DONE_ADDR    = 12'h56C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_RECIPE_ERROR_ADDR   = 12'h570;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_RECIPE_REJECT_ADDR  = 12'h574;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR = 12'h578;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_ERROR_DETAIL_ADDR   = 12'h57C;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -506,6 +561,20 @@ module ai_accel_csr_regs #(
 
     localparam logic [31:0] DESC_FETCH_COUNT_MASK  = 32'h0000_000F;
     localparam logic [31:0] DESC_FETCH_STRIDE_MASK = 32'h0000_FFFF;
+
+    // ------------------------------------------------------------
+    // P18 completion writeback command / sticky status bit positions
+    // ------------------------------------------------------------
+    localparam int COMP_WB_CMD_START_BIT       = 0;
+    localparam int COMP_WB_CMD_CLEAR_DONE_BIT  = 8;
+    localparam int COMP_WB_CMD_CLEAR_ERROR_BIT = 9;
+
+    localparam int COMP_WB_DONE_BIT            = 0;
+    localparam int COMP_WB_ERR_ENGINE_BIT      = 0;
+    localparam int COMP_WB_REJ_ENGINE_BIT      = 0;
+    localparam int COMP_WB_REJ_UNSUPPORTED_BIT = 8;
+
+    localparam logic [31:0] COMP_WB_CONTROL_MASK = 32'h0000_000F;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -643,6 +712,22 @@ module ai_accel_csr_regs #(
     logic [31:0] desc_fetch_count_q;
     logic [31:0] desc_fetch_stride_bytes_q;
 
+    logic [31:0] completion_wb_control_q;
+    logic [31:0] completion_wb_base_addr_q;
+    logic [31:0] completion_wb_status_flags_q;
+    logic [31:0] completion_wb_user_tag_q;
+    logic [31:0] completion_wb_counts_q;
+    logic [31:0] completion_wb_recipe_done_status_q;
+    logic [31:0] completion_wb_recipe_error_status_q;
+    logic [31:0] completion_wb_recipe_reject_status_q;
+    logic [31:0] completion_wb_perf_mac_count_q;
+    logic [31:0] completion_wb_error_detail_q;
+    logic [31:0] completion_wb_done_status_q;
+    logic [31:0] completion_wb_error_status_q;
+    logic [31:0] completion_wb_reject_status_q;
+    logic        completion_wb_clear_done_holdoff_q;
+    logic        completion_wb_clear_error_holdoff_q;
+
     // ------------------------------------------------------------
     // Internal command decode helpers
     // ------------------------------------------------------------
@@ -667,12 +752,18 @@ module ai_accel_csr_regs #(
     logic        desc_fetch_command_has_active_strobe;
     logic        desc_fetch_command_has_start;
 
+    logic [31:0] completion_wb_command_masked;
+    logic        completion_wb_command_has_active_strobe;
+    logic        completion_wb_command_has_start;
+    logic        completion_wb_command_unsupported_combo;
+
     logic [31:0] status_read_data;
     logic [31:0] job_status_read_data;
     logic [31:0] recipe_status_read_data;
     logic [31:0] desc_fetch_status_read_data;
     logic [31:0] desc_fetch_done_read_data;
     logic [31:0] desc_fetch_snapshot_status_read_data;
+    logic [31:0] completion_wb_status_read_data;
     logic        micro_op_busy;
     logic        job_preload_required;
     logic        job_store_required;
@@ -1054,7 +1145,24 @@ module ai_accel_csr_regs #(
             CSR_DESC_FETCH_CURRENT_INDEX_ADDR,
             CSR_DESC_FETCH_FETCHED_COUNT_ADDR,
             CSR_DESC_FETCH_SNAPSHOT_STATUS_ADDR,
-            CSR_DESC_FETCH_RESERVED_530_ADDR: begin
+            CSR_DESC_FETCH_RESERVED_530_ADDR,
+
+            CSR_COMPLETION_WB_VERSION_ADDR,
+            CSR_COMPLETION_WB_COMMAND_ADDR,
+            CSR_COMPLETION_WB_STATUS_ADDR,
+            CSR_COMPLETION_WB_DONE_STATUS_ADDR,
+            CSR_COMPLETION_WB_ERROR_STATUS_ADDR,
+            CSR_COMPLETION_WB_REJECT_STATUS_ADDR,
+            CSR_COMPLETION_WB_CONTROL_ADDR,
+            CSR_COMPLETION_WB_BASE_ADDR_ADDR,
+            CSR_COMPLETION_WB_STATUS_FLAGS_ADDR,
+            CSR_COMPLETION_WB_USER_TAG_ADDR,
+            CSR_COMPLETION_WB_COUNTS_ADDR,
+            CSR_COMPLETION_WB_RECIPE_DONE_ADDR,
+            CSR_COMPLETION_WB_RECIPE_ERROR_ADDR,
+            CSR_COMPLETION_WB_RECIPE_REJECT_ADDR,
+            CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR,
+            CSR_COMPLETION_WB_ERROR_DETAIL_ADDR: begin
                 return 1'b1;
             end
 
@@ -1402,6 +1510,70 @@ module ai_accel_csr_regs #(
                 return desc_fetch_snapshot_status_read_data;
             end
 
+            CSR_COMPLETION_WB_VERSION_ADDR: begin
+                return CSR_COMPLETION_WB_VERSION_VALUE;
+            end
+
+            CSR_COMPLETION_WB_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_COMPLETION_WB_STATUS_ADDR: begin
+                return completion_wb_status_read_data;
+            end
+
+            CSR_COMPLETION_WB_DONE_STATUS_ADDR: begin
+                return completion_wb_done_status_q;
+            end
+
+            CSR_COMPLETION_WB_ERROR_STATUS_ADDR: begin
+                return completion_wb_error_status_q;
+            end
+
+            CSR_COMPLETION_WB_REJECT_STATUS_ADDR: begin
+                return completion_wb_reject_status_q;
+            end
+
+            CSR_COMPLETION_WB_CONTROL_ADDR: begin
+                return completion_wb_control_q;
+            end
+
+            CSR_COMPLETION_WB_BASE_ADDR_ADDR: begin
+                return completion_wb_base_addr_q;
+            end
+
+            CSR_COMPLETION_WB_STATUS_FLAGS_ADDR: begin
+                return completion_wb_status_flags_q;
+            end
+
+            CSR_COMPLETION_WB_USER_TAG_ADDR: begin
+                return completion_wb_user_tag_q;
+            end
+
+            CSR_COMPLETION_WB_COUNTS_ADDR: begin
+                return completion_wb_counts_q;
+            end
+
+            CSR_COMPLETION_WB_RECIPE_DONE_ADDR: begin
+                return completion_wb_recipe_done_status_q;
+            end
+
+            CSR_COMPLETION_WB_RECIPE_ERROR_ADDR: begin
+                return completion_wb_recipe_error_status_q;
+            end
+
+            CSR_COMPLETION_WB_RECIPE_REJECT_ADDR: begin
+                return completion_wb_recipe_reject_status_q;
+            end
+
+            CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR: begin
+                return completion_wb_perf_mac_count_q;
+            end
+
+            CSR_COMPLETION_WB_ERROR_DETAIL_ADDR: begin
+                return completion_wb_error_detail_q;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -1517,6 +1689,17 @@ module ai_accel_csr_regs #(
         desc_fetch_snapshot_status_read_data[0]    = desc_fetch_snapshot_valid;
         desc_fetch_snapshot_status_read_data[7:4]  = desc_fetch_recipe_count;
         desc_fetch_snapshot_status_read_data[15:8] = {4'h0, desc_fetch_fetched_count};
+
+        completion_wb_status_read_data = 32'h0000_0000;
+        completion_wb_status_read_data[0]     = completion_wb_busy;
+        completion_wb_status_read_data[1]     = |completion_wb_done_status_q;
+        completion_wb_status_read_data[2]     = (|completion_wb_error_status_q) | (|completion_wb_reject_status_q);
+        completion_wb_status_read_data[3]     = !completion_wb_busy;
+        completion_wb_status_read_data[8]     = completion_wb_error;
+        completion_wb_status_read_data[9]     = completion_wb_reject;
+        completion_wb_status_read_data[15:12] = completion_wb_current_write_step;
+        completion_wb_status_read_data[23:16] = completion_wb_written_beats;
+        completion_wb_status_read_data[31]    = 1'b1;
     end
 
     // ------------------------------------------------------------
@@ -1586,6 +1769,13 @@ module ai_accel_csr_regs #(
         desc_fetch_command_has_active_strobe = |write_strb;
         desc_fetch_command_masked            = write_data & strobe_to_mask(write_strb);
         desc_fetch_command_has_start         = desc_fetch_command_masked[DESC_FETCH_CMD_START_BIT];
+
+        completion_wb_command_has_active_strobe = |write_strb;
+        completion_wb_command_masked            = write_data & strobe_to_mask(write_strb);
+        completion_wb_command_has_start         = completion_wb_command_masked[COMP_WB_CMD_START_BIT];
+        completion_wb_command_unsupported_combo = completion_wb_command_has_start &&
+                                                  completion_wb_command_masked[COMP_WB_CMD_CLEAR_ERROR_BIT] &&
+                                                  ((|completion_wb_error_status_q) || (|completion_wb_reject_status_q));
     end
 
     // ------------------------------------------------------------
@@ -1689,6 +1879,22 @@ module ai_accel_csr_regs #(
             desc_fetch_count_q         <= 32'h0000_0000;
             desc_fetch_stride_bytes_q  <= 32'h0000_0080;
 
+            completion_wb_control_q              <= 32'h0000_0003;
+            completion_wb_base_addr_q            <= 32'h0000_0300;
+            completion_wb_status_flags_q         <= 32'h0000_0000;
+            completion_wb_user_tag_q             <= 32'h0000_0000;
+            completion_wb_counts_q               <= 32'h0000_0000;
+            completion_wb_recipe_done_status_q   <= 32'h0000_0000;
+            completion_wb_recipe_error_status_q  <= 32'h0000_0000;
+            completion_wb_recipe_reject_status_q <= 32'h0000_0000;
+            completion_wb_perf_mac_count_q       <= 32'h0000_0000;
+            completion_wb_error_detail_q         <= 32'h0000_0000;
+            completion_wb_done_status_q          <= 32'h0000_0000;
+            completion_wb_error_status_q         <= 32'h0000_0000;
+            completion_wb_reject_status_q        <= 32'h0000_0000;
+            completion_wb_clear_done_holdoff_q  <= 1'b0;
+            completion_wb_clear_error_holdoff_q <= 1'b0;
+
             for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
                 recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
                 recipe_slot_base_addr_a_q[slot_i]      <= 32'h0000_0000;
@@ -1729,6 +1935,10 @@ module ai_accel_csr_regs #(
             desc_fetch_start_pulse       <= 1'b0;
             desc_fetch_clear_done_pulse  <= 1'b0;
             desc_fetch_clear_error_pulse <= 1'b0;
+
+            completion_wb_start_pulse       <= 1'b0;
+            completion_wb_clear_done_pulse  <= 1'b0;
+            completion_wb_clear_error_pulse <= 1'b0;
         end
         else begin
             acc_start_pulse       <= 1'b0;
@@ -1751,6 +1961,12 @@ module ai_accel_csr_regs #(
             desc_fetch_start_pulse       <= 1'b0;
             desc_fetch_clear_done_pulse  <= 1'b0;
             desc_fetch_clear_error_pulse <= 1'b0;
+
+            completion_wb_start_pulse       <= 1'b0;
+            completion_wb_clear_done_pulse  <= 1'b0;
+            completion_wb_clear_error_pulse <= 1'b0;
+            completion_wb_clear_done_holdoff_q  <= 1'b0;
+            completion_wb_clear_error_holdoff_q <= 1'b0;
 
             // Sticky completion and error capture.
             if (acc_done) begin
@@ -1868,6 +2084,22 @@ module ai_accel_csr_regs #(
             recipe_slot_done_mask_q   <= recipe_slot_done_mask_q   | recipe_slot_done_mask;
             recipe_slot_error_mask_q  <= recipe_slot_error_mask_q  | recipe_slot_error_mask;
             recipe_slot_reject_mask_q <= recipe_slot_reject_mask_q | recipe_slot_reject_mask;
+
+            if (completion_wb_done && !completion_wb_clear_done_holdoff_q) begin
+                completion_wb_done_status_q[COMP_WB_DONE_BIT] <= 1'b1;
+            end
+
+            if (completion_wb_error && !completion_wb_clear_error_holdoff_q) begin
+                completion_wb_error_status_q <= completion_wb_error_status_q |
+                                                completion_wb_error_status |
+                                                32'h0000_0001;
+            end
+
+            if (completion_wb_reject && !completion_wb_clear_error_holdoff_q) begin
+                completion_wb_reject_status_q <= completion_wb_reject_status_q |
+                                                 completion_wb_reject_status |
+                                                 32'h0000_0001;
+            end
 
             // Capture write address/data channels independently.
             if (aw_fire && !write_apply) begin
@@ -2181,6 +2413,108 @@ module ai_accel_csr_regs #(
                         CSR_DESC_FETCH_STRIDE_BYTES_ADDR: begin
                             desc_fetch_stride_bytes_q <= apply_wstrb32(desc_fetch_stride_bytes_q, write_data, write_strb) &
                                                          DESC_FETCH_STRIDE_MASK;
+                        end
+
+                        CSR_COMPLETION_WB_COMMAND_ADDR: begin
+                            if (completion_wb_command_has_active_strobe) begin
+                                if (completion_wb_command_unsupported_combo) begin
+                                    completion_wb_reject_status_q[COMP_WB_REJ_UNSUPPORTED_BIT] <= 1'b1;
+                                end else begin
+                                    if (completion_wb_command_masked[COMP_WB_CMD_CLEAR_DONE_BIT]) begin
+                                        completion_wb_done_status_q <= 32'h0000_0000;
+                                        completion_wb_clear_done_pulse <= 1'b1;
+                                        completion_wb_clear_done_holdoff_q <= 1'b1;
+                                    end
+
+                                    if (completion_wb_command_masked[COMP_WB_CMD_CLEAR_ERROR_BIT]) begin
+                                        completion_wb_error_status_q  <= 32'h0000_0000;
+                                        completion_wb_reject_status_q <= 32'h0000_0000;
+                                        completion_wb_clear_error_pulse <= 1'b1;
+                                        completion_wb_clear_error_holdoff_q <= 1'b1;
+                                    end
+
+                                    if (completion_wb_command_has_start) begin
+                                        completion_wb_start_pulse <= 1'b1;
+                                    end
+                                end
+                            end
+                        end
+
+                        CSR_COMPLETION_WB_DONE_STATUS_ADDR: begin
+                            completion_wb_done_status_q <= completion_wb_done_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                            if (|write_data) begin
+                                completion_wb_clear_done_pulse <= 1'b1;
+                                completion_wb_clear_done_holdoff_q <= 1'b1;
+                            end
+                        end
+
+                        CSR_COMPLETION_WB_ERROR_STATUS_ADDR: begin
+                            completion_wb_error_status_q <= completion_wb_error_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                            if (|write_data) begin
+                                completion_wb_clear_error_pulse <= 1'b1;
+                                completion_wb_clear_error_holdoff_q <= 1'b1;
+                            end
+                        end
+
+                        CSR_COMPLETION_WB_REJECT_STATUS_ADDR: begin
+                            completion_wb_reject_status_q <= completion_wb_reject_status_q & ~apply_wstrb32(
+                                32'h0000_0000,
+                                write_data,
+                                write_strb
+                            );
+                            if (|write_data) begin
+                                completion_wb_clear_error_pulse <= 1'b1;
+                                completion_wb_clear_error_holdoff_q <= 1'b1;
+                            end
+                        end
+
+                        CSR_COMPLETION_WB_CONTROL_ADDR: begin
+                            completion_wb_control_q <= apply_wstrb32(completion_wb_control_q, write_data, write_strb) &
+                                                       COMP_WB_CONTROL_MASK;
+                        end
+
+                        CSR_COMPLETION_WB_BASE_ADDR_ADDR: begin
+                            completion_wb_base_addr_q <= apply_wstrb32(completion_wb_base_addr_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_STATUS_FLAGS_ADDR: begin
+                            completion_wb_status_flags_q <= apply_wstrb32(completion_wb_status_flags_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_USER_TAG_ADDR: begin
+                            completion_wb_user_tag_q <= apply_wstrb32(completion_wb_user_tag_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_COUNTS_ADDR: begin
+                            completion_wb_counts_q <= apply_wstrb32(completion_wb_counts_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_RECIPE_DONE_ADDR: begin
+                            completion_wb_recipe_done_status_q <= apply_wstrb32(completion_wb_recipe_done_status_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_RECIPE_ERROR_ADDR: begin
+                            completion_wb_recipe_error_status_q <= apply_wstrb32(completion_wb_recipe_error_status_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_RECIPE_REJECT_ADDR: begin
+                            completion_wb_recipe_reject_status_q <= apply_wstrb32(completion_wb_recipe_reject_status_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR: begin
+                            completion_wb_perf_mac_count_q <= apply_wstrb32(completion_wb_perf_mac_count_q, write_data, write_strb);
+                        end
+
+                        CSR_COMPLETION_WB_ERROR_DETAIL_ADDR: begin
+                            completion_wb_error_detail_q <= apply_wstrb32(completion_wb_error_detail_q, write_data, write_strb);
                         end
 
                         CSR_DONE_STATUS_ADDR: begin
@@ -2641,6 +2975,22 @@ module ai_accel_csr_regs #(
     assign desc_fetch_base_addr    = desc_fetch_base_addr_q[ADDR_WIDTH-1:0];
     assign desc_fetch_count        = desc_fetch_count_q[3:0];
     assign desc_fetch_stride_bytes = desc_fetch_stride_bytes_q[15:0];
+
+    assign completion_wb_enable         = completion_wb_control_q[0];
+    assign completion_wb_overall_done   = completion_wb_control_q[1];
+    assign completion_wb_overall_error  = completion_wb_control_q[2];
+    assign completion_wb_overall_reject = completion_wb_control_q[3];
+    assign completion_wb_base_addr      = completion_wb_base_addr_q[ADDR_WIDTH-1:0];
+    assign completion_wb_status_flags   = completion_wb_status_flags_q;
+    assign completion_wb_user_tag       = completion_wb_user_tag_q;
+    assign completion_wb_programmed_count = completion_wb_counts_q[7:0];
+    assign completion_wb_fetched_count    = completion_wb_counts_q[15:8];
+    assign completion_wb_completed_count  = completion_wb_counts_q[23:16];
+    assign completion_wb_recipe_done_status   = completion_wb_recipe_done_status_q;
+    assign completion_wb_recipe_error_status  = completion_wb_recipe_error_status_q;
+    assign completion_wb_recipe_reject_status = completion_wb_recipe_reject_status_q;
+    assign completion_wb_perf_mac_count       = completion_wb_perf_mac_count_q;
+    assign completion_wb_error_detail         = completion_wb_error_detail_q;
 
 endmodule
 

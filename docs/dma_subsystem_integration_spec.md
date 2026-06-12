@@ -386,16 +386,35 @@ DMA load and GEMM compute do not overlap in this baseline.
 BRAM RTL remains unchanged.
 ```
 
+---
 
+## 16. P18 completion writeback compatibility note
 
-目前 P17 descriptor-fetch integration 也重用同一條 DMA datapath。P17 只新增 descriptor-memory read path 與 CSR control bridge；當 fetched descriptor 選擇 `INPUT_MODE=DMA_LOAD` / `OUTPUT_MODE=DMA_STORE` 時，實際 A/B preload 與 C export 仍然由既有 DMA load/store engine 完成。
+P18 does not change the DMA load or DMA store protocol.  Descriptor-fetch recipes continue to use the existing selected frontend for A/B movement and the existing DMA store path for C export when `OUTPUT_MODE=DMA_STORE` is selected.
 
-P17 不改變：
+P18 adds a separate completion-memory AXI write master:
 
 ```text
-dma_load_engine
-dma_store_engine
-scratchpad Port0 ownership policy
-GEMM datapath
-BRAM model
+P17 descriptor fetch
+    -> P16 recipe
+    -> P15 job worker
+    -> DMA load/store and GEMM datapath
+    -> P18 completion writeback to host-visible completion memory
 ```
+
+Validated DMA-related P18 full-regression representative:
+
+```text
+csr_desc_fetch_dma_completion_wb_case102
+```
+
+The original DMA integration rules still hold: DMA load completes before GEMM start, DMA load and GEMM compute do not overlap in the current baseline, and BRAM RTL remains unchanged.
+
+Current integrated regression baseline:
+
+```text
+TOTAL : 110
+PASS  : 110
+FAIL  : 0
+```
+

@@ -357,6 +357,51 @@ module ai_accel_subsys_uvm_top;
     );
 
     // ============================================================
+    // CSR virtual-interface resolution dummy
+    //
+    // The shared subsystem UVM package now includes CSR helper/test
+    // classes that declare virtual axi_lite_if #(12,32).  Questa
+    // resolves that virtual-interface type while elaborating the
+    // package, even when a legacy non-CSR test is running on this
+    // top.
+    //
+    // This legacy top does not use CSR, but it still needs one
+    // matching axi_lite_if instance so that package elaboration can
+    // succeed.  This interface is intentionally not connected to the
+    // DUT and is intentionally not published through uvm_config_db.
+    // ============================================================
+    axi_lite_if #(
+        .ADDR_WIDTH (12),
+        .DATA_WIDTH (32)
+    ) csr_vif_resolution_dummy_if (
+        .clk   (dma_clk),
+        .rst_n (dma_rst_n)
+    );
+
+    // ============================================================
+    // Descriptor/completion injection virtual-interface resolution
+    // dummies
+    //
+    // The shared subsystem UVM package also includes P17/P18 CSR
+    // tests that declare virtual desc_src_inject_if and virtual
+    // comp_wb_inject_if.  Questa resolves those virtual-interface
+    // types during elaboration even when this legacy top is used for
+    // non-CSR tests.
+    //
+    // These interfaces are intentionally not connected to the DUT and
+    // intentionally not published through uvm_config_db.  They only
+    // provide matching interface instances so that package elaboration
+    // can succeed for legacy regression items.
+    // ============================================================
+    desc_src_inject_if desc_src_vif_resolution_dummy_if (
+        .clk (dma_clk)
+    );
+
+    comp_wb_inject_if comp_wb_vif_resolution_dummy_if (
+        .clk (dma_clk)
+    );
+
+    // ============================================================
     // UVM control/config interface
     // ============================================================
     ai_accel_subsys_ctrl_if #(

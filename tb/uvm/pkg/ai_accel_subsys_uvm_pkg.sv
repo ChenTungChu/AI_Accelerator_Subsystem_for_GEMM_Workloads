@@ -22,6 +22,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../helper/ai_accel_subsys_case_helper.sv"
     `include "../helper/ai_accel_subsys_axi_host_helper.sv"
+    `include "../helper/ai_accel_csr_access_helper.sv"
 
     // ------------------------------------------------------------
     // Result bridge
@@ -99,27 +100,86 @@ package ai_accel_subsys_uvm_pkg;
     `include "../seq/ai_accel_subsys_smoke_seq.sv"
 
     // ------------------------------------------------------------
-    // Tests
+    // Legacy sideband tests
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_smoke_test.sv"
     `include "../test/ai_accel_subsys_back_to_back_test.sv"
     `include "../test/ai_accel_subsys_reset_recovery_test.sv"
     `include "../test/ai_accel_subsys_corner_test.sv"
     `include "../test/ai_accel_subsys_midrun_reset_test.sv"
+
+    // ------------------------------------------------------------
+    // DMA tests
+    // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_dma_load_smoke_test.sv"
     `include "../test/ai_accel_subsys_dma_load_error_test.sv"
     `include "../test/ai_accel_subsys_dma_load_stress_test.sv"
     `include "../test/ai_accel_subsys_dma_store_smoke_test.sv"
     `include "../test/ai_accel_subsys_dma_store_error_test.sv"
     `include "../test/ai_accel_subsys_dma_load_store_stress_test.sv"
+
+    // ------------------------------------------------------------
+    // AXI-Stream frontend tests
+    // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_axis_stream_preload_smoke_test.sv"
     `include "../test/ai_accel_subsys_axis_stream_preload_error_test.sv"
     `include "../test/ai_accel_subsys_axis_stream_load_store_stress_test.sv"
+
+    // ------------------------------------------------------------
+    // Direct Stream frontend tests
+    // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_direct_stream_smoke_test.sv"
     `include "../test/ai_accel_subsys_direct_stream_error_test.sv"
     `include "../test/ai_accel_subsys_direct_stream_load_store_stress_test.sv"
+
+    // ------------------------------------------------------------
+    // Performance tests
+    // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_perf_counter_smoke_test.sv"
     `include "../test/ai_accel_subsys_perf_profile_test.sv"
+
+    // ------------------------------------------------------------
+    // P14 CSR tests
+    // ------------------------------------------------------------
+    // NOTE: ai_accel_csr_regs_smoke_test.sv is intentionally not included here.
+    // It is a standalone CSR-register-block test owned by ai_accel_csr_regs_uvm_top.sv.
+    `include "../test/ai_accel_subsys_csr_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_dma_load_store_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_axis_stream_load_store_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_direct_stream_load_store_smoke_test.sv"
+
+    // ------------------------------------------------------------
+    // P15 CSR job-sequencer tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_job_dma_load_store_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_job_reject_error_test.sv"
+    `include "../test/ai_accel_subsys_csr_job_frontend_mode_smoke_test.sv"
+
+    // ------------------------------------------------------------
+    // P16 CSR recipe-sequencer tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_recipe_dma_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_recipe_c_rmw_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_recipe_frontend_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_recipe_reject_error_test.sv"
+
+    // ------------------------------------------------------------
+    // P17 descriptor-fetch tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_desc_fetch_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_dma_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_c_rmw_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_direct_stream_two_slot_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_reject_error_test.sv"
+
+    // ------------------------------------------------------------
+    // P18 completion-writeback tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_completion_wb_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_dma_completion_wb_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_direct_stream_completion_wb_test.sv"
+    `include "../test/ai_accel_subsys_csr_desc_fetch_c_rmw_completion_wb_test.sv"
+    `include "../test/ai_accel_subsys_csr_completion_wb_error_busy_clear_test.sv"
 
 endpackage
 

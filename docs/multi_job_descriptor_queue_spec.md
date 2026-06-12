@@ -159,21 +159,17 @@ AXI interconnect / NoC integration
 
 These can be future milestones after the CSR-resident recipe controller is stable.
 
-### 4.4 Relationship to P17 Descriptor Fetch
+### 4.5 Relationship to P18 Completion Writeback
 
-P17 builds on P16 without changing the P16 recipe execution semantics.  P17 may populate an internal P16-compatible recipe snapshot from memory-resident descriptors, but the existing P16 recipe sequencer still owns slot dispatch, completion, error propagation, and per-slot status.
+P18 does not change P16 recipe execution semantics.  The recipe sequencer still owns slot dispatch, slot terminal status, recipe done/error/reject status, and recipe performance accumulation.  P18 observes the accepted descriptor-fetch context and P16 terminal status to build a completion record.
 
-Validated P17 policy:
+Validated P18 recipe-based completion representatives:
 
 ```text
-fetched descriptors do not write back to live P16 CSR slot registers
-fetched descriptor table -> internal P16-compatible recipe snapshot
-P16 recipe sequencer -> existing P15 single-job worker
-P14/P15/P16 manual starts are rejected while descriptor fetch is active
-P17 START_FETCH_RECIPE is rejected while recipe_busy is active
+csr_desc_fetch_dma_completion_wb_case102
+csr_desc_fetch_direct_stream_completion_wb_case102
+csr_desc_fetch_c_rmw_completion_wb_case208
 ```
-
-P17H full regression adds descriptor-fetch representatives on top of the P16F2 100/100 baseline and reaches 105/105 PASS.
 
 
 ---

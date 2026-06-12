@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 82/82 before CSR representative expansion
+Full UVM regression baseline passing 110/110 after P18H completion-writeback closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -168,28 +168,6 @@ ai_accel_subsys_csr_top
                 -> ai_accel_job_sequencer
                     -> existing ai_accel_subsys sideband starts/configs
 ```
-
-
-Recommended P17 extension:
-
-```text
-ai_accel_subsys_csr_top
-    AXI-Lite CSR slave port
-        -> ai_accel_csr_regs
-            -> P14 micro-operation CSR outputs
-            -> P15 job descriptor/config outputs
-            -> P16 recipe command/config/slot outputs
-            -> P17 descriptor-fetch command/config outputs
-                -> ai_accel_desc_fetch_engine
-                    -> descriptor-memory AXI read master
-                    -> fetched P16-compatible recipe snapshot
-                        -> ai_accel_recipe_sequencer
-                            -> ai_accel_job_sequencer
-                                -> existing ai_accel_subsys datapath
-```
-
-P17 does not overwrite the live P16 CSR slot register window.  It provides an internal fetched recipe snapshot to the same recipe execution path.
-
 
 The existing `ai_accel_subsys.sv` remains the stable datapath subsystem.  The CSR top wraps it, and the P15 job sequencer arbitrates between job-level control and the existing P14 micro-operation controls.
 
@@ -385,39 +363,6 @@ The P15 job window is intentionally separate from the P14 micro-operation window
 
 ---
 
-### 9.3 P17 Descriptor-Fetch Register Window
-
-P17 adds a descriptor-fetch CSR window above the P16 recipe slot range.  The P14 micro-operation window, P15 job window, P16 recipe window, and P16 slot window remain unchanged.
-
-```text
-P14 micro-operation CSR window : 0x000 - 0x08C
-P15 job CSR window             : 0x100 - 0x18C
-P16 recipe CSR window          : 0x200 - 0x28C
-P16 slot CSR window            : 0x300 - 0x4FC
-P17 descriptor fetch window    : 0x500 - 0x53C
-```
-
-| Offset | Name | Access | Description |
-|---:|---|---|---|
-| 0x500 | `CSR_DESC_FETCH_VERSION` | RO | Descriptor fetch version / feature ID |
-| 0x504 | `CSR_DESC_FETCH_COMMAND` | W1P | Descriptor fetch start and clear commands |
-| 0x508 | `CSR_DESC_FETCH_STATUS` | RO | Live fetch status summary |
-| 0x50C | `CSR_DESC_FETCH_DONE_STATUS` | RO/W1C | Sticky fetch done status |
-| 0x510 | `CSR_DESC_FETCH_ERROR_STATUS` | RO/W1C | Sticky fetch error status |
-| 0x514 | `CSR_DESC_FETCH_CONTROL` | RW | Fetch policy bits |
-| 0x518 | `CSR_DESC_FETCH_REJECT_STATUS` | RO/W1C | Sticky fetch command reject reasons |
-| 0x51C | `CSR_DESC_FETCH_STATE` | RO | Current fetch engine state |
-| 0x520 | `CSR_DESC_BASE_ADDR` | RW | Base address of descriptor table in external descriptor memory |
-| 0x524 | `CSR_DESC_COUNT` | RW | Number of descriptors to fetch |
-| 0x528 | `CSR_DESC_STRIDE` | RW | Byte stride between descriptors |
-| 0x52C | `CSR_DESC_CURRENT_INDEX` | RO | Descriptor index currently being fetched or validated |
-| 0x530 | `CSR_DESC_FETCHED_COUNT` | RO | Number of descriptors fetched in the last run |
-| 0x534 | `CSR_DESC_ERROR_INDEX` | RO | Descriptor index associated with the last validation/fetch error |
-| 0x538 | `CSR_DESC_ERROR_DETAIL` | RO | Validation/fetch error detail |
-| 0x53C | `CSR_DESC_RESERVED_53C` | RO | Reserved |
-
-
-
 ## 10. Register Bit Definitions
 
 ### 10.1 `CSR_VERSION` at 0x000
@@ -564,36 +509,6 @@ The P15 job registers use the same AXI-Lite access policy and the same W1P/W1C d
 The full job register bit definitions are recorded in `docs/job_descriptor_sequencer_spec.md`.
 
 ---
-
-### 10.11 P17 Descriptor-Fetch Command / Status Policy
-
-`CSR_DESC_FETCH_COMMAND` at `0x504` is a write-one-pulse register:
-
-| Bit | Name | Type | Description |
-|---:|---|---|---|
-| 0 | `START_FETCH_RECIPE` | W1P | Fetch descriptor table, validate descriptors, build a P16-compatible internal recipe snapshot, and request P16 recipe launch |
-| 8 | `CLEAR_FETCH_DONE` | W1P | Clear sticky descriptor-fetch done bits |
-| 9 | `CLEAR_FETCH_ERROR` | W1P | Clear sticky descriptor-fetch error and reject bits |
-
-`CSR_DESC_FETCH_STATUS` exposes fetch and downstream ownership state:
-
-| Bit | Name | Access | Description |
-|---:|---|---|---|
-| 0 | `FETCH_BUSY` | RO | Descriptor fetch engine is active |
-| 1 | `FETCH_DONE` | RO | Sticky descriptor-fetch done is set |
-| 2 | `FETCH_ERROR` | RO | Sticky fetch error or reject is set |
-| 3 | `FETCH_ACCEPT_READY` | RO | Fetch path can accept a new START_FETCH_RECIPE |
-| 4 | `RECIPE_LAUNCHED` | RO | Last successful fetch launched the P16 recipe path |
-| 8 | `RECIPE_BUSY` | RO | P16 recipe sequencer busy |
-| 9 | `JOB_BUSY` | RO | P15 job worker busy |
-| 10 | `MICRO_OP_BUSY` | RO | Any lower-level P14 micro-operation engine busy |
-| 16 | `CSR_READY` | RO | CSR block ready |
-
-`DESC_FETCH_DONE` means descriptor fetch, descriptor validation, and internal recipe launch acceptance completed.  It does not mean the GEMM recipe has completed; recipe completion remains owned by the P16 recipe registers.
-
-Validated P17 reject/error bits cover zero count, count range, base/stride alignment, stride too small, malformed descriptor fields, descriptor AXI RRESP error, START_FETCH while fetch/recipe busy, and lower-level P14/P15/P16 starts while fetch is active.
-
-
 
 ## 11. Configuration Register Defaults
 
@@ -1015,7 +930,7 @@ Sequencer runs DMA store after GEMM completion.
 
 ---
 
-## 17. Verification Plan For P14 / P15 / P16 / P17
+## 17. Verification Plan For P14 / P15
 
 ### 17.1 P14 CSR Register Tests
 
@@ -1085,7 +1000,7 @@ No GEMM datapath behavioral changes required for P14A/P14B
 
 ---
 
-## 18. P14 / P15 / P16 / P17 Milestone Breakdown
+## 18. P14 / P15 Milestone Breakdown
 
 Completed P14 split:
 
@@ -1187,35 +1102,43 @@ CSR reads expose job busy/done/error/reject status and job performance snapshots
 The current P15E checkpoint validates DMA, AXI-Stream, and Direct Stream job-level frontend modes while keeping P14 micro-operation CSR commands available when the job sequencer is idle.  Full regression is passing 95/95.
 
 
+---
 
-Current P17H validated scope:
+### 9.6 P18 Completion Writeback Validation Checkpoint
 
-```text
-Descriptor-fetch CSR register window at 0x500 and above
-Descriptor-memory AXI read master integrated in ai_accel_subsys_csr_top
-START_FETCH_RECIPE command and fetch done/error/reject status
-Fetched descriptor to internal P16 recipe snapshot bridge
-Descriptor-fetch CSR smoke
-Descriptor-fetch DMA two-slot CASE_ID=102
-Descriptor-fetch C RMW partial-K two-slot CASE_ID=208
-Descriptor-fetch Direct Stream two-slot CASE_ID=102
-Descriptor-fetch reject / busy / malformed descriptor / AXI RRESP handling CASE_ID=102
-Full regression after P17H: 105/105 PASS
-```
-
-
-### P17H Descriptor-Fetch Validation Checkpoint
-
-The P17H checkpoint validates that the CSR control plane can launch P16-compatible recipes from memory-resident descriptors.  The descriptor fetch engine reads descriptor memory through a dedicated AXI read master, validates the table, builds an internal P16-compatible recipe snapshot, and requests the existing P16 recipe sequencer to run.
-
-Validated full-regression representatives:
+P18H closes the completion-writeback prototype through full-regression integration.
 
 ```text
-csr_desc_fetch_smoke
-csr_desc_fetch_dma_two_slot_case102
-csr_desc_fetch_c_rmw_two_slot_case208
-csr_desc_fetch_direct_stream_two_slot_case102
-csr_desc_fetch_reject_error_case102
+P18A: Completion writeback prototype spec                              PASS
+P18B: Completion record format / CSR map freeze                        PASS
+P18C: Completion writeback engine RTL / compile smoke                  PASS
+P18D: CSR plumbing + standalone completion writeback smoke              PASS
+P18E: Descriptor-fetch DMA recipe + completion writeback validation     PASS
+P18F: C RMW + Direct Stream completion writeback validation             PASS
+P18G: Completion writeback error / busy / sticky clear handling         PASS
+P18H: Full regression integration                                      PASS
 
-Full regression after P17H: 105/105 PASS
+Full regression after P18H:
+  TOTAL : 110
+  PASS  : 110
+  FAIL  : 0
 ```
+
+Validated P18 full-regression representatives:
+
+```text
+csr_completion_wb_smoke
+csr_desc_fetch_dma_completion_wb_case102
+csr_desc_fetch_direct_stream_completion_wb_case102
+csr_desc_fetch_c_rmw_completion_wb_case208
+csr_completion_wb_error_busy_clear
+```
+
+P18 uses two TB-only fault-injection interfaces for validation:
+
+```text
+desc_src_inject_if   : descriptor-source AXI read-side fault domain
+comp_wb_inject_if    : completion writeback AXI write-side fault domain
+```
+
+These interfaces are testbench-only.  They do not change the CSR map, BRAM, GEMM datapath, DMA datapath, AXI-Stream path, or Direct Stream path.

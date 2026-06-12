@@ -41,18 +41,14 @@ FAIL  : 0
 ```
 
 
-Current project status after P17H closure:
+Current project status after P13 closure:
 
 ```text
-Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
-Full regression: 105/105 PASS
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
 ```
 
 The AXI-Stream frontend remains compatible with the P13 C RMW accumulation path. AXI-Stream preload supplies compact A/B partial-job payloads through scratchpad, while GEMM C RMW old-C reads and C writes remain scratchpad-backed.
-
-
-P17 descriptor format keeps `INPUT_MODE=AXIS_PRELOAD` structurally compatible with the same P15/P16 frontend-mode policy.  The P17H full-regression frontend representative uses Direct Stream to cover the non-scratchpad frontend path, while the existing P16 recipe regression continues to cover AXI-Stream two-slot recipes through `csr_recipe_axis_stream_two_slot_case102`.
-
 
 
 ---
@@ -1072,11 +1068,11 @@ FAIL  : 0
 ```
 
 
-Current project status after P17H closure:
+Current project status after P13 closure:
 
 ```text
-Descriptor Fetch P17H: Memory-Backed Recipe Descriptor Fetch Regression Completed
-Full regression: 105/105 PASS
+Performance GEMM P13: C Read-Modify-Write Partial Accumulation Completed
+Full regression: 82/82 PASS
 ```
 
 The AXI-Stream frontend remains compatible with the P13 C RMW accumulation path. AXI-Stream preload supplies compact A/B partial-job payloads through scratchpad, while GEMM C RMW old-C reads and C writes remain scratchpad-backed.
@@ -1216,7 +1212,7 @@ Open questions for Option B:
 - should C still be written to scratchpad?
 - should S2MM write C directly from compute output?
 
-Option B should not begin unless the current 29/29 Option A regression baseline remains preserved.
+Option B should not begin unless the current 110/110 integrated regression baseline remains preserved.
 
 
 ### AXI-Stream load-store, 4-lane + C RMW CASE_ID=211
@@ -1250,3 +1246,12 @@ set GEMM_ENABLE_C_RMW_ACCUM 1
 set ACCUMULATE_ENABLE 0
 do run_uvm.tcl
 ```
+
+
+P18 does not change AXI-Stream frontend behavior.  Completion writeback is an independent host-visible egress path after P17/P16/P15 terminal status.  AXI-Stream recipe coverage remains represented by the P16 recipe regression item:
+
+```text
+csr_recipe_axis_stream_two_slot_case102 PASS
+```
+
+The P18 completion-writeback frontend representative uses Direct Stream as the non-scratchpad operand-buffer path, while AXI-Stream Option A remains covered through the existing P16 recipe path.
