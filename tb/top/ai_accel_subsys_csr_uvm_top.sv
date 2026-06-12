@@ -71,6 +71,7 @@ module ai_accel_subsys_csr_uvm_top;
     localparam int AXIS_SRC_READ_LATENCY_CYCLES = 2;
     localparam int DS_SRC_READ_LATENCY_CYCLES   = 2;
     localparam int DESC_SRC_READ_LATENCY_CYCLES = 2;
+    localparam int CMD_SRC_READ_LATENCY_CYCLES  = 2;
 
     // DMA destination memory model used by subsystem-level DMA store tests.
     // Byte-addressed so C payloads can be checked naturally.
@@ -349,6 +350,41 @@ module ai_accel_subsys_csr_uvm_top;
     wire desc_src_ar_fire = desc_src_axi_arvalid && desc_src_axi_arready;
     wire desc_src_r_fire  = desc_src_axi_rvalid  && desc_src_axi_rready;
 
+
+    // ============================================================
+    // P19 command queue source AXI-MM read port
+    // ============================================================
+    logic [ID_WIDTH-1:0]   cmd_src_axi_arid;
+    logic [ADDR_WIDTH-1:0] cmd_src_axi_araddr;
+    logic [7:0]            cmd_src_axi_arlen;
+    logic [2:0]            cmd_src_axi_arsize;
+    logic [1:0]            cmd_src_axi_arburst;
+    logic                  cmd_src_axi_arvalid;
+    logic                  cmd_src_axi_arready;
+
+    logic [ID_WIDTH-1:0]   cmd_src_axi_rid;
+    logic [DATA_WIDTH-1:0] cmd_src_axi_rdata;
+    logic [1:0]            cmd_src_axi_rresp;
+    logic                  cmd_src_axi_rlast;
+    logic                  cmd_src_axi_rvalid;
+    logic                  cmd_src_axi_rready;
+
+    logic                  cmd_src_rd_pending_valid;
+    logic [ADDR_WIDTH-1:0] cmd_src_rd_pending_addr;
+    logic [ID_WIDTH-1:0]   cmd_src_rd_pending_id;
+    logic [7:0]            cmd_src_rd_pending_len;
+    logic [7:0]            cmd_src_rd_pending_beat;
+    int unsigned           cmd_src_rd_pending_delay;
+
+    logic [ID_WIDTH-1:0]   cmd_src_rid_q;
+    logic [DATA_WIDTH-1:0] cmd_src_rdata_q;
+    logic [1:0]            cmd_src_rresp_q;
+    logic                  cmd_src_rlast_q;
+    logic                  cmd_src_rvalid_q;
+
+    wire cmd_src_ar_fire = cmd_src_axi_arvalid && cmd_src_axi_arready;
+    wire cmd_src_r_fire  = cmd_src_axi_rvalid  && cmd_src_axi_rready;
+
     // ============================================================
     // DMA destination AXI-MM write port
     // ============================================================
@@ -566,6 +602,20 @@ module ai_accel_subsys_csr_uvm_top;
     assign desc_src_axi_rlast   = desc_src_rlast_q;
     assign desc_src_axi_rvalid  = desc_src_rvalid_q;
 
+
+    // ============================================================
+    // P19 command queue source AXI read response model connections
+    // ============================================================
+    assign cmd_src_axi_arready = dma_rst_n &&
+                                 !cmd_src_rd_pending_valid &&
+                                 !cmd_src_rvalid_q;
+
+    assign cmd_src_axi_rid     = cmd_src_rid_q;
+    assign cmd_src_axi_rdata   = cmd_src_rdata_q;
+    assign cmd_src_axi_rresp   = cmd_src_rresp_q;
+    assign cmd_src_axi_rlast   = cmd_src_rlast_q;
+    assign cmd_src_axi_rvalid  = cmd_src_rvalid_q;
+
     // ============================================================
     // DMA destination AXI write response model connections
     //
@@ -738,6 +788,12 @@ module ai_accel_subsys_csr_uvm_top;
     // as host-visible completion memory.  The completion writeback
     // engine is the only writer in the standalone smoke, so this does
     // not interfere with DMA-store result checking.
+    //
+    // P18G adds a TB-only BRESP injection hook through
+    // comp_wb_inject_if.  The hook is preserved here because the
+    // shared UVM package contains completion-writeback error tests;
+    // keeping the interface instantiated also prevents Questa virtual
+    // interface type-resolution failures during elaboration.
     // ------------------------------------------------------------
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -1169,6 +1225,67 @@ module ai_accel_subsys_csr_uvm_top;
     // so P17C tests can prepare descriptor tables without adding a
     // new TB directory or a new memory model interface.
     // ============================================================
+
+    // ============================================================
+    // P19 command source memory AXI read responder
+    // ============================================================
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            cmd_src_rd_pending_valid <= 1'b0;
+            cmd_src_rd_pending_addr  <= '0;
+            cmd_src_rd_pending_id    <= '0;
+            cmd_src_rd_pending_len   <= 8'd0;
+            cmd_src_rd_pending_beat  <= 8'd0;
+            cmd_src_rd_pending_delay <= 0;
+
+            cmd_src_rid_q            <= '0;
+            cmd_src_rdata_q          <= '0;
+            cmd_src_rresp_q          <= AXI_RESP_OKAY;
+            cmd_src_rlast_q          <= 1'b0;
+            cmd_src_rvalid_q         <= 1'b0;
+        end else begin
+            if (cmd_src_ar_fire) begin
+                cmd_src_rd_pending_valid <= 1'b1;
+                cmd_src_rd_pending_addr  <= cmd_src_axi_araddr;
+                cmd_src_rd_pending_id    <= cmd_src_axi_arid;
+                cmd_src_rd_pending_len   <= cmd_src_axi_arlen;
+                cmd_src_rd_pending_beat  <= 8'd0;
+                cmd_src_rd_pending_delay <= CMD_SRC_READ_LATENCY_CYCLES;
+            end
+            else if (cmd_src_rd_pending_valid && (cmd_src_rd_pending_delay != 0)) begin
+                cmd_src_rd_pending_delay <= cmd_src_rd_pending_delay - 1;
+            end
+
+            if (cmd_src_r_fire) begin
+                cmd_src_rvalid_q <= 1'b0;
+                cmd_src_rlast_q  <= 1'b0;
+                cmd_src_rresp_q  <= AXI_RESP_OKAY;
+                cmd_src_rdata_q  <= '0;
+                cmd_src_rid_q    <= '0;
+
+                if (cmd_src_rd_pending_valid) begin
+                    if (cmd_src_rd_pending_beat == cmd_src_rd_pending_len) begin
+                        cmd_src_rd_pending_valid <= 1'b0;
+                    end else begin
+                        cmd_src_rd_pending_beat  <= cmd_src_rd_pending_beat + 8'd1;
+                        cmd_src_rd_pending_addr  <= cmd_src_rd_pending_addr + BYTES_PER_BEAT;
+                        cmd_src_rd_pending_delay <= CMD_SRC_READ_LATENCY_CYCLES;
+                    end
+                end
+            end
+
+            if (!cmd_src_rvalid_q &&
+                cmd_src_rd_pending_valid &&
+                (cmd_src_rd_pending_delay == 0)) begin
+                cmd_src_rvalid_q <= 1'b1;
+                cmd_src_rlast_q  <= (cmd_src_rd_pending_beat == cmd_src_rd_pending_len);
+                cmd_src_rid_q    <= cmd_src_rd_pending_id;
+                cmd_src_rdata_q  <= src_pack_word(cmd_src_rd_pending_addr);
+                cmd_src_rresp_q  <= AXI_RESP_OKAY;
+            end
+        end
+    end
+
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
             desc_src_rd_pending_valid <= 1'b0;
@@ -1504,6 +1621,22 @@ module ai_accel_subsys_csr_uvm_top;
         .desc_src_axi_rlast   (desc_src_axi_rlast),
         .desc_src_axi_rvalid  (desc_src_axi_rvalid),
         .desc_src_axi_rready  (desc_src_axi_rready),
+
+        // P19 command queue source AXI-MM read master port
+        .cmd_src_axi_arid     (cmd_src_axi_arid),
+        .cmd_src_axi_araddr   (cmd_src_axi_araddr),
+        .cmd_src_axi_arlen    (cmd_src_axi_arlen),
+        .cmd_src_axi_arsize   (cmd_src_axi_arsize),
+        .cmd_src_axi_arburst  (cmd_src_axi_arburst),
+        .cmd_src_axi_arvalid  (cmd_src_axi_arvalid),
+        .cmd_src_axi_arready  (cmd_src_axi_arready),
+
+        .cmd_src_axi_rid      (cmd_src_axi_rid),
+        .cmd_src_axi_rdata    (cmd_src_axi_rdata),
+        .cmd_src_axi_rresp    (cmd_src_axi_rresp),
+        .cmd_src_axi_rlast    (cmd_src_axi_rlast),
+        .cmd_src_axi_rvalid   (cmd_src_axi_rvalid),
+        .cmd_src_axi_rready   (cmd_src_axi_rready),
 
         // DMA destination AXI-MM write master port
         .dma_dst_axi_awid     (dma_dst_axi_awid),

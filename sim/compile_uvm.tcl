@@ -105,6 +105,7 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_recipe_sequencer.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_desc_fetch_engine.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_completion_wb_engine.sv
+vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/sequencer/ai_accel_queue_fetch_controller.sv
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../rtl/top/ai_accel_subsys_csr_top.sv
 
 # --------------------------------------------------------

@@ -14,6 +14,7 @@ module ai_accel_csr_regs #(
     parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
     parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
+    parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     input  logic clk,
@@ -196,6 +197,56 @@ module ai_accel_csr_regs #(
     input  logic [31:0]           completion_wb_state,
     input  logic [3:0]            completion_wb_current_write_step,
     input  logic [7:0]            completion_wb_written_beats,
+
+
+    // ------------------------------------------------------------
+    // P19 command/completion queue CSR control outputs
+    // ------------------------------------------------------------
+    output logic                  queue_start_pulse,
+    output logic                  queue_clear_done_pulse,
+    output logic                  queue_clear_error_pulse,
+
+    output logic                  queue_enable,
+    output logic                  queue_run_until_empty,
+    output logic                  queue_stop_on_error,
+
+    output logic [ADDR_WIDTH-1:0] queue_sq_base_addr,
+    output logic [31:0]           queue_sq_depth,
+    output logic [31:0]           queue_sq_head,
+    output logic [31:0]           queue_sq_tail,
+    output logic [31:0]           queue_sq_stride,
+
+    output logic [ADDR_WIDTH-1:0] queue_cq_base_addr,
+    output logic [31:0]           queue_cq_depth,
+    output logic [31:0]           queue_cq_head,
+    output logic [31:0]           queue_cq_tail,
+    output logic [31:0]           queue_cq_stride,
+
+    // ------------------------------------------------------------
+    // P19 command/completion queue status inputs
+    // ------------------------------------------------------------
+    input  logic                  queue_busy,
+    input  logic                  queue_drained_pulse,
+    input  logic                  queue_cmd_fetched_pulse,
+    input  logic                  queue_cmd_validated_pulse,
+    input  logic                  queue_error_pulse,
+    input  logic                  queue_reject_pulse,
+    input  logic                  queue_cq_full_stall,
+
+    input  logic [31:0]           queue_done_status,
+    input  logic [31:0]           queue_error_status,
+    input  logic [31:0]           queue_reject_status,
+    input  logic [31:0]           queue_state,
+    input  logic [31:0]           queue_current_index,
+    input  logic [31:0]           queue_error_index,
+    input  logic [31:0]           queue_error_detail,
+    input  logic [31:0]           queue_last_cmd_tag,
+    input  logic [31:0]           queue_last_cmd_control,
+    input  logic [31:0]           queue_sq_occupancy,
+    input  logic [31:0]           queue_cq_occupancy,
+    input  logic [31:0]           queue_cq_space,
+    input  logic                  queue_completion_commit_pulse,
+    input  logic                  queue_completion_error_pulse,
 
     // ------------------------------------------------------------
     // Live status inputs from the future P15 job sequencer
@@ -439,6 +490,40 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR = 12'h578;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_COMPLETION_WB_ERROR_DETAIL_ADDR   = 12'h57C;
 
+    // P19 command/completion queue CSR window.
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_VERSION_ADDR          = 12'h580;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_COMMAND_ADDR          = 12'h584;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_STATUS_ADDR           = 12'h588;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_DONE_STATUS_ADDR      = 12'h58C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_ERROR_STATUS_ADDR     = 12'h590;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CONTROL_ADDR          = 12'h594;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_REJECT_STATUS_ADDR    = 12'h598;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_STATE_ADDR            = 12'h59C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_BASE_ADDR          = 12'h5A0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_DEPTH_ADDR         = 12'h5A4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_HEAD_ADDR          = 12'h5A8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_TAIL_ADDR          = 12'h5AC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_STRIDE_ADDR        = 12'h5B0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_BASE_ADDR          = 12'h5B4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_DEPTH_ADDR         = 12'h5B8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_HEAD_ADDR          = 12'h5BC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_TAIL_ADDR          = 12'h5C0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_STRIDE_ADDR        = 12'h5C4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CURRENT_INDEX_ADDR    = 12'h5C8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_ERROR_INDEX_ADDR      = 12'h5CC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_ERROR_DETAIL_ADDR     = 12'h5D0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_LAST_CMD_TAG_ADDR     = 12'h5D4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_LAST_CMD_CONTROL_ADDR = 12'h5D8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_SQ_OCCUPANCY_ADDR     = 12'h5DC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_OCCUPANCY_ADDR     = 12'h5E0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_CQ_SPACE_ADDR         = 12'h5E4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5E8_ADDR     = 12'h5E8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5EC_ADDR     = 12'h5EC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5F0_ADDR     = 12'h5F0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5F4_ADDR     = 12'h5F4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5F8_ADDR     = 12'h5F8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5FC_ADDR     = 12'h5FC;
+
     // ------------------------------------------------------------
     // Command bits
     // ------------------------------------------------------------
@@ -575,6 +660,19 @@ module ai_accel_csr_regs #(
     localparam int COMP_WB_REJ_UNSUPPORTED_BIT = 8;
 
     localparam logic [31:0] COMP_WB_CONTROL_MASK = 32'h0000_000F;
+
+    // ------------------------------------------------------------
+    // P19 queue command / control bit positions
+    // ------------------------------------------------------------
+    localparam int QUEUE_CMD_START_BIT       = 0;
+    localparam int QUEUE_CMD_CLEAR_DONE_BIT  = 8;
+    localparam int QUEUE_CMD_CLEAR_ERROR_BIT = 9;
+
+    localparam int QUEUE_CONTROL_ENABLE_BIT          = 0;
+    localparam int QUEUE_CONTROL_RUN_UNTIL_EMPTY_BIT = 1;
+    localparam int QUEUE_CONTROL_STOP_ON_ERROR_BIT   = 2;
+
+    localparam logic [31:0] QUEUE_CONTROL_MASK = 32'h0000_001F;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -728,6 +826,20 @@ module ai_accel_csr_regs #(
     logic        completion_wb_clear_done_holdoff_q;
     logic        completion_wb_clear_error_holdoff_q;
 
+
+    logic [31:0] queue_control_q;
+    logic [31:0] queue_sq_base_addr_q;
+    logic [31:0] queue_sq_depth_q;
+    logic [31:0] queue_sq_head_q;
+    logic [31:0] queue_sq_tail_q;
+    logic [31:0] queue_sq_stride_q;
+    logic [31:0] queue_cq_base_addr_q;
+    logic [31:0] queue_cq_depth_q;
+    logic [31:0] queue_cq_head_q;
+    logic [31:0] queue_cq_tail_q;
+    logic [31:0] queue_cq_stride_q;
+    logic [31:0] queue_extra_error_status_q;
+
     // ------------------------------------------------------------
     // Internal command decode helpers
     // ------------------------------------------------------------
@@ -757,6 +869,10 @@ module ai_accel_csr_regs #(
     logic        completion_wb_command_has_start;
     logic        completion_wb_command_unsupported_combo;
 
+    logic [31:0] queue_command_masked;
+    logic        queue_command_has_active_strobe;
+    logic        queue_command_has_start;
+
     logic [31:0] status_read_data;
     logic [31:0] job_status_read_data;
     logic [31:0] recipe_status_read_data;
@@ -764,6 +880,7 @@ module ai_accel_csr_regs #(
     logic [31:0] desc_fetch_done_read_data;
     logic [31:0] desc_fetch_snapshot_status_read_data;
     logic [31:0] completion_wb_status_read_data;
+    logic [31:0] queue_status_read_data;
     logic        micro_op_busy;
     logic        job_preload_required;
     logic        job_store_required;
@@ -1162,7 +1279,39 @@ module ai_accel_csr_regs #(
             CSR_COMPLETION_WB_RECIPE_ERROR_ADDR,
             CSR_COMPLETION_WB_RECIPE_REJECT_ADDR,
             CSR_COMPLETION_WB_PERF_MAC_COUNT_ADDR,
-            CSR_COMPLETION_WB_ERROR_DETAIL_ADDR: begin
+            CSR_COMPLETION_WB_ERROR_DETAIL_ADDR,
+CSR_QUEUE_VERSION_ADDR,
+            CSR_QUEUE_COMMAND_ADDR,
+            CSR_QUEUE_STATUS_ADDR,
+            CSR_QUEUE_DONE_STATUS_ADDR,
+            CSR_QUEUE_ERROR_STATUS_ADDR,
+            CSR_QUEUE_CONTROL_ADDR,
+            CSR_QUEUE_REJECT_STATUS_ADDR,
+            CSR_QUEUE_STATE_ADDR,
+            CSR_QUEUE_SQ_BASE_ADDR,
+            CSR_QUEUE_SQ_DEPTH_ADDR,
+            CSR_QUEUE_SQ_HEAD_ADDR,
+            CSR_QUEUE_SQ_TAIL_ADDR,
+            CSR_QUEUE_SQ_STRIDE_ADDR,
+            CSR_QUEUE_CQ_BASE_ADDR,
+            CSR_QUEUE_CQ_DEPTH_ADDR,
+            CSR_QUEUE_CQ_HEAD_ADDR,
+            CSR_QUEUE_CQ_TAIL_ADDR,
+            CSR_QUEUE_CQ_STRIDE_ADDR,
+            CSR_QUEUE_CURRENT_INDEX_ADDR,
+            CSR_QUEUE_ERROR_INDEX_ADDR,
+            CSR_QUEUE_ERROR_DETAIL_ADDR,
+            CSR_QUEUE_LAST_CMD_TAG_ADDR,
+            CSR_QUEUE_LAST_CMD_CONTROL_ADDR,
+            CSR_QUEUE_SQ_OCCUPANCY_ADDR,
+            CSR_QUEUE_CQ_OCCUPANCY_ADDR,
+            CSR_QUEUE_CQ_SPACE_ADDR,
+            CSR_QUEUE_RESERVED_5E8_ADDR,
+            CSR_QUEUE_RESERVED_5EC_ADDR,
+            CSR_QUEUE_RESERVED_5F0_ADDR,
+            CSR_QUEUE_RESERVED_5F4_ADDR,
+            CSR_QUEUE_RESERVED_5F8_ADDR,
+            CSR_QUEUE_RESERVED_5FC_ADDR: begin
                 return 1'b1;
             end
 
@@ -1574,6 +1723,111 @@ module ai_accel_csr_regs #(
                 return completion_wb_error_detail_q;
             end
 
+
+            CSR_QUEUE_VERSION_ADDR: begin
+                return CSR_QUEUE_VERSION_VALUE;
+            end
+
+            CSR_QUEUE_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_QUEUE_STATUS_ADDR: begin
+                return queue_status_read_data;
+            end
+
+            CSR_QUEUE_DONE_STATUS_ADDR: begin
+                return queue_done_status;
+            end
+
+            CSR_QUEUE_ERROR_STATUS_ADDR: begin
+                return queue_error_status | queue_extra_error_status_q;
+            end
+
+            CSR_QUEUE_CONTROL_ADDR: begin
+                return queue_control_q;
+            end
+
+            CSR_QUEUE_REJECT_STATUS_ADDR: begin
+                return queue_reject_status;
+            end
+
+            CSR_QUEUE_STATE_ADDR: begin
+                return queue_state;
+            end
+
+            CSR_QUEUE_SQ_BASE_ADDR: begin
+                return queue_sq_base_addr_q;
+            end
+
+            CSR_QUEUE_SQ_DEPTH_ADDR: begin
+                return queue_sq_depth_q;
+            end
+
+            CSR_QUEUE_SQ_HEAD_ADDR: begin
+                return queue_sq_head_q;
+            end
+
+            CSR_QUEUE_SQ_TAIL_ADDR: begin
+                return queue_sq_tail_q;
+            end
+
+            CSR_QUEUE_SQ_STRIDE_ADDR: begin
+                return queue_sq_stride_q;
+            end
+
+            CSR_QUEUE_CQ_BASE_ADDR: begin
+                return queue_cq_base_addr_q;
+            end
+
+            CSR_QUEUE_CQ_DEPTH_ADDR: begin
+                return queue_cq_depth_q;
+            end
+
+            CSR_QUEUE_CQ_HEAD_ADDR: begin
+                return queue_cq_head_q;
+            end
+
+            CSR_QUEUE_CQ_TAIL_ADDR: begin
+                return queue_cq_tail_q;
+            end
+
+            CSR_QUEUE_CQ_STRIDE_ADDR: begin
+                return queue_cq_stride_q;
+            end
+
+            CSR_QUEUE_CURRENT_INDEX_ADDR: begin
+                return queue_current_index;
+            end
+
+            CSR_QUEUE_ERROR_INDEX_ADDR: begin
+                return queue_error_index;
+            end
+
+            CSR_QUEUE_ERROR_DETAIL_ADDR: begin
+                return queue_error_detail;
+            end
+
+            CSR_QUEUE_LAST_CMD_TAG_ADDR: begin
+                return queue_last_cmd_tag;
+            end
+
+            CSR_QUEUE_LAST_CMD_CONTROL_ADDR: begin
+                return queue_last_cmd_control;
+            end
+
+            CSR_QUEUE_SQ_OCCUPANCY_ADDR: begin
+                return queue_sq_occupancy;
+            end
+
+            CSR_QUEUE_CQ_OCCUPANCY_ADDR: begin
+                return queue_cq_occupancy;
+            end
+
+            CSR_QUEUE_CQ_SPACE_ADDR: begin
+                return queue_cq_space;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -1700,6 +1954,19 @@ module ai_accel_csr_regs #(
         completion_wb_status_read_data[15:12] = completion_wb_current_write_step;
         completion_wb_status_read_data[23:16] = completion_wb_written_beats;
         completion_wb_status_read_data[31]    = 1'b1;
+
+
+        queue_status_read_data = 32'h0000_0000;
+        queue_status_read_data[0]  = queue_busy;
+        queue_status_read_data[1]  = queue_done_status[1];
+        queue_status_read_data[2]  = (|queue_error_status) | (|queue_reject_status);
+        queue_status_read_data[3]  = queue_enable && !queue_busy;
+        queue_status_read_data[4]  = queue_cq_full_stall;
+        queue_status_read_data[8]  = desc_fetch_busy;
+        queue_status_read_data[9]  = recipe_busy;
+        queue_status_read_data[10] = job_busy;
+        queue_status_read_data[11] = micro_op_busy;
+        queue_status_read_data[16] = 1'b1;
     end
 
     // ------------------------------------------------------------
@@ -1776,6 +2043,11 @@ module ai_accel_csr_regs #(
         completion_wb_command_unsupported_combo = completion_wb_command_has_start &&
                                                   completion_wb_command_masked[COMP_WB_CMD_CLEAR_ERROR_BIT] &&
                                                   ((|completion_wb_error_status_q) || (|completion_wb_reject_status_q));
+
+
+        queue_command_has_active_strobe = |write_strb;
+        queue_command_masked            = write_data & strobe_to_mask(write_strb);
+        queue_command_has_start         = queue_command_masked[QUEUE_CMD_START_BIT];
     end
 
     // ------------------------------------------------------------
@@ -1895,6 +2167,20 @@ module ai_accel_csr_regs #(
             completion_wb_clear_done_holdoff_q  <= 1'b0;
             completion_wb_clear_error_holdoff_q <= 1'b0;
 
+
+            queue_control_q      <= 32'h0000_0005;
+            queue_sq_base_addr_q <= 32'h0000_0000;
+            queue_sq_depth_q     <= 32'h0000_0004;
+            queue_sq_head_q      <= 32'h0000_0000;
+            queue_sq_tail_q      <= 32'h0000_0000;
+            queue_sq_stride_q    <= 32'h0000_0040;
+            queue_cq_base_addr_q <= 32'h0000_0000;
+            queue_cq_depth_q     <= 32'h0000_0004;
+            queue_cq_head_q      <= 32'h0000_0000;
+            queue_cq_tail_q      <= 32'h0000_0000;
+            queue_cq_stride_q    <= 32'h0000_0040;
+            queue_extra_error_status_q <= 32'h0000_0000;
+
             for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
                 recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
                 recipe_slot_base_addr_a_q[slot_i]      <= 32'h0000_0000;
@@ -1939,6 +2225,10 @@ module ai_accel_csr_regs #(
             completion_wb_start_pulse       <= 1'b0;
             completion_wb_clear_done_pulse  <= 1'b0;
             completion_wb_clear_error_pulse <= 1'b0;
+
+            queue_start_pulse       <= 1'b0;
+            queue_clear_done_pulse  <= 1'b0;
+            queue_clear_error_pulse <= 1'b0;
         end
         else begin
             acc_start_pulse       <= 1'b0;
@@ -1965,6 +2255,22 @@ module ai_accel_csr_regs #(
             completion_wb_start_pulse       <= 1'b0;
             completion_wb_clear_done_pulse  <= 1'b0;
             completion_wb_clear_error_pulse <= 1'b0;
+
+            queue_start_pulse       <= 1'b0;
+            queue_clear_done_pulse  <= 1'b0;
+            queue_clear_error_pulse <= 1'b0;
+
+            if (queue_completion_commit_pulse) begin
+                queue_sq_head_q <= queue_sq_head_q + 32'd1;
+                queue_cq_tail_q <= queue_cq_tail_q + 32'd1;
+            end
+
+            if (queue_clear_error_pulse) begin
+                queue_extra_error_status_q <= 32'h0000_0000;
+            end else if (queue_completion_error_pulse) begin
+                queue_extra_error_status_q[4] <= 1'b1;
+            end
+
             completion_wb_clear_done_holdoff_q  <= 1'b0;
             completion_wb_clear_error_holdoff_q <= 1'b0;
 
@@ -2517,6 +2823,86 @@ module ai_accel_csr_regs #(
                             completion_wb_error_detail_q <= apply_wstrb32(completion_wb_error_detail_q, write_data, write_strb);
                         end
 
+
+                        CSR_QUEUE_COMMAND_ADDR: begin
+                            if (queue_command_has_active_strobe) begin
+                                if (queue_command_masked[QUEUE_CMD_CLEAR_DONE_BIT]) begin
+                                    queue_clear_done_pulse <= 1'b1;
+                                end
+
+                                if (queue_command_masked[QUEUE_CMD_CLEAR_ERROR_BIT]) begin
+                                    queue_clear_error_pulse <= 1'b1;
+                                end
+
+                                if (queue_command_has_start) begin
+                                    queue_start_pulse <= 1'b1;
+                                end
+                            end
+                        end
+
+                        CSR_QUEUE_DONE_STATUS_ADDR: begin
+                            if (|write_data) begin
+                                queue_clear_done_pulse <= 1'b1;
+                            end
+                        end
+
+                        CSR_QUEUE_ERROR_STATUS_ADDR: begin
+                            if (|write_data) begin
+                                queue_clear_error_pulse <= 1'b1;
+                            end
+                        end
+
+                        CSR_QUEUE_REJECT_STATUS_ADDR: begin
+                            if (|write_data) begin
+                                queue_clear_error_pulse <= 1'b1;
+                            end
+                        end
+
+                        CSR_QUEUE_CONTROL_ADDR: begin
+                            queue_control_q <= apply_wstrb32(queue_control_q, write_data, write_strb) &
+                                               QUEUE_CONTROL_MASK;
+                        end
+
+                        CSR_QUEUE_SQ_BASE_ADDR: begin
+                            queue_sq_base_addr_q <= apply_wstrb32(queue_sq_base_addr_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_SQ_DEPTH_ADDR: begin
+                            queue_sq_depth_q <= apply_wstrb32(queue_sq_depth_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_SQ_HEAD_ADDR: begin
+                            queue_sq_head_q <= apply_wstrb32(queue_sq_head_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_SQ_TAIL_ADDR: begin
+                            queue_sq_tail_q <= apply_wstrb32(queue_sq_tail_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_SQ_STRIDE_ADDR: begin
+                            queue_sq_stride_q <= apply_wstrb32(queue_sq_stride_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_CQ_BASE_ADDR: begin
+                            queue_cq_base_addr_q <= apply_wstrb32(queue_cq_base_addr_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_CQ_DEPTH_ADDR: begin
+                            queue_cq_depth_q <= apply_wstrb32(queue_cq_depth_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_CQ_HEAD_ADDR: begin
+                            queue_cq_head_q <= apply_wstrb32(queue_cq_head_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_CQ_TAIL_ADDR: begin
+                            queue_cq_tail_q <= apply_wstrb32(queue_cq_tail_q, write_data, write_strb);
+                        end
+
+                        CSR_QUEUE_CQ_STRIDE_ADDR: begin
+                            queue_cq_stride_q <= apply_wstrb32(queue_cq_stride_q, write_data, write_strb);
+                        end
+
                         CSR_DONE_STATUS_ADDR: begin
                             done_status_q <= done_status_q & ~apply_wstrb32(
                                 32'h0000_0000,
@@ -2975,6 +3361,23 @@ module ai_accel_csr_regs #(
     assign desc_fetch_base_addr    = desc_fetch_base_addr_q[ADDR_WIDTH-1:0];
     assign desc_fetch_count        = desc_fetch_count_q[3:0];
     assign desc_fetch_stride_bytes = desc_fetch_stride_bytes_q[15:0];
+
+
+    assign queue_enable          = queue_control_q[QUEUE_CONTROL_ENABLE_BIT];
+    assign queue_run_until_empty = queue_control_q[QUEUE_CONTROL_RUN_UNTIL_EMPTY_BIT];
+    assign queue_stop_on_error   = queue_control_q[QUEUE_CONTROL_STOP_ON_ERROR_BIT];
+
+    assign queue_sq_base_addr = queue_sq_base_addr_q[ADDR_WIDTH-1:0];
+    assign queue_sq_depth     = queue_sq_depth_q;
+    assign queue_sq_head      = queue_sq_head_q;
+    assign queue_sq_tail      = queue_sq_tail_q;
+    assign queue_sq_stride    = queue_sq_stride_q;
+
+    assign queue_cq_base_addr = queue_cq_base_addr_q[ADDR_WIDTH-1:0];
+    assign queue_cq_depth     = queue_cq_depth_q;
+    assign queue_cq_head      = queue_cq_head_q;
+    assign queue_cq_tail      = queue_cq_tail_q;
+    assign queue_cq_stride    = queue_cq_stride_q;
 
     assign completion_wb_enable         = completion_wb_control_q[0];
     assign completion_wb_overall_done   = completion_wb_control_q[1];

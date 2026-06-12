@@ -2,11 +2,11 @@
 
 ## 1. Purpose
 
-This document defines the P14 AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It also records the P14F CSR-controlled frontend representative validation checkpoint and the P15E job-descriptor sequencer CSR extension checkpoint.
+This document defines the AXI-Lite control-plane specification for the AI Accelerator Subsystem.  It records the canonical CSR address map, register access types, reset values, and register bit definitions for the P14 CSR shell and the later P15/P16/P17/P18/P19 CSR extensions.
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, and P19 adds a host-visible command / completion queue CSR window.
 
 ---
 
@@ -46,7 +46,7 @@ ds_load_start / ds_src_base_addr / ds_dst_base_addr / ds_load_beats / ds_operand
 dma_store_start / dma_store_src_base_addr / dma_store_dst_base_addr / dma_store_byte_count
 ```
 
-P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.  P15 preserves that wrapper and adds a higher-level job descriptor window above the P14 micro-operation registers.
+P14 keeps the existing datapath subsystem intact and adds a CSR programming layer around it.  P15 preserves that wrapper and adds a higher-level job descriptor window above the P14 micro-operation registers.  Later CSR windows extend the same wrapper without changing the stable BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapaths.
 
 ---
 
@@ -281,6 +281,19 @@ The register map uses these access types:
 
 All registers are 32-bit and word-aligned.
 
+
+The CSR address space is partitioned by milestone-owned windows:
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
+```
+
 | Offset | Name | Access | Description |
 |---:|---|---|---|
 | 0x000 | `CSR_VERSION` | RO | CSR block version / feature ID |
@@ -360,6 +373,137 @@ P15 adds a job descriptor / sequencer register window above the P14 micro-operat
 | 0x18C | `CSR_JOB_RESERVED_18C` | RO | Reserved |
 
 The P15 job window is intentionally separate from the P14 micro-operation window.  Software can continue using P14 commands directly when the job sequencer is idle.
+
+
+### 9.2 P19 Queue CSR Register Window
+
+P19B freezes the software-visible queue CSR window used by the P19 command / completion queue controller.
+
+P18 uses the `0x540 - 0x57C` completion-writeback CSR window.  P19 adds a queue CSR window immediately after P18.
+
+Frozen P19B CSR base:
+
+```text
+P19 queue CSR base = 0x580
+```
+
+Existing windows remain unchanged:
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
+```
+
+P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the queue register map and bit definitions so P19C/P19D implementation can use stable constants.
+
+#### 9.2.1 Register Map
+
+| Offset | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0x580 | `CSR_QUEUE_VERSION` | RO | `0x0001_0019` | Queue controller version / feature ID. |
+| 0x584 | `CSR_QUEUE_COMMAND` | W1P | 0 | Queue start/kick, stop request, pointer reset, and sticky clear commands. |
+| 0x588 | `CSR_QUEUE_STATUS` | RO | implementation | Live queue status summary. |
+| 0x58C | `CSR_QUEUE_DONE_STATUS` | RO/W1C | 0 | Sticky queue started / drained / command-completed status. |
+| 0x590 | `CSR_QUEUE_ERROR_STATUS` | RO/W1C | 0 | Sticky queue error status. |
+| 0x594 | `CSR_QUEUE_CONTROL` | RW | `0x0000_001F` | Queue policy bits. |
+| 0x598 | `CSR_QUEUE_REJECT_STATUS` | RO/W1C | 0 | Sticky queue command/config reject reasons. |
+| 0x59C | `CSR_QUEUE_STATE` | RO | 0 | Current queue controller FSM state. |
+| 0x5A0 | `CSR_SQ_BASE_ADDR` | RW | 0 | Submission queue base address. |
+| 0x5A4 | `CSR_SQ_DEPTH` | RW | 0 | Submission queue depth in 64-byte entries. |
+| 0x5A8 | `CSR_SQ_HEAD` | RO | 0 | Hardware-owned consumed-command counter. |
+| 0x5AC | `CSR_SQ_TAIL` | RW | 0 | Host-owned produced-command counter / doorbell value. |
+| 0x5B0 | `CSR_SQ_STRIDE` | RW | `0x0000_0040` | Submission queue entry stride in bytes. |
+| 0x5B4 | `CSR_CQ_BASE_ADDR` | RW | 0 | Completion queue base address. |
+| 0x5B8 | `CSR_CQ_DEPTH` | RW | 0 | Completion queue depth in 64-byte entries. |
+| 0x5BC | `CSR_CQ_HEAD` | RW | 0 | Host-owned consumed-completion counter. |
+| 0x5C0 | `CSR_CQ_TAIL` | RO | 0 | Hardware-owned produced-completion counter. |
+| 0x5C4 | `CSR_CQ_STRIDE` | RW | `0x0000_0040` | Completion queue entry stride in bytes. |
+| 0x5C8 | `CSR_QUEUE_CURRENT_INDEX` | RO | 0 | Current SQ physical index being fetched or executed. |
+| 0x5CC | `CSR_QUEUE_COMPLETED_COUNT` | RO | 0 | Number of commands completed through CQ commit. |
+| 0x5D0 | `CSR_QUEUE_ERROR_INDEX` | RO | 0 | SQ physical index associated with the last queue error. |
+| 0x5D4 | `CSR_QUEUE_ERROR_DETAIL` | RO | 0 | Queue-level error detail. |
+| 0x5D8 | `CSR_QUEUE_LAST_CMD_TAG` | RO | 0 | Last accepted command user tag. |
+| 0x5DC | `CSR_QUEUE_LAST_CMD_CONTROL` | RO | 0 | Last accepted command control word. |
+| 0x5E0 | `CSR_QUEUE_SQ_OCCUPANCY` | RO | 0 | Computed submission-queue occupancy. |
+| 0x5E4 | `CSR_QUEUE_CQ_OCCUPANCY` | RO | 0 | Computed completion-queue occupancy. |
+| 0x5E8 | `CSR_QUEUE_CQ_SPACE` | RO | 0 | Computed completion-queue free entries. |
+| 0x5EC | `CSR_QUEUE_RESERVED_5EC` | RO | 0 | Reserved. |
+| 0x5F0 | `CSR_QUEUE_RESERVED_5F0` | RO | 0 | Reserved. |
+| 0x5F4 | `CSR_QUEUE_RESERVED_5F4` | RO | 0 | Reserved. |
+| 0x5F8 | `CSR_QUEUE_RESERVED_5F8` | RO | 0 | Reserved. |
+| 0x5FC | `CSR_QUEUE_RESERVED_5FC` | RO | 0 | Reserved. |
+
+#### 9.2.2 Register Ownership Summary
+
+| Register | Owner | Write Policy |
+|---|---|---|
+| `CSR_SQ_BASE_ADDR` | Host | Program while queue is idle. |
+| `CSR_SQ_DEPTH` | Host | Program while queue is idle. |
+| `CSR_SQ_HEAD` | Hardware | Read-only to host. |
+| `CSR_SQ_TAIL` | Host | May be written as a doorbell value. |
+| `CSR_SQ_STRIDE` | Host | Program while queue is idle. |
+| `CSR_CQ_BASE_ADDR` | Host | Program while queue is idle. |
+| `CSR_CQ_DEPTH` | Host | Program while queue is idle. |
+| `CSR_CQ_HEAD` | Host | May be written after host consumes CQ entries. |
+| `CSR_CQ_TAIL` | Hardware | Read-only to host. |
+| `CSR_CQ_STRIDE` | Host | Program while queue is idle. |
+
+Queue base/depth/stride configuration writes while `queue_busy` is high are ignored and set `CSR_QUEUE_REJECT_STATUS.CONFIG_WRITE_BUSY_REJECT`.  `CSR_SQ_TAIL` and `CSR_CQ_HEAD` remain host-owned queue pointer updates and may be written while the queue controller is enabled.
+
+#### 9.2.3 Queue Configuration Validation
+
+A queue configuration is valid when:
+
+```text
+CSR_QUEUE_CONTROL.QUEUE_ENABLE == 1
+CSR_SQ_BASE_ADDR is DATA_WIDTH-byte aligned
+CSR_CQ_BASE_ADDR is DATA_WIDTH-byte aligned
+CSR_SQ_DEPTH is non-zero
+CSR_CQ_DEPTH is non-zero
+CSR_SQ_DEPTH <= P19_QUEUE_MAX_DEPTH
+CSR_CQ_DEPTH <= P19_QUEUE_MAX_DEPTH
+CSR_SQ_DEPTH is a power of two
+CSR_CQ_DEPTH is a power of two
+CSR_SQ_STRIDE == 0x40 for P19B
+CSR_CQ_STRIDE == 0x40 for P19B
+CSR_SQ_TAIL >= CSR_SQ_HEAD before 32-bit counter wrap
+CSR_CQ_TAIL >= CSR_CQ_HEAD before 32-bit counter wrap
+SQ occupancy <= SQ depth
+CQ occupancy <= CQ depth
+```
+
+P19B deliberately keeps the first implementation simple by requiring 64-byte SQ and CQ strides.  The registers remain RW for forward compatibility, but any non-`0x40` stride is rejected by the queue configuration checker in the P19B/P19C prototype.
+
+#### 9.2.4 Occupancy and Index Calculation
+
+The first implementation treats queue pointers as monotonic 32-bit counters and does not rely on raw wrapped physical pointers.
+
+```text
+sq_occupancy = CSR_SQ_TAIL - CSR_SQ_HEAD
+cq_occupancy = CSR_CQ_TAIL - CSR_CQ_HEAD
+cq_space     = CSR_CQ_DEPTH - cq_occupancy
+
+sq_index = CSR_SQ_HEAD[log2(SQ_DEPTH)-1:0]
+cq_index = CSR_CQ_TAIL[log2(CQ_DEPTH)-1:0]
+```
+
+P19B assumes tests do not run enough commands to wrap the 32-bit counters.  Counter wrap support can be added later without changing the visible register map.
+
+#### 9.2.5 Address Calculation
+
+```text
+SQ entry address = CSR_SQ_BASE_ADDR + (sq_index * CSR_SQ_STRIDE)
+CQ entry address = CSR_CQ_BASE_ADDR + (cq_index * CSR_CQ_STRIDE)
+```
+
+P19B queue entries are fixed at 64 bytes.  The command fetch engine reads one 64-byte SQ entry.  The completion writeback path writes one existing P18 64-byte completion record into the selected CQ entry.
+
+---
 
 ---
 
@@ -507,6 +651,207 @@ The P15 job registers use the same AXI-Lite access policy and the same W1P/W1C d
 | 8 | `UNSUPPORTED_COMBO` | RO/W1C | Unsupported job command-bit combination was written |
 
 The full job register bit definitions are recorded in `docs/job_descriptor_sequencer_spec.md`.
+
+
+### 10.9 P19 Queue Command / Status Registers
+
+The P19 queue registers use the same AXI-Lite access policy and the same W1P/W1C definitions as the earlier CSR windows.
+
+#### 10.9.1 `CSR_QUEUE_VERSION` at 0x580
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| [31:16] | `MAJOR` | RO | 16'h0001 | Queue controller major version. |
+| [15:8] | `MINOR` | RO | 8'h00 | Queue controller minor version. |
+| [7:0] | `FEATURE_ID` | RO | 8'h19 | P19 queue controller feature ID. |
+
+Reset value:
+
+```text
+0x0001_0019
+```
+
+#### 10.9.2 `CSR_QUEUE_COMMAND` at 0x584
+
+This is a write-one-pulse register.  Reads return zero.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `START_QUEUE` | W1P | Enable / kick queue processing if accepted. |
+| 1 | `STOP_QUEUE` | W1P | Request the queue controller to stop after the current command. |
+| 8 | `CLEAR_QUEUE_DONE` | W1P | Clear queue done / idle sticky bits. |
+| 9 | `CLEAR_QUEUE_ERROR` | W1P | Clear queue error and reject sticky bits. |
+| 10 | `CLEAR_QUEUE_COUNTERS` | W1P | Clear completed count and last-command debug snapshots. |
+| 11 | `RESET_QUEUE_POINTERS` | W1P | Reset SQ/CQ head/tail counters when the queue is idle. |
+| 31:12, 7:2 | `RSVD` | — | Reserved. |
+
+Unsupported combinations:
+
+```text
+START_QUEUE while queue_busy is high
+START_QUEUE while QUEUE_ENABLE=0
+START_QUEUE while queue error sticky is set and CLEAR_QUEUE_ERROR is not requested
+START_QUEUE with invalid queue configuration
+RESET_QUEUE_POINTERS while queue_busy is high
+unsupported command bits in the same write
+```
+
+Unsupported combinations do not start queue processing and set `CSR_QUEUE_REJECT_STATUS`.
+
+#### 10.9.3 `CSR_QUEUE_STATUS` at 0x588
+
+| Bit | Name | Access | Description |
+|---:|---|---|---|
+| 0 | `QUEUE_BUSY` | RO | Queue controller is fetching, executing, or completing a command. |
+| 1 | `QUEUE_DONE` | RO | Sticky queue done / drained / stopped status is set. |
+| 2 | `QUEUE_ERROR` | RO | Sticky queue error or reject status is set. |
+| 3 | `QUEUE_ACCEPT_READY` | RO | Queue controller is idle and can accept `START_QUEUE`. |
+| 4 | `QUEUE_ENABLED` | RO | Queue processing is enabled by `CSR_QUEUE_CONTROL.QUEUE_ENABLE`. |
+| 5 | `SQ_EMPTY` | RO | Submission queue has no unconsumed entries. |
+| 6 | `CQ_FULL` | RO | Completion queue has no free entries. |
+| 7 | `QUEUE_STALLED` | RO | Queue is enabled but waiting for SQ entry, CQ space, or lower-level idle. |
+| 8 | `CMD_FETCH_BUSY` | RO | Command queue fetch is active. |
+| 9 | `DESC_FETCH_BUSY` | RO | P17 descriptor fetch is busy. |
+| 10 | `RECIPE_BUSY` | RO | P16 recipe sequencer is busy. |
+| 11 | `COMP_BUSY` | RO | P18 completion writeback is busy. |
+| 12 | `UNDERLYING_BUSY` | RO | Any lower-level P17/P18/P16/P15/P14 engine is busy. |
+| 16 | `CSR_READY` | RO | CSR block ready for transactions. |
+
+#### 10.9.4 `CSR_QUEUE_DONE_STATUS` at 0x58C
+
+Sticky done bits are cleared by W1C writes or by `CSR_QUEUE_COMMAND.CLEAR_QUEUE_DONE`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `QUEUE_STARTED` | RO/W1C | `START_QUEUE` was accepted. |
+| 1 | `QUEUE_DRAINED` | RO/W1C | Queue reached SQ empty after processing available commands. |
+| 2 | `COMMAND_COMPLETED` | RO/W1C | At least one command completed and committed to CQ. |
+| 3 | `STOPPED_AFTER_COMMAND` | RO/W1C | Queue stopped due to `STOP_QUEUE` or `STOP_AFTER_THIS`. |
+
+#### 10.9.5 `CSR_QUEUE_ERROR_STATUS` at 0x590
+
+Sticky error bits are cleared by W1C writes or by `CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `CMD_FETCH_ERROR` | RO/W1C | Command queue AXI read returned error or malformed response. |
+| 1 | `CMD_VALIDATION_ERROR` | RO/W1C | Command entry failed validation after fetch. |
+| 2 | `DESC_FETCH_ERROR` | RO/W1C | P17 descriptor fetch error propagated to queue level. |
+| 3 | `RECIPE_ERROR` | RO/W1C | P16 recipe error propagated to queue level. |
+| 4 | `COMPLETION_WB_ERROR` | RO/W1C | P18 completion writeback error propagated to queue level. |
+| 5 | `QUEUE_POINTER_ERROR` | RO/W1C | Queue pointer configuration or occupancy calculation invalid. |
+| 6 | `CQ_FULL_TIMEOUT_ERROR` | RO/W1C | Reserved for future timeout policy. P19B stalls on CQ full. |
+| 7 | `CONFIG_WRITE_BUSY_ERROR` | RO/W1C | Queue base/depth/stride config write attempted while queue busy. |
+| 8 | `INTERNAL_SEQUENCE_ERROR` | RO/W1C | Queue FSM reached an illegal state or unexpected terminal condition. |
+
+#### 10.9.6 `CSR_QUEUE_CONTROL` at 0x594
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `QUEUE_ENABLE` | RW | 1 | Queue processing may accept `START_QUEUE`. |
+| 1 | `RUN_UNTIL_EMPTY` | RW | 1 | Continue processing commands until SQ empty. If 0, process one command per `START_QUEUE`. |
+| 2 | `STOP_ON_ERROR` | RW | 1 | Stop queue processing after a command error. |
+| 3 | `WRITE_COMPLETION_ON_CMD_REJECT` | RW | 1 | Attempt a CQ completion for fetched command validation rejects. |
+| 4 | `AUTO_CLEAR_P17_P18_ON_START` | RW | 1 | Clear relevant P17/P18 sticky status before launching a command. |
+| 31:5 | `RSVD` | RO | 0 | Reserved. |
+
+Reset value:
+
+```text
+0x0000_001F
+```
+
+#### 10.9.7 `CSR_QUEUE_REJECT_STATUS` at 0x598
+
+Sticky reject bits are cleared by W1C writes or by `CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `QUEUE_BUSY_REJECT` | RO/W1C | `START_QUEUE` requested while `queue_busy` is high. |
+| 1 | `QUEUE_DISABLED_REJECT` | RO/W1C | `START_QUEUE` requested while `QUEUE_ENABLE=0`. |
+| 2 | `INVALID_QUEUE_CONFIG_REJECT` | RO/W1C | Base/depth/stride/pointer configuration invalid. |
+| 3 | `UNDERLYING_BUSY_REJECT` | RO/W1C | P17/P18/P16/P15/P14 path busy before queue command acceptance. |
+| 4 | `STICKY_ERROR_REJECT` | RO/W1C | `START_QUEUE` requested while uncleared queue error is sticky. |
+| 5 | `UNSUPPORTED_COMMAND_COMBO` | RO/W1C | Unsupported bits written to `CSR_QUEUE_COMMAND`. |
+| 6 | `RESET_POINTERS_BUSY_REJECT` | RO/W1C | `RESET_QUEUE_POINTERS` requested while `queue_busy` is high. |
+| 7 | `CONFIG_WRITE_BUSY_REJECT` | RO/W1C | Queue base/depth/stride config write attempted while `queue_busy` is high. |
+
+#### 10.9.8 `CSR_QUEUE_STATE` at 0x59C
+
+Recommended first implementation state encodings:
+
+| Value | Name | Meaning |
+|---:|---|---|
+| 0 | `Q_IDLE` | Queue controller idle. |
+| 1 | `Q_CHECK_READY` | Check SQ occupancy, CQ space, and lower-level idle state. |
+| 2 | `Q_FETCH_CMD` | Fetch 64-byte SQ command entry. |
+| 3 | `Q_VALIDATE_CMD` | Validate fetched command entry. |
+| 4 | `Q_PREP_LAUNCH` | Build internal P17/P18 launch context. |
+| 5 | `Q_START_DESC_FETCH` | Issue internal P17 descriptor-fetch start. |
+| 6 | `Q_WAIT_DESC_FETCH_ACCEPT` | Wait for descriptor-fetch launch acceptance. |
+| 7 | `Q_WAIT_RECIPE_TERMINAL` | Wait for fetch failure or recipe terminal status. |
+| 8 | `Q_START_COMPLETION` | Request P18 completion writeback to the selected CQ slot. |
+| 9 | `Q_WAIT_COMPLETION` | Wait for P18 completion writeback done/error. |
+| 10 | `Q_ADVANCE_POINTERS` | Advance SQ/CQ pointers and update debug counters. |
+| 11 | `Q_DRAINED` | Queue drained or stopped cleanly. |
+| 12 | `Q_ERROR` | Queue terminal error state. |
+| 13 | `Q_STALLED` | Queue enabled but waiting for SQ entry, CQ space, or lower-level idle. |
+
+#### 10.9.9 Queue Debug Registers
+
+`CSR_QUEUE_CURRENT_INDEX` reports the current SQ physical index:
+
+```text
+CSR_QUEUE_CURRENT_INDEX[7:0]   = current SQ physical index
+CSR_QUEUE_CURRENT_INDEX[15:8]  = current CQ physical index
+CSR_QUEUE_CURRENT_INDEX[31:16] = reserved
+```
+
+`CSR_QUEUE_ERROR_INDEX` reports the last error SQ/CQ physical index with the same packing.
+
+`CSR_QUEUE_ERROR_DETAIL` is implementation-defined.  Recommended first encoding:
+
+| Bits | Name | Description |
+|---:|---|---|
+| 7:0 | `DETAIL_CODE` | Queue-level debug reason code. |
+| 15:8 | `SQ_INDEX` | SQ physical index associated with the detail. |
+| 23:16 | `CQ_INDEX` | CQ physical index associated with the detail. |
+| 31:24 | `STATE` | Queue FSM state when detail was captured. |
+
+Recommended `DETAIL_CODE` values:
+
+| Value | Name |
+|---:|---|
+| 0x00 | `DETAIL_NONE` |
+| 0x01 | `DETAIL_INVALID_CONFIG` |
+| 0x02 | `DETAIL_SQ_EMPTY` |
+| 0x03 | `DETAIL_CQ_FULL` |
+| 0x04 | `DETAIL_CMD_FETCH_RRESP` |
+| 0x05 | `DETAIL_CMD_FETCH_MALFORMED` |
+| 0x06 | `DETAIL_CMD_INVALID_CONTROL` |
+| 0x07 | `DETAIL_CMD_INVALID_DESC_CFG` |
+| 0x08 | `DETAIL_DESC_FETCH_ERROR` |
+| 0x09 | `DETAIL_RECIPE_ERROR` |
+| 0x0A | `DETAIL_COMPLETION_WB_ERROR` |
+| 0x0B | `DETAIL_INTERNAL_SEQUENCE` |
+
+`CSR_QUEUE_LAST_CMD_TAG` captures `CMD_USER_TAG` from the last accepted SQ entry.
+
+`CSR_QUEUE_LAST_CMD_CONTROL` captures `CMD_CONTROL` from the last accepted SQ entry.
+
+#### 10.9.10 P19B Frozen Constants
+
+```text
+CSR_QUEUE_BASE_ADDR      = 0x580
+CSR_QUEUE_WINDOW_LAST    = 0x5FC
+CSR_QUEUE_VERSION_RESET  = 0x0001_0019
+CSR_QUEUE_CONTROL_RESET  = 0x0000_001F
+P19_SQ_ENTRY_BYTES       = 0x40
+P19_CQ_ENTRY_BYTES       = 0x40
+P19_SQ_STRIDE_RESET      = 0x0000_0040
+P19_CQ_STRIDE_RESET      = 0x0000_0040
+P19_FIRST_OPCODE         = 0x01  // fetch descriptor table and run recipe
+```
 
 ---
 
@@ -1142,3 +1487,18 @@ comp_wb_inject_if    : completion writeback AXI write-side fault domain
 ```
 
 These interfaces are testbench-only.  They do not change the CSR map, BRAM, GEMM datapath, DMA datapath, AXI-Stream path, or Direct Stream path.
+
+
+### P19B Queue CSR Map Checkpoint
+
+P19B freezes the queue CSR address map and register bit definitions in this document.  The architectural queue behavior, command entry format, completion-queue usage, and validation plan remain documented in `command_completion_queue_prototype_spec.md`.
+
+```text
+P19A: Command / completion queue prototype spec          PASS
+P19B: Queue CSR register map freeze                      PASS
+
+P19B CSR window:
+  0x580 - 0x5FC
+```
+
+P19B is a specification checkpoint only.  It does not add RTL, UVM tests, Tcl scripts, regression items, or README updates.

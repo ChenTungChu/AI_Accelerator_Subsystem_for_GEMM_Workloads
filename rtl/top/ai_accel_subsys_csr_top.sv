@@ -47,7 +47,9 @@ module ai_accel_subsys_csr_top #(
     parameter logic [31:0] CSR_RECIPE_VERSION_VALUE     = 32'h0001_0016,
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
     parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
-    parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
+    parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
+    parameter int          P16_RECIPE_QUEUE_DEPTH       = 4,
+    parameter int          P19_QUEUE_MAX_DEPTH          = 16
 )(
     // ------------------------------------------------------------
     // Clocks / resets
@@ -142,6 +144,25 @@ module ai_accel_subsys_csr_top #(
     input  logic                      desc_src_axi_rlast,
     input  logic                      desc_src_axi_rvalid,
     output logic                      desc_src_axi_rready,
+
+
+    // ------------------------------------------------------------
+    // P19 command queue source AXI-MM read master port
+    // ------------------------------------------------------------
+    output logic [ID_WIDTH-1:0]       cmd_src_axi_arid,
+    output logic [ADDR_WIDTH-1:0]     cmd_src_axi_araddr,
+    output logic [7:0]                cmd_src_axi_arlen,
+    output logic [2:0]                cmd_src_axi_arsize,
+    output logic [1:0]                cmd_src_axi_arburst,
+    output logic                      cmd_src_axi_arvalid,
+    input  logic                      cmd_src_axi_arready,
+
+    input  logic [ID_WIDTH-1:0]       cmd_src_axi_rid,
+    input  logic [DATA_WIDTH-1:0]     cmd_src_axi_rdata,
+    input  logic [1:0]                cmd_src_axi_rresp,
+    input  logic                      cmd_src_axi_rlast,
+    input  logic                      cmd_src_axi_rvalid,
+    output logic                      cmd_src_axi_rready,
 
     // ------------------------------------------------------------
     // P18 completion-memory AXI-MM write master port
@@ -497,6 +518,75 @@ module ai_accel_subsys_csr_top #(
     logic [3:0]                completion_wb_current_write_step_i;
     logic [7:0]                completion_wb_written_beats_i;
 
+
+    // ------------------------------------------------------------
+    // P19 command/completion queue CSR payload and controller status
+    // ------------------------------------------------------------
+    logic                      csr_queue_start_pulse;
+    logic                      csr_queue_clear_done_pulse;
+    logic                      csr_queue_clear_error_pulse;
+
+    logic                      csr_queue_enable;
+    logic                      csr_queue_run_until_empty;
+    logic                      csr_queue_stop_on_error;
+
+    logic [ADDR_WIDTH-1:0]     csr_queue_sq_base_addr;
+    logic [31:0]               csr_queue_sq_depth;
+    logic [31:0]               csr_queue_sq_head;
+    logic [31:0]               csr_queue_sq_tail;
+    logic [31:0]               csr_queue_sq_stride;
+
+    logic [ADDR_WIDTH-1:0]     csr_queue_cq_base_addr;
+    logic [31:0]               csr_queue_cq_depth;
+    logic [31:0]               csr_queue_cq_head;
+    logic [31:0]               csr_queue_cq_tail;
+    logic [31:0]               csr_queue_cq_stride;
+
+    logic                      queue_busy_i;
+    logic                      queue_drained_pulse_i;
+    logic                      queue_cmd_fetched_pulse_i;
+    logic                      queue_cmd_validated_pulse_i;
+    logic                      queue_error_pulse_i;
+    logic                      queue_reject_pulse_i;
+    logic                      queue_cq_full_stall_i;
+
+    logic [31:0]               queue_done_status_i;
+    logic [31:0]               queue_error_status_i;
+    logic [31:0]               queue_reject_status_i;
+    logic [31:0]               queue_state_i;
+    logic [31:0]               queue_current_index_i;
+    logic [31:0]               queue_error_index_i;
+    logic [31:0]               queue_error_detail_i;
+    logic [31:0]               queue_last_cmd_tag_i;
+    logic [31:0]               queue_last_cmd_control_i;
+    logic [31:0]               queue_sq_occupancy_i;
+    logic [31:0]               queue_cq_occupancy_i;
+    logic [31:0]               queue_cq_space_i;
+
+    logic                      queue_cmd_valid_i;
+    logic                      queue_cmd_ready_i;
+    logic                      queue_cmd_reject_i;
+    logic [31:0]               queue_cmd_error_detail_i;
+    logic [31:0]               queue_cmd_control_i;
+    logic [31:0]               queue_cmd_user_tag_i;
+    logic [ADDR_WIDTH-1:0]     queue_cmd_desc_base_addr_i;
+    logic [31:0]               queue_cmd_desc_count_i;
+    logic [31:0]               queue_cmd_desc_stride_i;
+    logic [31:0]               queue_cmd_completion_flags_i;
+    logic [31:0]               queue_cmd_timeout_cycles_i;
+    logic [ADDR_WIDTH-1:0]     queue_cmd_completion_base_addr_i;
+    logic                      queue_cmd_stop_after_this_i;
+    logic [31:0]               queue_cmd_sq_head_snapshot_i;
+    logic [31:0]               queue_cmd_cq_tail_snapshot_i;
+    logic [7:0]                queue_cmd_sq_index_i;
+    logic [7:0]                queue_cmd_cq_index_i;
+
+    logic                      queue_underlying_idle_i;
+    logic                      queue_desc_fetch_start_pulse;
+    logic [ADDR_WIDTH-1:0]     desc_fetch_base_addr_to_engine;
+    logic [3:0]                desc_fetch_count_to_engine;
+    logic [15:0]               desc_fetch_stride_to_engine;
+
     // ============================================================
     // P18E descriptor-fetch completion writeback auto context
     //
@@ -563,6 +653,20 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               completion_wb_perf_mac_count_to_engine;
     logic [31:0]               completion_wb_perf_output_count_to_engine;
     logic [31:0]               completion_wb_error_detail_to_engine;
+    logic [ADDR_WIDTH-1:0]     completion_wb_base_addr_to_engine;
+
+    // P19E queue completion writeback context.
+    // When an SQ command is accepted by P19D, the wrapper captures
+    // the selected CQ entry address from the queue fetch controller.
+    // P19E can then redirect the existing P18 completion writeback
+    // engine to that CQ entry address while preserving the legacy
+    // CSR-programmed P18 completion base for non-queue flows.
+    logic                      queue_completion_context_valid_q;
+    logic [ADDR_WIDTH-1:0]     queue_completion_base_addr_q;
+    logic [31:0]               queue_completion_flags_q;
+    logic                      queue_completion_active_q;
+    logic                      queue_completion_commit_pulse_i;
+    logic                      queue_completion_error_pulse_i;
 
     // ============================================================
     // P16 recipe sequencer outputs and status
@@ -750,8 +854,70 @@ module ai_accel_subsys_csr_top #(
                                         ds_load_busy_i    ||
                                         dma_store_busy_i;
 
-    assign desc_fetch_start_to_engine = csr_desc_fetch_start_pulse &&
-                                        !desc_fetch_start_blocked_i;
+    assign queue_underlying_idle_i = !desc_fetch_start_blocked_i &&
+                                     !completion_wb_busy_i;
+
+    assign queue_cmd_ready_i = queue_cmd_valid_i &&
+                               (queue_cmd_reject_i ||
+                                (!desc_fetch_start_blocked_i &&
+                                 !csr_desc_fetch_start_pulse));
+
+    assign queue_desc_fetch_start_pulse = queue_cmd_valid_i &&
+                                          queue_cmd_ready_i &&
+                                          !queue_cmd_reject_i;
+
+    assign desc_fetch_start_to_engine = (csr_desc_fetch_start_pulse &&
+                                         !desc_fetch_start_blocked_i) ||
+                                        queue_desc_fetch_start_pulse;
+
+    assign desc_fetch_base_addr_to_engine = queue_desc_fetch_start_pulse ?
+                                            queue_cmd_desc_base_addr_i :
+                                            csr_desc_fetch_base_addr;
+
+    assign desc_fetch_count_to_engine = queue_desc_fetch_start_pulse ?
+                                        queue_cmd_desc_count_i[3:0] :
+                                        csr_desc_fetch_count;
+
+    assign desc_fetch_stride_to_engine = queue_desc_fetch_start_pulse ?
+                                         queue_cmd_desc_stride_i[15:0] :
+                                         csr_desc_fetch_stride_bytes;
+
+    // P19E completion-queue context capture.
+    // cmd_completion_flags[0] is used by the P19E smoke as the
+    // CQ-writeback enable bit for this first incremental step.
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            queue_completion_context_valid_q <= 1'b0;
+            queue_completion_base_addr_q     <= '0;
+            queue_completion_flags_q         <= 32'h0000_0000;
+            queue_completion_active_q        <= 1'b0;
+        end else begin
+            if (queue_desc_fetch_start_pulse) begin
+                queue_completion_context_valid_q <= 1'b1;
+                queue_completion_base_addr_q     <= queue_cmd_completion_base_addr_i;
+                queue_completion_flags_q         <= queue_cmd_completion_flags_i;
+            end else if (csr_desc_fetch_start_pulse && !desc_fetch_start_blocked_i) begin
+                queue_completion_context_valid_q <= 1'b0;
+                queue_completion_flags_q         <= 32'h0000_0000;
+            end
+
+            if (completion_wb_auto_start_pulse) begin
+                queue_completion_active_q <= queue_completion_context_valid_q &&
+                                             queue_completion_flags_q[0];
+            end
+
+            if (queue_completion_commit_pulse_i || queue_completion_error_pulse_i) begin
+                queue_completion_active_q        <= 1'b0;
+                queue_completion_context_valid_q <= 1'b0;
+            end
+        end
+    end
+
+    assign queue_completion_commit_pulse_i = queue_completion_active_q &&
+                                             completion_wb_done_i;
+
+    assign queue_completion_error_pulse_i = queue_completion_active_q &&
+                                            (completion_wb_error_i || completion_wb_reject_i);
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -794,6 +960,7 @@ module ai_accel_subsys_csr_top #(
         .CSR_RECIPE_VERSION_VALUE (CSR_RECIPE_VERSION_VALUE),
         .CSR_DESC_FETCH_VERSION_VALUE(CSR_DESC_FETCH_VERSION_VALUE),
         .CSR_COMPLETION_WB_VERSION_VALUE(CSR_COMPLETION_WB_VERSION_VALUE),
+        .CSR_QUEUE_VERSION_VALUE  (CSR_QUEUE_VERSION_VALUE),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
@@ -942,6 +1109,44 @@ module ai_accel_subsys_csr_top #(
         .completion_wb_current_write_step(completion_wb_current_write_step_i),
         .completion_wb_written_beats    (completion_wb_written_beats_i),
 
+        .queue_start_pulse              (csr_queue_start_pulse),
+        .queue_clear_done_pulse         (csr_queue_clear_done_pulse),
+        .queue_clear_error_pulse        (csr_queue_clear_error_pulse),
+        .queue_enable                   (csr_queue_enable),
+        .queue_run_until_empty          (csr_queue_run_until_empty),
+        .queue_stop_on_error            (csr_queue_stop_on_error),
+        .queue_sq_base_addr             (csr_queue_sq_base_addr),
+        .queue_sq_depth                 (csr_queue_sq_depth),
+        .queue_sq_head                  (csr_queue_sq_head),
+        .queue_sq_tail                  (csr_queue_sq_tail),
+        .queue_sq_stride                (csr_queue_sq_stride),
+        .queue_cq_base_addr             (csr_queue_cq_base_addr),
+        .queue_cq_depth                 (csr_queue_cq_depth),
+        .queue_cq_head                  (csr_queue_cq_head),
+        .queue_cq_tail                  (csr_queue_cq_tail),
+        .queue_cq_stride                (csr_queue_cq_stride),
+        .queue_busy                     (queue_busy_i),
+        .queue_drained_pulse            (queue_drained_pulse_i),
+        .queue_cmd_fetched_pulse        (queue_cmd_fetched_pulse_i),
+        .queue_cmd_validated_pulse      (queue_cmd_validated_pulse_i),
+        .queue_error_pulse              (queue_error_pulse_i),
+        .queue_reject_pulse             (queue_reject_pulse_i),
+        .queue_cq_full_stall            (queue_cq_full_stall_i),
+        .queue_done_status              (queue_done_status_i),
+        .queue_error_status             (queue_error_status_i),
+        .queue_reject_status            (queue_reject_status_i),
+        .queue_state                    (queue_state_i),
+        .queue_current_index            (queue_current_index_i),
+        .queue_error_index              (queue_error_index_i),
+        .queue_error_detail             (queue_error_detail_i),
+        .queue_last_cmd_tag             (queue_last_cmd_tag_i),
+        .queue_last_cmd_control         (queue_last_cmd_control_i),
+        .queue_sq_occupancy             (queue_sq_occupancy_i),
+        .queue_cq_occupancy             (queue_cq_occupancy_i),
+        .queue_cq_space                 (queue_cq_space_i),
+        .queue_completion_commit_pulse (queue_completion_commit_pulse_i),
+        .queue_completion_error_pulse  (queue_completion_error_pulse_i),
+
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
         .job_gemm_done          (job_gemm_done_i),
@@ -1003,6 +1208,105 @@ module ai_accel_subsys_csr_top #(
         .gemm_perf_output_count (gemm_perf_output_count_i)
     );
 
+
+    // ============================================================
+    // P19 single-outstanding command queue fetch controller
+    //
+    // P19D consumes one accepted SQ command context and launches the
+    // existing P17 descriptor-fetch path with the fetched descriptor
+    // base/count/stride.  P19E also captures the selected CQ entry
+    // address so the existing P18 completion writeback engine can
+    // publish the terminal record into completion queue memory.
+    // ============================================================
+    ai_accel_queue_fetch_controller #(
+        .ADDR_WIDTH          (ADDR_WIDTH),
+        .DATA_WIDTH          (DATA_WIDTH),
+        .AXI_ID_WIDTH        (ID_WIDTH),
+        .P19_QUEUE_MAX_DEPTH (P19_QUEUE_MAX_DEPTH),
+        .P19_MAX_DESC_COUNT  (P16_RECIPE_QUEUE_DEPTH),
+        .SQ_ENTRY_BYTES      (64),
+        .CQ_ENTRY_BYTES      (64),
+        .P19_FIRST_OPCODE    (1)
+    ) u_ai_accel_queue_fetch_controller (
+        .clk                    (dma_clk),
+        .rst_n                  (dma_rst_n),
+
+        .start_queue_pulse      (csr_queue_start_pulse),
+        .clear_done_pulse       (csr_queue_clear_done_pulse),
+        .clear_error_pulse      (csr_queue_clear_error_pulse),
+
+        .queue_enable           (csr_queue_enable),
+        .run_until_empty        (csr_queue_run_until_empty),
+        .stop_on_error          (csr_queue_stop_on_error),
+
+        .sq_base_addr           (csr_queue_sq_base_addr),
+        .sq_depth               (csr_queue_sq_depth),
+        .sq_head                (csr_queue_sq_head),
+        .sq_tail                (csr_queue_sq_tail),
+        .sq_stride              (csr_queue_sq_stride),
+
+        .cq_base_addr           (csr_queue_cq_base_addr),
+        .cq_depth               (csr_queue_cq_depth),
+        .cq_head                (csr_queue_cq_head),
+        .cq_tail                (csr_queue_cq_tail),
+        .cq_stride              (csr_queue_cq_stride),
+
+        .underlying_idle        (queue_underlying_idle_i),
+
+        .cmd_axi_arid           (cmd_src_axi_arid),
+        .cmd_axi_araddr         (cmd_src_axi_araddr),
+        .cmd_axi_arlen          (cmd_src_axi_arlen),
+        .cmd_axi_arsize         (cmd_src_axi_arsize),
+        .cmd_axi_arburst        (cmd_src_axi_arburst),
+        .cmd_axi_arvalid        (cmd_src_axi_arvalid),
+        .cmd_axi_arready        (cmd_src_axi_arready),
+
+        .cmd_axi_rid            (cmd_src_axi_rid),
+        .cmd_axi_rdata          (cmd_src_axi_rdata),
+        .cmd_axi_rresp          (cmd_src_axi_rresp),
+        .cmd_axi_rlast          (cmd_src_axi_rlast),
+        .cmd_axi_rvalid         (cmd_src_axi_rvalid),
+        .cmd_axi_rready         (cmd_src_axi_rready),
+
+        .cmd_valid              (queue_cmd_valid_i),
+        .cmd_ready              (queue_cmd_ready_i),
+        .cmd_reject             (queue_cmd_reject_i),
+        .cmd_error_detail       (queue_cmd_error_detail_i),
+        .cmd_control            (queue_cmd_control_i),
+        .cmd_user_tag           (queue_cmd_user_tag_i),
+        .cmd_desc_base_addr     (queue_cmd_desc_base_addr_i),
+        .cmd_desc_count         (queue_cmd_desc_count_i),
+        .cmd_desc_stride        (queue_cmd_desc_stride_i),
+        .cmd_completion_flags   (queue_cmd_completion_flags_i),
+        .cmd_timeout_cycles     (queue_cmd_timeout_cycles_i),
+        .cmd_completion_base_addr(queue_cmd_completion_base_addr_i),
+        .cmd_stop_after_this    (queue_cmd_stop_after_this_i),
+        .cmd_sq_head_snapshot   (queue_cmd_sq_head_snapshot_i),
+        .cmd_cq_tail_snapshot   (queue_cmd_cq_tail_snapshot_i),
+        .cmd_sq_index           (queue_cmd_sq_index_i),
+        .cmd_cq_index           (queue_cmd_cq_index_i),
+
+        .queue_busy             (queue_busy_i),
+        .queue_drained_pulse    (queue_drained_pulse_i),
+        .queue_cmd_fetched_pulse(queue_cmd_fetched_pulse_i),
+        .queue_cmd_validated_pulse(queue_cmd_validated_pulse_i),
+        .queue_error_pulse      (queue_error_pulse_i),
+        .queue_reject_pulse     (queue_reject_pulse_i),
+        .queue_cq_full_stall    (queue_cq_full_stall_i),
+        .queue_done_status      (queue_done_status_i),
+        .queue_error_status     (queue_error_status_i),
+        .queue_reject_status    (queue_reject_status_i),
+        .queue_state            (queue_state_i),
+        .queue_current_index    (queue_current_index_i),
+        .queue_error_index      (queue_error_index_i),
+        .queue_error_detail     (queue_error_detail_i),
+        .queue_last_cmd_tag     (queue_last_cmd_tag_i),
+        .queue_last_cmd_control (queue_last_cmd_control_i),
+        .queue_sq_occupancy     (queue_sq_occupancy_i),
+        .queue_cq_occupancy     (queue_cq_occupancy_i),
+        .queue_cq_space         (queue_cq_space_i)
+    );
+
     // ============================================================
     // P17 descriptor fetch engine
     //
@@ -1022,9 +1326,9 @@ module ai_accel_subsys_csr_top #(
         .rst_n                  (dma_rst_n),
 
         .fetch_start            (desc_fetch_start_to_engine),
-        .desc_base_addr         (csr_desc_fetch_base_addr),
-        .desc_count             (csr_desc_fetch_count),
-        .desc_stride_bytes      (csr_desc_fetch_stride_bytes),
+        .desc_base_addr         (desc_fetch_base_addr_to_engine),
+        .desc_count             (desc_fetch_count_to_engine),
+        .desc_stride_bytes      (desc_fetch_stride_to_engine),
         .clear_done             (csr_desc_fetch_clear_done_pulse),
         .clear_error            (csr_desc_fetch_clear_error_pulse),
 
@@ -1148,7 +1452,7 @@ module ai_accel_subsys_csr_top #(
 
             if (desc_fetch_recipe_start_pulse) begin
                 desc_fetch_context_valid_q    <= 1'b1;
-                desc_fetch_programmed_count_q <= {4'h0, csr_desc_fetch_count};
+                desc_fetch_programmed_count_q <= {4'h0, desc_fetch_recipe_count_i};
                 desc_fetch_fetched_count_q    <= {4'h0, desc_fetch_fetched_count_i};
                 desc_fetch_completed_count_q  <= {4'h0, desc_fetch_recipe_count_i};
                 desc_fetch_first_user_tag_q   <= desc_fetch_slot_user_tag[0];
@@ -1279,6 +1583,12 @@ module ai_accel_subsys_csr_top #(
                                                   completion_wb_auto_error_detail_q :
                                                   csr_completion_wb_error_detail;
 
+    assign completion_wb_base_addr_to_engine = (completion_wb_payload_auto_sel &&
+                                                queue_completion_context_valid_q &&
+                                                queue_completion_flags_q[0]) ?
+                                               queue_completion_base_addr_q :
+                                               csr_completion_wb_base_addr;
+
     // ============================================================
     // P18 completion writeback engine
     //
@@ -1296,7 +1606,7 @@ module ai_accel_subsys_csr_top #(
 
         .wb_start               (completion_wb_start_to_engine),
         .wb_enable              (csr_completion_wb_enable),
-        .completion_base_addr   (csr_completion_wb_base_addr),
+        .completion_base_addr   (completion_wb_base_addr_to_engine),
         .clear_done             (csr_completion_wb_clear_done_pulse),
         .clear_error            (csr_completion_wb_clear_error_pulse),
 

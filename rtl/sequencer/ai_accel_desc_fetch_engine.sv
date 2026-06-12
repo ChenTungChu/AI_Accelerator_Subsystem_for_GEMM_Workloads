@@ -1,4 +1,3 @@
-// File: rtl/sequencer/ai_accel_desc_fetch_engine.sv
 // ============================================================
 // AI Accelerator Descriptor Fetch Engine
 // P17B: Descriptor fetch engine RTL / compile smoke

@@ -140,6 +140,35 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_COMPLETION_WB_PERF_MAC_COUNT = 12'h578;
     localparam logic [11:0] CSR_COMPLETION_WB_ERROR_DETAIL   = 12'h57C;
 
+
+    // P19 command/completion queue CSR window
+    localparam logic [11:0] CSR_QUEUE_VERSION          = 12'h580;
+    localparam logic [11:0] CSR_QUEUE_COMMAND          = 12'h584;
+    localparam logic [11:0] CSR_QUEUE_STATUS           = 12'h588;
+    localparam logic [11:0] CSR_QUEUE_DONE_STATUS      = 12'h58C;
+    localparam logic [11:0] CSR_QUEUE_ERROR_STATUS     = 12'h590;
+    localparam logic [11:0] CSR_QUEUE_CONTROL          = 12'h594;
+    localparam logic [11:0] CSR_QUEUE_REJECT_STATUS    = 12'h598;
+    localparam logic [11:0] CSR_QUEUE_STATE            = 12'h59C;
+    localparam logic [11:0] CSR_QUEUE_SQ_BASE          = 12'h5A0;
+    localparam logic [11:0] CSR_QUEUE_SQ_DEPTH         = 12'h5A4;
+    localparam logic [11:0] CSR_QUEUE_SQ_HEAD          = 12'h5A8;
+    localparam logic [11:0] CSR_QUEUE_SQ_TAIL          = 12'h5AC;
+    localparam logic [11:0] CSR_QUEUE_SQ_STRIDE        = 12'h5B0;
+    localparam logic [11:0] CSR_QUEUE_CQ_BASE          = 12'h5B4;
+    localparam logic [11:0] CSR_QUEUE_CQ_DEPTH         = 12'h5B8;
+    localparam logic [11:0] CSR_QUEUE_CQ_HEAD          = 12'h5BC;
+    localparam logic [11:0] CSR_QUEUE_CQ_TAIL          = 12'h5C0;
+    localparam logic [11:0] CSR_QUEUE_CQ_STRIDE        = 12'h5C4;
+    localparam logic [11:0] CSR_QUEUE_CURRENT_INDEX    = 12'h5C8;
+    localparam logic [11:0] CSR_QUEUE_ERROR_INDEX      = 12'h5CC;
+    localparam logic [11:0] CSR_QUEUE_ERROR_DETAIL     = 12'h5D0;
+    localparam logic [11:0] CSR_QUEUE_LAST_CMD_TAG     = 12'h5D4;
+    localparam logic [11:0] CSR_QUEUE_LAST_CMD_CONTROL = 12'h5D8;
+    localparam logic [11:0] CSR_QUEUE_SQ_OCCUPANCY     = 12'h5DC;
+    localparam logic [11:0] CSR_QUEUE_CQ_OCCUPANCY     = 12'h5E0;
+    localparam logic [11:0] CSR_QUEUE_CQ_SPACE         = 12'h5E4;
+
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
     localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;
@@ -196,6 +225,15 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int COMP_WB_CMD_START       = 0;
     localparam int COMP_WB_CMD_CLEAR_DONE  = 8;
     localparam int COMP_WB_CMD_CLEAR_ERROR = 9;
+
+
+    localparam int QUEUE_CMD_START       = 0;
+    localparam int QUEUE_CMD_CLEAR_DONE  = 8;
+    localparam int QUEUE_CMD_CLEAR_ERROR = 9;
+
+    localparam int QUEUE_CONTROL_ENABLE          = 0;
+    localparam int QUEUE_CONTROL_RUN_UNTIL_EMPTY = 1;
+    localparam int QUEUE_CONTROL_STOP_ON_ERROR   = 2;
 
     localparam int DESC_FETCH_ERR_AXI_RRESP     = 0;
     localparam int DESC_FETCH_ERR_AXI_RLAST     = 1;
