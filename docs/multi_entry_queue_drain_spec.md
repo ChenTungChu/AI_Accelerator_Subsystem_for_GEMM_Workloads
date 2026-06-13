@@ -892,3 +892,70 @@ TOTAL : 117
 PASS  : 117
 FAIL  : 0
 ```
+
+---
+
+## 26. P21 Runtime Doorbell Extension Checkpoint
+
+P21 extends the P20 in-order queue drain policy with runtime doorbell behavior.
+
+P20 validates batch drain:
+
+```text
+host writes all SQ entries before START_QUEUE
+hardware drains the visible queue until SQ empty / stop / error
+```
+
+P21 validates append-while-active service:
+
+```text
+host starts the queue with one or more visible SQ entries
+hardware executes one command at a time
+while hardware is active, host may append additional SQ entries
+host publishes the appended entries by updating CSR_SQ_TAIL
+hardware observes the new SQ_TAIL only at command boundaries
+hardware may continue to appended commands without a second START_QUEUE
+```
+
+P21 does not change the P20 single-active-command rule:
+
+```text
+one active command at a time
+in-order SQ_HEAD to SQ_TAIL execution
+in-order CQ_TAIL completion production
+no out-of-order completion
+no command prefetch requirement
+no BRAM / GEMM / DMA / frontend datapath changes
+```
+
+P21A/P21B freeze the following policy:
+
+```text
+CSR_SQ_TAIL is host-owned and may be written while queue_busy is high.
+CSR_CQ_HEAD is host-owned and may be written while queue_busy is high.
+The queue controller samples SQ_TAIL and CQ_HEAD only at safe command boundaries or CQ-full stall checks.
+The active command uses snapshotted SQ/CQ addresses and is not affected by host pointer writes during execution.
+If the controller reaches SQ empty before a runtime append is visible, it reports drained and a later append requires a new START_QUEUE.
+STOP_QUEUE and STOP_AFTER_THIS suppress further runtime-appended commands after the active command completes.
+```
+
+P21 expected validation milestones:
+
+```text
+P21A: Runtime doorbell / live queue service spec
+P21B: Queue controller live SQ_TAIL observation policy
+P21C: Append-while-active DMA queue smoke
+P21D: Append-while-active mixed queue smoke
+P21E: CQ full stall + host CQ_HEAD recovery during active service
+P21F: STOP_QUEUE during live service
+P21G: Full regression integration
+P21H: Docs closure
+```
+
+Expected P21G representative regression increase:
+
+```text
+Before P21G: 117
+After P21G : 121
+```
+

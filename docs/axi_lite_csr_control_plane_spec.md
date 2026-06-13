@@ -1566,3 +1566,49 @@ The canonical queue CSR map remains:
 ```text
 P19/P20 queue window: 0x580 - 0x5FC
 ```
+
+
+### P21B Runtime Doorbell Policy Checkpoint
+
+P21B does not add a new CSR window and does not change the P19B-frozen queue CSR address map.  It freezes the runtime meaning of the existing host-owned queue pointer registers during an active queue service session.
+
+Canonical queue CSR window remains:
+
+```text
+P19/P20/P21 queue window: 0x580 - 0x5FC
+```
+
+P21B policy for host-owned pointer writes:
+
+```text
+CSR_SQ_TAIL may be written by the host while queue_busy is high.
+CSR_CQ_HEAD may be written by the host while queue_busy is high.
+CSR_SQ_TAIL is treated as the runtime submission doorbell.
+CSR_CQ_HEAD is treated as the runtime completion-consumption doorbell.
+```
+
+The queue controller samples these host-owned pointer registers only at safe points:
+
+```text
+before accepting the first command after START_QUEUE
+after an active command reaches terminal queue status
+after SQ_HEAD advancement for the completed command
+after CQ_TAIL advancement for the committed completion record
+while stalled on CQ full, to detect host CQ_HEAD recovery
+```
+
+The active command context remains snapshot-based:
+
+```text
+active SQ entry address is computed from the SQ_HEAD snapshot
+active CQ entry address is computed from the CQ_TAIL snapshot
+host writes to SQ_TAIL or CQ_HEAD during execution do not change the active command address context
+```
+
+P21B does not change the register map, access types, or reset values.  It only documents the runtime doorbell semantics of the existing P19/P20 queue CSRs.
+
+```text
+P21A: Runtime doorbell / live queue service spec          PASS
+P21B: Queue controller live SQ_TAIL observation policy    PASS
+```
+
