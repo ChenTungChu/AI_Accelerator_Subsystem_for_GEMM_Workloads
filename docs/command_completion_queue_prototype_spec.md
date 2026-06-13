@@ -1041,7 +1041,71 @@ No BRAM / GEMM / DMA / frontend datapath changes required
 
 ---
 
-## 20. Interview Summary
+---
+
+## 20. Relationship to P20 Multi-Entry Queue Drain
+
+P20 extends the P19 command / completion queue prototype without changing the P19 command entry format, CQ completion record format, or canonical queue CSR register map.
+
+P19 proves the single-command queue wrapper:
+
+```text
+one SQ command
+    -> P19 fetch / validation
+    -> P17 descriptor fetch
+    -> P16/P15 execution
+    -> P18 CQ writeback
+    -> SQ_HEAD / CQ_TAIL advancement
+```
+
+P20 repeats that same path in order:
+
+```text
+SQ[0] -> execute -> CQ[0]
+SQ[1] -> execute -> CQ[1]
+SQ[2] -> execute -> CQ[2]
+```
+
+P20 retains the P19 correctness-first rule:
+
+```text
+one active command at a time
+in-order SQ_HEAD to SQ_TAIL execution
+in-order CQ_TAIL completion production
+no multi-outstanding commands
+no out-of-order completion
+no BRAM / GEMM / DMA / frontend datapath changes
+```
+
+Validated P20 closure:
+
+```text
+P20A: Multi-entry in-order queue drain spec                    PASS
+P20B: Queue controller auto-continue policy                    PASS
+P20C: Two-command DMA recipe queue smoke                       PASS
+P20D: DMA + Direct Stream + C RMW mixed queue smoke            PASS
+P20E: SQ/CQ wrap-around representative validation              PASS
+P20F: STOP_AFTER_THIS / STOP_QUEUE behavior                    PASS
+P20G: Full regression integration                              PASS
+
+Full regression after P20G:
+  TOTAL : 117
+  PASS  : 117
+  FAIL  : 0
+```
+
+Validated P20 full-regression representatives:
+
+```text
+csr_queue_two_command_dma_case102
+csr_queue_mixed_dma_ds_c_rmw_case208
+csr_queue_wraparound_case102
+csr_queue_stop_behavior_case102
+```
+
+The detailed P20 drain policy is documented in `multi_entry_queue_drain_spec.md`.
+
+## 21. Interview Summary
 
 P19 turns the P17/P18 memory-backed command prototype into a small host queue prototype.
 

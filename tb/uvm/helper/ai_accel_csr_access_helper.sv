@@ -228,6 +228,7 @@ class ai_accel_csr_access_helper extends uvm_object;
 
 
     localparam int QUEUE_CMD_START       = 0;
+    localparam int QUEUE_CMD_STOP        = 1;
     localparam int QUEUE_CMD_CLEAR_DONE  = 8;
     localparam int QUEUE_CMD_CLEAR_ERROR = 9;
 

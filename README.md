@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, and host-visible command / completion queue integration.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, and multi-entry in-order command queue drain behavior.
 
 Current milestone:
 
 ```text
-Command / Completion Queue P19G: Host Queue Full Regression Completed
+Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
 
 Regression:
-  TOTAL : 113
-  PASS  : 113
+  TOTAL : 117
+  PASS  : 117
   FAIL  : 0
 ```
 
@@ -50,6 +50,7 @@ CSR recipe sequencer representative regression across DMA / C RMW / AXI-Stream /
 CSR descriptor-fetch regression across CSR smoke, DMA recipe, C RMW recipe, Direct Stream recipe, and reject/error handling
 CSR completion-writeback regression across standalone smoke, DMA, Direct Stream, C RMW, and error/busy/clear handling
 CSR command/completion queue regression across SQ command fetch, queue-to-descriptor-fetch launch, CQ writeback, and queue robustness handling
+CSR multi-entry in-order queue drain regression across auto-drain, mixed command modes, wrap-around, and graceful stop handling
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -169,6 +170,21 @@ CQ-addressed P18 completion writeback
 SQ_HEAD and CQ_TAIL advancement after completion commit
 Queue disabled / invalid config / empty SQ / bad pointer / CQ full stall and recovery handling
 Full regression after P19G: 113/113 PASS
+```
+
+P20 extends P19 from one command per queue kick into a multi-entry in-order drain loop while preserving the single-active-command execution model.
+
+P20 scope:
+
+```text
+RUN_UNTIL_EMPTY auto-drain across multiple SQ entries
+Single-active-command, in-order execution and in-order completion
+Two-command DMA recipe queue drain validation
+Three-command mixed DMA / Direct Stream / C RMW queue drain validation
+SQ/CQ monotonic pointer + physical index wrap-around validation
+STOP_AFTER_THIS command-boundary stop validation
+CSR_QUEUE_COMMAND.STOP_QUEUE graceful stop validation
+Full regression after P20G: 117/117 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -534,6 +550,15 @@ csr_queue_completion_wb_case102
 csr_queue_reject_error_case102
 ```
 
+Validated P20 full-regression representatives:
+
+```text
+csr_queue_two_command_dma_case102
+csr_queue_mixed_dma_ds_c_rmw_case208
+csr_queue_wraparound_case102
+csr_queue_stop_behavior_case102
+```
+
 ---
 
 ## Performance Counters
@@ -815,6 +840,7 @@ Current UVM regression covers:
 - CSR command queue to descriptor-fetch DMA representative regression
 - CSR command queue to CQ completion-writeback representative regression
 - CSR queue reject / empty / full / bad pointer handling regression
+- CSR multi-entry queue auto-drain, mixed command, SQ/CQ wrap-around, and graceful stop regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -825,11 +851,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 113 items and is passing:
+The current full UVM regression contains 117 items and is passing:
 
 ```text
-TOTAL : 113
-PASS  : 113
+TOTAL : 117
+PASS  : 117
 FAIL  : 0
 ```
 
@@ -995,8 +1021,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 95
-PASS  : 95
+TOTAL : 117
+PASS  : 117
 FAIL  : 0
 ```
 
@@ -1533,6 +1559,17 @@ csr_queue_reject_error_case102
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, fetch one SQ command entry, launch the existing P17 descriptor-fetch path, direct P18 completion writeback into a CQ slot, and validate queue-level reject / empty / full / bad-pointer handling.
 
+P20G added these multi-entry in-order queue drain representative items:
+
+```text
+csr_queue_two_command_dma_case102
+csr_queue_mixed_dma_ds_c_rmw_case208
+csr_queue_wraparound_case102
+csr_queue_stop_behavior_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, keep one active command at a time, reuse the existing P17/P16/P15/P18 execution stack, and validate RUN_UNTIL_EMPTY auto-drain, mixed command sequencing, SQ/CQ physical wrap-around, STOP_AFTER_THIS, and STOP_QUEUE behavior.
+
 ---
 
 ## Known Warning
@@ -1552,45 +1589,52 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Command / Completion Queue P19G: Host Queue Full Regression Completed
+Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
 
 Completed:
-  P0: GEMM performance counter smoke                       PASS
-  P1: GEMM performance profile baseline                    PASS
-  P2: 2-lane MAC datapath                                  PASS
-  P3: 2-lane stress / CDC hardening                        PASS
-  P4: B-cache operand reuse                                PASS
-  P5: packed B-cache preload                               PASS
-  P6: scalar A-row cache                                   PASS
-  P7: packed A-row preload                                 PASS
-  P8: cache-backed true 4-lane MAC                         PASS
-  P9: larger-dimension / cache-size scaling                PASS
-  P10: K-dimension tiling                                  PASS
-  P11: N-dimension tiling                                  PASS
-  P12: M-dimension tiling                                  PASS
-  P13: C read-modify-write partial accumulation             PASS
-  P14: AXI-Lite CSR control plane                          PASS
-  P15: CSR job descriptor / hardware sequencer              PASS
-  P16: CSR recipe sequencer / multi-slot control            PASS
-  P17: memory-backed descriptor fetch                       PASS
-  P18A: completion writeback prototype spec                 PASS
-  P18B: completion record format / CSR map freeze           PASS
-  P18C: completion writeback engine RTL / compile smoke     PASS
-  P18D: standalone completion writeback smoke               PASS
-  P18E: descriptor-fetch DMA completion writeback           PASS
-  P18F: C RMW + Direct Stream completion writeback          PASS
-  P18G: completion writeback error / busy / sticky clear    PASS
-  P18H: full regression integration                         PASS
-  P19A: command / completion queue prototype spec           PASS
-  P19B: queue CSR register map freeze                       PASS
-  P19C: single-outstanding queue fetch controller           PASS
-  P19D: command queue -> P17 descriptor fetch launch        PASS
-  P19E: completion queue writeback integration              PASS
-  P19F: queue reject / empty / full / bad pointer handling  PASS
-  P19G: full regression integration                         PASS
+  P0: GEMM performance counter smoke                         PASS
+  P1: GEMM performance profile baseline                      PASS
+  P2: 2-lane MAC datapath                                    PASS
+  P3: 2-lane stress / CDC hardening                          PASS
+  P4: B-cache operand reuse                                  PASS
+  P5: packed B-cache preload                                 PASS
+  P6: scalar A-row cache                                     PASS
+  P7: packed A-row preload                                   PASS
+  P8: cache-backed true 4-lane MAC                           PASS
+  P9: larger-dimension / cache-size scaling                  PASS
+  P10: K-dimension tiling                                    PASS
+  P11: N-dimension tiling                                    PASS
+  P12: M-dimension tiling                                    PASS
+  P13: C read-modify-write partial accumulation              PASS
+  P14: AXI-Lite CSR control plane                            PASS
+  P15: CSR job descriptor / hardware sequencer               PASS
+  P16: CSR recipe sequencer / multi-slot control             PASS
+  P17: memory-backed descriptor fetch                        PASS
+  P18A: completion writeback prototype spec                  PASS
+  P18B: completion record format / CSR map freeze            PASS
+  P18C: completion writeback engine RTL / compile smoke      PASS
+  P18D: standalone completion writeback smoke                PASS
+  P18E: descriptor-fetch DMA completion writeback            PASS
+  P18F: C RMW + Direct Stream completion writeback           PASS
+  P18G: completion writeback error / busy / sticky clear     PASS
+  P18H: full regression integration                          PASS
+  P19A: command / completion queue prototype spec            PASS
+  P19B: queue CSR register map freeze                        PASS
+  P19C: single-outstanding queue fetch controller            PASS
+  P19D: command queue -> P17 descriptor fetch launch         PASS
+  P19E: completion queue writeback integration               PASS
+  P19F: queue reject / empty / full / bad pointer handling   PASS
+  P19G: full regression integration                          PASS
+  P20A: multi-entry in-order queue drain spec                PASS
+  P20B: queue controller auto-continue policy                PASS
+  P20C: two-command DMA recipe queue smoke                   PASS
+  P20D: DMA + Direct Stream + C RMW mixed queue smoke        PASS
+  P20E: SQ/CQ wrap-around representative validation          PASS
+  P20F: STOP_AFTER_THIS / STOP_QUEUE behavior                PASS
+  P20G: full regression integration                          PASS
 
 Regression:
-  113/113 PASS
+  117/117 PASS
 ```
 
 
@@ -1598,7 +1642,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, and host command/completion queues.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, and multi-entry in-order queue drain behavior.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1611,6 +1655,8 @@ P16 proves that multiple CSR-resident descriptor slots can be dispatched as one 
 P18H proves that the memory-backed command path now has a matching host-visible completion path.  The validated completion writeback flow covers standalone completion records, descriptor-fetch DMA recipes, descriptor-fetch Direct Stream recipes, descriptor-fetch C RMW recipes, and completion writeback busy / reject / BRESP error / sticky clear handling.
 
 P19G proves that the P17/P18 memory-backed command/completion path can be wrapped by a host-visible SQ/CQ queue model while keeping the existing P16/P15 execution stack and datapaths unchanged.
+
+P20G proves that the host-visible queue can drain multiple SQ entries in order with one active command at a time.  Validated P20 behavior includes two-command DMA auto-drain, mixed DMA / Direct Stream / C RMW command sequencing, monotonic SQ/CQ counter wrap to physical ring slots, STOP_AFTER_THIS command-boundary stop, STOP_QUEUE graceful stop, and full regression closure at 117/117 PASS.
 
 
 ---
@@ -1673,3 +1719,35 @@ csr_queue_reject_error_case102
 ```
 
 P19G proves that the host-visible queue prototype can submit one command through SQ memory, launch the existing P17 descriptor-fetch path, reuse the P16/P15 execution stack, write the existing P18 completion record into a CQ slot, advance SQ/CQ pointers after completion commit, and recover from queue disabled / invalid config / empty SQ / bad pointer / CQ full stall scenarios.
+
+
+---
+
+## P20G Multi-Entry In-Order Queue Drain Closure
+
+```text
+P20A: Multi-entry in-order queue drain spec                    PASS
+P20B: Queue controller auto-continue policy                    PASS
+P20C: Two-command DMA recipe queue smoke                       PASS
+P20D: DMA + Direct Stream + C RMW mixed queue smoke            PASS
+P20E: SQ/CQ wrap-around representative validation              PASS
+P20F: STOP_AFTER_THIS / STOP_QUEUE behavior                    PASS
+P20G: Full regression integration                              PASS
+
+Full regression after P20G:
+  TOTAL : 117
+  PASS  : 117
+  FAIL  : 0
+```
+
+Validated P20 full-regression representatives:
+
+```text
+csr_queue_two_command_dma_case102
+csr_queue_mixed_dma_ds_c_rmw_case208
+csr_queue_wraparound_case102
+csr_queue_stop_behavior_case102
+```
+
+P20G proves that the P19 queue prototype can drain multiple SQ entries in order without adding multi-outstanding execution.  The controller still accepts one active command at a time, reuses the existing P17 descriptor-fetch path, P16/P15 execution stack, and P18 completion writeback engine, and advances SQ_HEAD / CQ_TAIL only at command boundaries after completion commit.
+

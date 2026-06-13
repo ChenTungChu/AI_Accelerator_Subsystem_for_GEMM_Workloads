@@ -2248,6 +2248,67 @@ run_reg_item "csr_queue_reject_error_case102" {
 }
 
 # ============================================================
+# P20G: Multi-entry in-order queue drain regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P20 targeted validation into the full regression by
+# covering auto-continued two-command DMA queue drain, mixed DMA /
+# Direct Stream / C RMW command drain, SQ/CQ wrap-around indexing,
+# and command-boundary graceful stop behavior.
+# Expected total after P20G: 117.
+# ============================================================
+run_reg_item "csr_queue_two_command_dma_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_two_command_dma_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_mixed_dma_ds_c_rmw_case208" {
+    set UVM_TEST ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 208
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+
+    set GEMM_ENABLE_C_RMW_ACCUM 1
+    set ACCUMULATE_ENABLE 0
+}
+
+run_reg_item "csr_queue_wraparound_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_wraparound_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_stop_behavior_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_stop_behavior_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"

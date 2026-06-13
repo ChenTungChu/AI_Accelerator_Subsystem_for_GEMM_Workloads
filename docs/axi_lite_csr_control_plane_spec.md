@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, and P19 adds a host-visible command / completion queue CSR window.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, and P20 validates multi-entry in-order queue drain behavior using that same P19 queue window.
 
 ---
 
@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 113/113 after P19G command/completion queue closure
+Full UVM regression baseline passing 117/117 after P20G multi-entry queue drain closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -1531,3 +1531,38 @@ csr_queue_reject_error_case102
 ```
 
 P19 does not change the P14/P15/P16/P17/P18 CSR windows.  It only uses the P19 queue window at `0x580 - 0x5FC` to configure SQ/CQ base, depth, stride, head/tail ownership, status, reject, and debug counters.
+
+
+### P20G Queue Drain Validation Checkpoint
+
+P20G closes the multi-entry in-order queue drain milestone through targeted validation and full-regression integration.  P20 does not add a new CSR window and does not change the P19B-frozen queue CSR address map.  It validates the runtime meaning of existing queue control semantics such as `CSR_QUEUE_CONTROL.RUN_UNTIL_EMPTY`, `CSR_QUEUE_COMMAND.STOP_QUEUE`, and command-entry `CMD_CONTROL.STOP_AFTER_THIS`.
+
+```text
+P20A: Multi-entry in-order queue drain spec                    PASS
+P20B: Queue controller auto-continue policy                    PASS
+P20C: Two-command DMA recipe queue smoke                       PASS
+P20D: DMA + Direct Stream + C RMW mixed queue smoke            PASS
+P20E: SQ/CQ wrap-around representative validation              PASS
+P20F: STOP_AFTER_THIS / STOP_QUEUE behavior                    PASS
+P20G: Full regression integration                              PASS
+
+Full regression after P20G:
+  TOTAL : 117
+  PASS  : 117
+  FAIL  : 0
+```
+
+Validated P20 queue-drain representatives:
+
+```text
+csr_queue_two_command_dma_case102
+csr_queue_mixed_dma_ds_c_rmw_case208
+csr_queue_wraparound_case102
+csr_queue_stop_behavior_case102
+```
+
+The canonical queue CSR map remains:
+
+```text
+P19/P20 queue window: 0x580 - 0x5FC
+```

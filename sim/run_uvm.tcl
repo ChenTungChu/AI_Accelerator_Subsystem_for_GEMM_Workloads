@@ -91,6 +91,10 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test \
     ai_accel_subsys_csr_queue_completion_wb_smoke_test \
     ai_accel_subsys_csr_queue_reject_error_test \
+    ai_accel_subsys_csr_queue_two_command_dma_smoke_test \
+    ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test \
+    ai_accel_subsys_csr_queue_wraparound_smoke_test \
+    ai_accel_subsys_csr_queue_stop_behavior_smoke_test \
 ]
 
 # --------------------------------------------------

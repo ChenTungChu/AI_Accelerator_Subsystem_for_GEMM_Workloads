@@ -203,6 +203,7 @@ module ai_accel_csr_regs #(
     // P19 command/completion queue CSR control outputs
     // ------------------------------------------------------------
     output logic                  queue_start_pulse,
+    output logic                  queue_stop_pulse,
     output logic                  queue_clear_done_pulse,
     output logic                  queue_clear_error_pulse,
 
@@ -665,6 +666,7 @@ module ai_accel_csr_regs #(
     // P19 queue command / control bit positions
     // ------------------------------------------------------------
     localparam int QUEUE_CMD_START_BIT       = 0;
+    localparam int QUEUE_CMD_STOP_BIT        = 1;
     localparam int QUEUE_CMD_CLEAR_DONE_BIT  = 8;
     localparam int QUEUE_CMD_CLEAR_ERROR_BIT = 9;
 
@@ -2227,6 +2229,7 @@ CSR_QUEUE_VERSION_ADDR,
             completion_wb_clear_error_pulse <= 1'b0;
 
             queue_start_pulse       <= 1'b0;
+            queue_stop_pulse        <= 1'b0;
             queue_clear_done_pulse  <= 1'b0;
             queue_clear_error_pulse <= 1'b0;
         end
@@ -2257,6 +2260,7 @@ CSR_QUEUE_VERSION_ADDR,
             completion_wb_clear_error_pulse <= 1'b0;
 
             queue_start_pulse       <= 1'b0;
+            queue_stop_pulse        <= 1'b0;
             queue_clear_done_pulse  <= 1'b0;
             queue_clear_error_pulse <= 1'b0;
 
@@ -2836,6 +2840,10 @@ CSR_QUEUE_VERSION_ADDR,
 
                                 if (queue_command_has_start) begin
                                     queue_start_pulse <= 1'b1;
+                                end
+
+                                if (queue_command_masked[QUEUE_CMD_STOP_BIT]) begin
+                                    queue_stop_pulse <= 1'b1;
                                 end
                             end
                         end

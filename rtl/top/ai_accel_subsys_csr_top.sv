@@ -523,6 +523,7 @@ module ai_accel_subsys_csr_top #(
     // P19 command/completion queue CSR payload and controller status
     // ------------------------------------------------------------
     logic                      csr_queue_start_pulse;
+    logic                      csr_queue_stop_pulse;
     logic                      csr_queue_clear_done_pulse;
     logic                      csr_queue_clear_error_pulse;
 
@@ -667,6 +668,16 @@ module ai_accel_subsys_csr_top #(
     logic                      queue_completion_active_q;
     logic                      queue_completion_commit_pulse_i;
     logic                      queue_completion_error_pulse_i;
+
+    // P20C multi-entry in-order queue drain context.
+    // The queue fetch controller remains single-command-at-a-time;
+    // this wrapper issues an internal delayed START_QUEUE pulse after
+    // a queue-owned completion commit when RUN_UNTIL_EMPTY is set.
+    logic                      queue_auto_continue_pending_q;
+    logic                      queue_auto_continue_start_pulse_i;
+    logic                      queue_start_pulse_to_controller;
+    logic                      queue_cmd_stop_after_this_q;
+    logic                      queue_stop_requested_q;
 
     // ============================================================
     // P16 recipe sequencer outputs and status
@@ -885,20 +896,32 @@ module ai_accel_subsys_csr_top #(
     // P19E completion-queue context capture.
     // cmd_completion_flags[0] is used by the P19E smoke as the
     // CQ-writeback enable bit for this first incremental step.
+    //
+    // P20C extends the wrapper policy without adding multi-outstanding
+    // execution.  After a queue-owned completion commits and the CSR
+    // control bit RUN_UNTIL_EMPTY is set, the wrapper schedules a
+    // one-cycle delayed internal START_QUEUE pulse.  The one-cycle delay
+    // lets the CSR pointer registers advance before the queue fetch
+    // controller recomputes SQ/CQ occupancy for the next command.
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
             queue_completion_context_valid_q <= 1'b0;
             queue_completion_base_addr_q     <= '0;
             queue_completion_flags_q         <= 32'h0000_0000;
             queue_completion_active_q        <= 1'b0;
+            queue_cmd_stop_after_this_q      <= 1'b0;
+            queue_auto_continue_pending_q    <= 1'b0;
+            queue_stop_requested_q        <= 1'b0;
         end else begin
             if (queue_desc_fetch_start_pulse) begin
                 queue_completion_context_valid_q <= 1'b1;
                 queue_completion_base_addr_q     <= queue_cmd_completion_base_addr_i;
                 queue_completion_flags_q         <= queue_cmd_completion_flags_i;
+                queue_cmd_stop_after_this_q      <= queue_cmd_stop_after_this_i;
             end else if (csr_desc_fetch_start_pulse && !desc_fetch_start_blocked_i) begin
                 queue_completion_context_valid_q <= 1'b0;
                 queue_completion_flags_q         <= 32'h0000_0000;
+                queue_cmd_stop_after_this_q      <= 1'b0;
             end
 
             if (completion_wb_auto_start_pulse) begin
@@ -910,6 +933,33 @@ module ai_accel_subsys_csr_top #(
                 queue_completion_active_q        <= 1'b0;
                 queue_completion_context_valid_q <= 1'b0;
             end
+
+            if (queue_completion_commit_pulse_i &&
+                csr_queue_enable &&
+                csr_queue_run_until_empty &&
+                !queue_cmd_stop_after_this_q &&
+                !queue_stop_requested_q &&
+                !csr_queue_stop_pulse) begin
+                queue_auto_continue_pending_q <= 1'b1;
+            end else if (queue_auto_continue_start_pulse_i ||
+                         queue_completion_error_pulse_i ||
+                         csr_queue_clear_error_pulse ||
+                         csr_queue_clear_done_pulse ||
+                         csr_queue_stop_pulse ||
+                         !csr_queue_enable) begin
+                queue_auto_continue_pending_q <= 1'b0;
+            end
+
+            if (csr_queue_clear_done_pulse ||
+                csr_queue_clear_error_pulse ||
+                !csr_queue_enable) begin
+                queue_stop_requested_q <= 1'b0;
+            end else if (queue_completion_commit_pulse_i ||
+                         queue_completion_error_pulse_i) begin
+                queue_stop_requested_q <= 1'b0;
+            end else if (csr_queue_stop_pulse) begin
+                queue_stop_requested_q <= 1'b1;
+            end
         end
     end
 
@@ -918,6 +968,14 @@ module ai_accel_subsys_csr_top #(
 
     assign queue_completion_error_pulse_i = queue_completion_active_q &&
                                             (completion_wb_error_i || completion_wb_reject_i);
+
+    assign queue_auto_continue_start_pulse_i = queue_auto_continue_pending_q &&
+                                               csr_queue_enable &&
+                                               csr_queue_run_until_empty &&
+                                               !queue_busy_i;
+
+    assign queue_start_pulse_to_controller = csr_queue_start_pulse ||
+                                             queue_auto_continue_start_pulse_i;
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -1110,6 +1168,7 @@ module ai_accel_subsys_csr_top #(
         .completion_wb_written_beats    (completion_wb_written_beats_i),
 
         .queue_start_pulse              (csr_queue_start_pulse),
+        .queue_stop_pulse               (csr_queue_stop_pulse),
         .queue_clear_done_pulse         (csr_queue_clear_done_pulse),
         .queue_clear_error_pulse        (csr_queue_clear_error_pulse),
         .queue_enable                   (csr_queue_enable),
@@ -1210,13 +1269,15 @@ module ai_accel_subsys_csr_top #(
 
 
     // ============================================================
-    // P19 single-outstanding command queue fetch controller
+    // P19/P20 command queue fetch controller
     //
     // P19D consumes one accepted SQ command context and launches the
     // existing P17 descriptor-fetch path with the fetched descriptor
     // base/count/stride.  P19E also captures the selected CQ entry
     // address so the existing P18 completion writeback engine can
     // publish the terminal record into completion queue memory.
+    // P20C keeps single-active-command execution and adds wrapper-level
+    // auto-continue pulses after CQ commit when RUN_UNTIL_EMPTY is set.
     // ============================================================
     ai_accel_queue_fetch_controller #(
         .ADDR_WIDTH          (ADDR_WIDTH),
@@ -1231,7 +1292,7 @@ module ai_accel_subsys_csr_top #(
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
 
-        .start_queue_pulse      (csr_queue_start_pulse),
+        .start_queue_pulse      (queue_start_pulse_to_controller),
         .clear_done_pulse       (csr_queue_clear_done_pulse),
         .clear_error_pulse      (csr_queue_clear_error_pulse),
 

@@ -188,6 +188,14 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_queue_completion_wb_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_reject_error_test.sv"
 
+    // ------------------------------------------------------------
+    // P20 multi-entry queue-drain tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_queue_two_command_dma_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_wraparound_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_stop_behavior_smoke_test.sv"
+
 endpackage
 
 `endif

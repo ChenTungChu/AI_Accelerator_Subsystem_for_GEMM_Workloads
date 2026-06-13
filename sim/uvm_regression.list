@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Command / Completion Queue P19G: Host Queue Full Regression Completed
+#   Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
 #
 # Current baseline:
-#   TOTAL : 113
-#   PASS  : 113
+#   TOTAL : 117
+#   PASS  : 117
 #   FAIL  : 0
-#   113/113 PASS
+#   117/117 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -335,3 +335,13 @@ ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test CASE_ID 102 UVM_TOP ai_accel
 ai_accel_subsys_csr_queue_completion_wb_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 113: csr_queue_reject_error_case102
 ai_accel_subsys_csr_queue_reject_error_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 114: csr_queue_two_command_dma_case102
+ai_accel_subsys_csr_queue_two_command_dma_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 115: csr_queue_mixed_dma_ds_c_rmw_case208
+ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test CASE_ID 208 UVM_TOP ai_accel_subsys_csr_uvm_top GEMM_ENABLE_C_RMW_ACCUM 1 ACCUMULATE_ENABLE 0 +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 116: csr_queue_wraparound_case102
+ai_accel_subsys_csr_queue_wraparound_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 117: csr_queue_stop_behavior_case102
+ai_accel_subsys_csr_queue_stop_behavior_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
