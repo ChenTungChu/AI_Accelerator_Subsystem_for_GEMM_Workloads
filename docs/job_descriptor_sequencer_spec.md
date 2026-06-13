@@ -176,27 +176,6 @@ P15F: documentation / closure update                          PASS
 Full regression: 95/95 PASS
 ```
 
-### 4.4 Relationship to P16/P17/P18
-
-P15 remains the reusable single-job worker beneath later control layers:
-
-```text
-P16 recipe sequencer dispatches each slot through P15.
-P17 descriptor fetch builds a P16-compatible recipe snapshot.
-P18 completion writeback observes P17/P16 terminal status after the P15 worker completes selected slots.
-```
-
-P18 does not change P15 job sequencing or frontend-mode derivation.
-
-Current integrated regression after P18H:
-
-```text
-TOTAL : 110
-PASS  : 110
-FAIL  : 0
-```
-
-
 ---
 
 ## 5. Recommended RTL Partition

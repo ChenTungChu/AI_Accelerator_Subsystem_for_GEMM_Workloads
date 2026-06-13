@@ -2102,7 +2102,6 @@ run_reg_item "csr_desc_fetch_c_rmw_two_slot_case208" {
     set CORE_CLK_PERIOD_NS 14
 
     set GEMM_ENABLE_C_RMW_ACCUM 1
-    set ACCUMULATE_ENABLE 0
 }
 
 run_reg_item "csr_desc_fetch_direct_stream_two_slot_case102" {
@@ -2128,6 +2127,8 @@ run_reg_item "csr_desc_fetch_reject_error_case102" {
     set DMA_CLK_PERIOD_NS 10
     set CORE_CLK_PERIOD_NS 14
 }
+
+
 
 
 # ============================================================
@@ -2199,6 +2200,52 @@ run_reg_item "csr_completion_wb_error_busy_clear" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P19G: Command/completion queue regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P19 targeted validation into the full regression by
+# covering command queue launch into P17 descriptor fetch, CQ-based
+# completion writeback and pointer advancement, and queue reject /
+# empty / full / bad-pointer handling.
+# Expected total after P19G: 113.
+# ============================================================
+run_reg_item "csr_queue_desc_fetch_dma_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_completion_wb_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_completion_wb_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_reject_error_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_reject_error_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
 
 # ============================================================
 # Final summary

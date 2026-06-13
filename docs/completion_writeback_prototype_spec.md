@@ -37,12 +37,12 @@ hardware writes a compact completion record back to memory
 host polls completion memory or CSR status
 ```
 
-Current closure after P18H:
+Current baseline entering P18A:
 
 ```text
-Completion Writeback P18H closure:
-  TOTAL : 110
-  PASS  : 110
+P17H/P17I descriptor-fetch closure:
+  TOTAL : 105
+  PASS  : 105
   FAIL  : 0
 ```
 
@@ -135,7 +135,32 @@ ai_accel_subsys_csr_top
         -> external completion-memory AXI write master
 ```
 
-### 4.2 P18 Does Not Replace CSR Status
+### 4.2 Relationship to P19 Completion Queue
+
+P19 wraps P18 without changing the P18 completion record format or commit-last visibility policy.  In the P19 queue flow, the completion base address is selected from the CQ pointer state instead of only from the standalone `CSR_COMP_BASE_ADDR` debug path:
+
+```text
+completion_base = CSR_CQ_BASE_ADDR + ((CSR_CQ_TAIL % CSR_CQ_DEPTH) * CSR_CQ_STRIDE)
+```
+
+The existing P18 completion writeback engine still owns the memory write ordering:
+
+```text
+write completion payload words first
+rewrite / commit word0 with VALID=1 last
+report completion done only after commit BRESP succeeds
+```
+
+P19 advances `CSR_CQ_TAIL` only after the P18 completion commit has completed successfully.  If completion writeback fails before commit, the CQ tail does not advance and CSR queue / completion error status is the authoritative debug path.
+
+Validated P19 completion-queue flows:
+
+```text
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
+```
+
+### 4.3 P18 Does Not Replace CSR Status
 
 P18 adds a memory-visible completion record.  It does not remove or redefine existing CSR status registers.
 
@@ -375,7 +400,7 @@ Reads return zero.
 | 9 | `CLEAR_COMP_ERROR` | W1P | Clear completion error and reject sticky bits. |
 | 10 | `CLEAR_COMP_COUNTERS` | W1P | Clear `CSR_COMP_WRITTEN_COUNT` and last commit/debug snapshots. |
 
-The normal P18 flow does not require software to issue `START_COMPLETION`.  Completion writeback starts from P17/P16 terminal status when enabled.  The implementation also keeps a manual/debug start path for standalone CSR smoke and writeback error/busy/clear validation.
+No explicit `START_COMPLETION` command is required in P18A.  Completion writeback starts from P17/P16 terminal status when enabled.
 
 ### 8.3 `CSR_COMP_STATUS` at 0x548
 
@@ -899,51 +924,6 @@ P18A: Completion writeback prototype spec    DRAFT
 
 ---
 
-## P18H Implementation and Validation Closure
+## P19 completion queue integration note
 
-P18 is implemented and validated through full-regression integration.
-
-```text
-P18A: Completion writeback prototype spec                              PASS
-P18B: Completion record format / CSR map freeze                        PASS
-P18C: Completion writeback engine RTL / compile smoke                  PASS
-P18D: CSR plumbing + standalone completion writeback smoke              PASS
-P18E: Descriptor-fetch DMA recipe + completion writeback validation     PASS
-P18F: C RMW + Direct Stream completion writeback validation             PASS
-P18G: Completion writeback error / busy / sticky clear handling         PASS
-P18H: Full regression integration                                      PASS
-
-Full regression after P18H:
-  TOTAL : 110
-  PASS  : 110
-  FAIL  : 0
-```
-
-Validated P18 regression representatives:
-
-```text
-csr_completion_wb_smoke
-csr_desc_fetch_dma_completion_wb_case102
-csr_desc_fetch_direct_stream_completion_wb_case102
-csr_desc_fetch_c_rmw_completion_wb_case208
-csr_completion_wb_error_busy_clear
-```
-
-Validation scope:
-
-```text
-P18D standalone completion writeback smoke validates the engine, CSR plumbing, 64-byte record format, and commit-last policy.
-P18E validates descriptor-fetch DMA recipe completion writeback.
-P18F validates descriptor-fetch Direct Stream and C RMW completion writeback representatives.
-P18G validates completion writeback busy reject, unaligned-base reject, BRESP error propagation, sticky clear command handling, and W1C cleanup.
-P18H integrates the P18 representative tests into full regression.
-```
-
-Testbench-only injection policy:
-
-```text
-desc_src_inject_if   -> descriptor fetch AXI read-side errors
-comp_wb_inject_if    -> completion writeback AXI write-side errors
-```
-
-Both interfaces are TB-only and do not modify the RTL datapath contract.
+P19G validates that the P18 completion writeback engine can be driven by a CQ slot address while preserving the same 64-byte record format and commit-last policy.  The P18 standalone CSR smoke and error/busy/clear coverage remain valid, and the P19 queue path adds CQ pointer advancement after completion commit.

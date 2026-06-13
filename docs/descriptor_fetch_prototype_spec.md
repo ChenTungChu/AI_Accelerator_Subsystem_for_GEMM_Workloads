@@ -174,21 +174,6 @@ AXI interconnect / NoC integration
 
 These can remain future work.  The P17 prototype should stay small and explainable as a single-person project milestone.
 
-### 4.4 Relationship to P18 Completion Writeback
-
-P18 builds on P17 without changing descriptor-fetch semantics.  P17 still fetches and validates descriptors, builds an internal P16-compatible recipe snapshot, and launches the existing P16 recipe path.  P18 observes the accepted descriptor-fetch context and downstream terminal status, then writes a host-visible completion record.
-
-Validated P18 descriptor-fetch completion representatives:
-
-```text
-csr_desc_fetch_dma_completion_wb_case102
-csr_desc_fetch_direct_stream_completion_wb_case102
-csr_desc_fetch_c_rmw_completion_wb_case208
-```
-
-P17 descriptor-fetch reject/error coverage remains separate from P18 completion-writeback BRESP/busy/clear coverage.
-
-
 ---
 
 ## 5. Recommended RTL Partition
@@ -1262,20 +1247,6 @@ This provides a realistic host-programmable accelerator control extension while 
 
 ---
 
-## P18H Completion-Writeback Context
+## P19 queue integration note
 
-```text
-P18A: Completion writeback prototype spec                              PASS
-P18B: Completion record format / CSR map freeze                        PASS
-P18C: Completion writeback engine RTL / compile smoke                  PASS
-P18D: CSR plumbing + standalone completion writeback smoke              PASS
-P18E: Descriptor-fetch DMA recipe + completion writeback validation     PASS
-P18F: C RMW + Direct Stream completion writeback validation             PASS
-P18G: Completion writeback error / busy / sticky clear handling         PASS
-P18H: Full regression integration                                      PASS
-
-Full regression after P18H:
-  TOTAL : 110
-  PASS  : 110
-  FAIL  : 0
-```
+P19G validates that P17 can be launched by a host-visible command queue entry instead of only by direct descriptor-fetch CSR programming.  The P17 descriptor table format and fetched snapshot bridge are unchanged; P19 only supplies the descriptor base/count/stride context from an accepted SQ command.

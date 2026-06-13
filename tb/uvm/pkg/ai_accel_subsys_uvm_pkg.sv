@@ -186,6 +186,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_completion_wb_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_reject_error_test.sv"
 
 endpackage
 

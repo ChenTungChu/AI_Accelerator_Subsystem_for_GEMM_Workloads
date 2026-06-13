@@ -1,16 +1,17 @@
 // ============================================================
 // ai_accel_queue_fetch_controller
 // ============================================================
-// P19C single-outstanding command queue fetch controller.
+// P19F single-outstanding command queue fetch controller.
 //
-// Scope for P19C:
+// Scope through P19F:
 //   - Reads one 64-byte SQ command entry from command memory.
 //   - Parses and validates the command entry.
 //   - Presents one accepted/rejected command context to downstream logic.
 //   - Does not launch P17 descriptor fetch directly yet.
-//   - Does not update SQ_HEAD / CQ_TAIL directly yet.
+//   - Does not update SQ_HEAD / CQ_TAIL directly.
+//   - Adds queue disabled / invalid config / empty / full / bad pointer handling.
 //
-// Integration intent for later P19D/P19E:
+// Integration intent for P19D/P19E:
 //   cmd_valid/cmd_ready handshake becomes the boundary into the existing
 //   descriptor-fetch launch path and completion-writeback allocation path.
 //
@@ -154,21 +155,24 @@ module ai_accel_queue_fetch_controller #(
     localparam int Q_DONE_CMD_VALIDATED = 3;
 
     // Queue error bits
-    localparam int Q_ERR_CMD_FETCH       = 0;
-    localparam int Q_ERR_CMD_VALIDATION  = 1;
-    localparam int Q_ERR_UNDERLYING_BUSY = 2;
-    localparam int Q_ERR_INTERNAL        = 7;
+    localparam int Q_ERR_CMD_FETCH        = 0;
+    localparam int Q_ERR_CMD_VALIDATION   = 1;
+    localparam int Q_ERR_UNDERLYING_BUSY  = 2;
+    localparam int Q_ERR_BAD_POINTER      = 3;
+    localparam int Q_ERR_INTERNAL         = 7;
 
     // Queue reject bits
-    localparam int Q_REJ_QUEUE_BUSY       = 0;
-    localparam int Q_REJ_QUEUE_DISABLED   = 1;
-    localparam int Q_REJ_INVALID_CFG      = 2;
+    localparam int Q_REJ_QUEUE_BUSY        = 0;
+    localparam int Q_REJ_QUEUE_DISABLED    = 1;
+    localparam int Q_REJ_INVALID_CFG       = 2;
+    localparam int Q_REJ_BAD_POINTER       = 3;
     localparam int Q_REJ_UNSUPPORTED_COMBO = 5;
 
-    // Error detail encodings used by this P19C RTL.
+    // Error detail encodings used by this P19F RTL.
     localparam logic [31:0] ERR_NONE                 = 32'h0000_0000;
     localparam logic [31:0] ERR_DISABLED             = 32'h0000_0001;
     localparam logic [31:0] ERR_INVALID_CFG          = 32'h0000_0002;
+    localparam logic [31:0] ERR_BAD_POINTER          = 32'h0000_0003;
     localparam logic [31:0] ERR_AR_RRESP             = 32'h0000_0101;
     localparam logic [31:0] ERR_AR_EARLY_RLAST       = 32'h0000_0102;
     localparam logic [31:0] ERR_AR_MISSING_RLAST     = 32'h0000_0103;
@@ -225,6 +229,7 @@ module ai_accel_queue_fetch_controller #(
     logic [31:0] cq_space_w;
 
     logic        cfg_valid_w;
+    logic        ptr_valid_w;
     logic        sq_empty_w;
     logic        cq_full_w;
 
@@ -254,6 +259,9 @@ module ai_accel_queue_fetch_controller #(
 
     assign sq_empty_w = (sq_head == sq_tail);
     assign cq_full_w  = (cq_occupancy_w >= cq_depth);
+
+    assign ptr_valid_w = (sq_occupancy_w <= sq_depth) &&
+                         (cq_occupancy_w <= cq_depth);
 
     assign cfg_valid_w =
         (sq_base_addr[AXI_SIZE_VALUE-1:0] == '0) &&
@@ -372,6 +380,13 @@ module ai_accel_queue_fetch_controller #(
                         error_detail_d = ERR_INVALID_CFG;
                         queue_reject_pulse = 1'b1;
                         state_d = Q_ERROR;
+                    end else if (!ptr_valid_w) begin
+                        error_status_d[Q_ERR_BAD_POINTER] = 1'b1;
+                        reject_status_d[Q_REJ_BAD_POINTER] = 1'b1;
+                        error_detail_d = ERR_BAD_POINTER;
+                        error_index_d  = {16'd0, cq_tail[7:0], sq_head[7:0]};
+                        queue_reject_pulse = 1'b1;
+                        state_d = Q_ERROR;
                     end else begin
                         done_status_d[Q_DONE_STARTED] = 1'b1;
                         state_d = Q_CHECK_READY;
@@ -388,6 +403,13 @@ module ai_accel_queue_fetch_controller #(
                 end else if (!cfg_valid_w) begin
                     reject_status_d[Q_REJ_INVALID_CFG] = 1'b1;
                     error_detail_d = ERR_INVALID_CFG;
+                    queue_reject_pulse = 1'b1;
+                    state_d = Q_ERROR;
+                end else if (!ptr_valid_w) begin
+                    error_status_d[Q_ERR_BAD_POINTER] = 1'b1;
+                    reject_status_d[Q_REJ_BAD_POINTER] = 1'b1;
+                    error_detail_d = ERR_BAD_POINTER;
+                    error_index_d  = {16'd0, cq_tail[7:0], sq_head[7:0]};
                     queue_reject_pulse = 1'b1;
                     state_d = Q_ERROR;
                 end else if (sq_empty_w) begin
@@ -615,11 +637,11 @@ module ai_accel_queue_fetch_controller #(
     assign queue_cq_occupancy  = cq_occupancy_w;
     assign queue_cq_space      = cq_space_w;
 
-    // P19C baseline is defined for 64-bit AXI data width.
+    // P19F baseline is defined for 64-bit AXI data width.
     // Keep this as a simulation-time guard rather than adding a second unverified path.
     initial begin
         if (DATA_WIDTH != 64) begin
-            $error("ai_accel_queue_fetch_controller P19C supports DATA_WIDTH=64 in the current baseline");
+            $error("ai_accel_queue_fetch_controller P19F supports DATA_WIDTH=64 in the current baseline");
         end
         if (SQ_ENTRY_BYTES != 64) begin
             $error("ai_accel_queue_fetch_controller P19C expects SQ_ENTRY_BYTES=64");

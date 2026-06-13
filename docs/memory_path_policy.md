@@ -149,30 +149,29 @@ helper fallback mode:
 
 Therefore, seeing `AXI_HOST_MON` messages in helper mode does not mean the host agent actively drove the transaction.
 
-### 1.9 P18 Completion Writeback Test Policy
 
-P18 completion writeback adds one additional host-visible egress path that is separate from GEMM operand and result movement.
+### 1.10 P19 Command / Completion Queue Memory Policy
+
+P19 adds host-visible SQ/CQ memory structures, but it does not change the GEMM operand/result routing policy.
 
 ```text
-control path             : AXI-Lite CSR writes/reads
-command source path       : P17 descriptor-memory AXI read responder
+control path              : AXI-Lite CSR writes/reads
+submission queue path     : dedicated command-memory AXI read responder
+recipe descriptor path    : P17 descriptor-memory AXI read responder
 A/B source path           : selected existing frontend source memory model
 C export path             : DMA destination memory model when DMA_STORE is used
-completion writeback path : dedicated completion-memory AXI write responder
+completion queue path     : P18 completion-memory AXI write responder selected by CQ slot address
 ```
 
-The completion record is not the scratchpad.  P18 completion writeback uses a dedicated completion-memory AXI write master and does not change the GEMM operand/result memory routing policy.
+The SQ command entry is not scratchpad memory.  The CQ completion entry is not scratchpad memory.  P19 uses dedicated command-memory and completion-memory testbench responders around the CSR top and leaves the BRAM, GEMM runtime memory routing, DMA load/store, AXI-Stream, and Direct Stream datapaths unchanged.
 
-Validated P18 regression representatives use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and the descriptor/source/destination/completion memory models needed by each selected flow:
+Validated P19 regression representatives use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, `FORCE_HELPER_MEM_PATH=0`, and the descriptor/source/destination/command/completion memory models needed by each selected flow:
 
 ```text
-csr_completion_wb_smoke
-csr_desc_fetch_dma_completion_wb_case102
-csr_desc_fetch_direct_stream_completion_wb_case102
-csr_desc_fetch_c_rmw_completion_wb_case208
-csr_completion_wb_error_busy_clear
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
 ```
-
 
 ---
 

@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 110/110 after P18H completion-writeback closure
+Full UVM regression baseline passing 113/113 after P19G command/completion queue closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -502,8 +502,6 @@ CQ entry address = CSR_CQ_BASE_ADDR + (cq_index * CSR_CQ_STRIDE)
 ```
 
 P19B queue entries are fixed at 64 bytes.  The command fetch engine reads one 64-byte SQ entry.  The completion writeback path writes one existing P18 64-byte completion record into the selected CQ entry.
-
----
 
 ---
 
@@ -1502,3 +1500,34 @@ P19B CSR window:
 ```
 
 P19B is a specification checkpoint only.  It does not add RTL, UVM tests, Tcl scripts, regression items, or README updates.
+
+
+
+### P19G Queue Integration Validation Checkpoint
+
+P19G closes the first command / completion queue prototype through targeted validation and full-regression integration.  The CSR register map, access types, reset values, and bit definitions remain the P19B-frozen canonical definitions in this document.
+
+```text
+P19A: Command / completion queue prototype spec                 PASS
+P19B: Queue CSR register map freeze                             PASS
+P19C: Single-outstanding queue fetch controller                 PASS
+P19D: Command queue -> existing P17 descriptor fetch launch      PASS
+P19E: Completion queue writeback integration                    PASS
+P19F: Queue reject / empty / full / bad pointer handling         PASS
+P19G: Full regression integration                               PASS
+
+Full regression after P19G:
+  TOTAL : 113
+  PASS  : 113
+  FAIL  : 0
+```
+
+Validated P19 queue representatives:
+
+```text
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
+```
+
+P19 does not change the P14/P15/P16/P17/P18 CSR windows.  It only uses the P19 queue window at `0x580 - 0x5FC` to configure SQ/CQ base, depth, stride, head/tail ownership, status, reject, and debug counters.

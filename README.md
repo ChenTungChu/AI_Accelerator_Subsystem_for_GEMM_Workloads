@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, and CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, and completion writeback integration.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, and host-visible command / completion queue integration.
 
 Current milestone:
 
 ```text
-Completion Writeback P18H: Memory-Backed Completion Writeback Regression Completed
+Command / Completion Queue P19G: Host Queue Full Regression Completed
 
 Regression:
-  TOTAL : 110
-  PASS  : 110
+  TOTAL : 113
+  PASS  : 113
   FAIL  : 0
 ```
 
@@ -49,6 +49,7 @@ CSR job descriptor sequencer representative regression across DMA / AXI-Stream /
 CSR recipe sequencer representative regression across DMA / C RMW / AXI-Stream / Direct Stream recipe modes
 CSR descriptor-fetch regression across CSR smoke, DMA recipe, C RMW recipe, Direct Stream recipe, and reject/error handling
 CSR completion-writeback regression across standalone smoke, DMA, Direct Stream, C RMW, and error/busy/clear handling
+CSR command/completion queue regression across SQ command fetch, queue-to-descriptor-fetch launch, CQ writeback, and queue robustness handling
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -153,6 +154,23 @@ Completion writeback busy / reject / BRESP error / sticky clear validation
 Full regression after P18H: 110/110 PASS
 ```
 
+
+P19 extends the P17/P18 memory-backed command/completion model with a small host-visible command / completion queue prototype.  The queue controller fetches one 64-byte SQ command entry, maps it into the existing P17 descriptor-fetch launch path, directs P18 to write the completion record into a CQ slot, and advances queue pointers after completion commit.
+
+P19 scope:
+
+```text
+P19 queue CSR register window at 0x580 and above
+Host-visible submission queue and completion queue memory model
+Single-outstanding queue fetch controller
+SQ command entry fetch and validation
+Queue command -> existing P17 descriptor-fetch launch
+CQ-addressed P18 completion writeback
+SQ_HEAD and CQ_TAIL advancement after completion commit
+Queue disabled / invalid config / empty SQ / bad pointer / CQ full stall and recovery handling
+Full regression after P19G: 113/113 PASS
+```
+
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
 
 P11 extends the P10 row-accumulator model to output-column tiling.  It supports `N_total` larger than the local B-cache / row-accumulator N capacity by splitting output columns into local N tiles.
@@ -180,6 +198,10 @@ Direct Stream A/B reads use operand buffer while C RMW reads/writes use scratchp
 - `ai_accel_subsys`
 - `ai_accel_subsys_csr_top`
 - `ai_accel_job_sequencer`
+- `ai_accel_recipe_sequencer`
+- `ai_accel_desc_fetch_engine`
+- `ai_accel_completion_wb_engine`
+- `ai_accel_queue_fetch_controller`
 - `ai_accel_csr_regs`
 - `axi_lite_if`
 - `gemm_top`
@@ -489,6 +511,29 @@ csr_desc_fetch_c_rmw_completion_wb_case208
 csr_completion_wb_error_busy_clear
 ```
 
+
+### Command queue + completion queue path
+
+```text
+host-visible submission queue memory
+    -> P19 queue fetch controller
+    -> accepted command context
+    -> P17 descriptor fetch
+    -> P16 recipe sequencer
+    -> P15 job sequencer
+    -> selected frontend / GEMM / DMA store path
+    -> P18 completion writeback engine
+    -> host-visible completion queue memory
+```
+
+Validated P19 full-regression representatives:
+
+```text
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
+```
+
 ---
 
 ## Performance Counters
@@ -767,6 +812,9 @@ Current UVM regression covers:
 - CSR descriptor-fetch reject / busy / malformed descriptor / AXI RRESP handling regression
 - CSR completion writeback standalone / DMA / Direct Stream / C RMW representative regression
 - CSR completion writeback error / busy / sticky clear handling regression
+- CSR command queue to descriptor-fetch DMA representative regression
+- CSR command queue to CQ completion-writeback representative regression
+- CSR queue reject / empty / full / bad pointer handling regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -777,11 +825,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 110 items and is passing:
+The current full UVM regression contains 113 items and is passing:
 
 ```text
-TOTAL : 110
-PASS  : 110
+TOTAL : 113
+PASS  : 113
 FAIL  : 0
 ```
 
@@ -1474,6 +1522,17 @@ set CORE_CLK_PERIOD_NS 14
 do run_uvm.tcl
 ```
 
+
+P19G added these command/completion queue representative items:
+
+```text
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, fetch one SQ command entry, launch the existing P17 descriptor-fetch path, direct P18 completion writeback into a CQ slot, and validate queue-level reject / empty / full / bad-pointer handling.
+
 ---
 
 ## Known Warning
@@ -1493,7 +1552,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Completion Writeback P18H: Memory-Backed Completion Writeback Regression Completed
+Command / Completion Queue P19G: Host Queue Full Regression Completed
 
 Completed:
   P0: GEMM performance counter smoke                       PASS
@@ -1522,9 +1581,16 @@ Completed:
   P18F: C RMW + Direct Stream completion writeback          PASS
   P18G: completion writeback error / busy / sticky clear    PASS
   P18H: full regression integration                         PASS
+  P19A: command / completion queue prototype spec           PASS
+  P19B: queue CSR register map freeze                       PASS
+  P19C: single-outstanding queue fetch controller           PASS
+  P19D: command queue -> P17 descriptor fetch launch        PASS
+  P19E: completion queue writeback integration              PASS
+  P19F: queue reject / empty / full / bad pointer handling  PASS
+  P19G: full regression integration                         PASS
 
 Regression:
-  110/110 PASS
+  113/113 PASS
 ```
 
 
@@ -1532,7 +1598,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, and completion writeback.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, and host command/completion queues.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1543,6 +1609,8 @@ P15E proves that the subsystem can also be launched through a job-level hardware
 P16 proves that multiple CSR-resident descriptor slots can be dispatched as one recipe through the existing P15 worker.  P17 extends that recipe model to memory-backed descriptors without changing the P16/P15 execution semantics.
 
 P18H proves that the memory-backed command path now has a matching host-visible completion path.  The validated completion writeback flow covers standalone completion records, descriptor-fetch DMA recipes, descriptor-fetch Direct Stream recipes, descriptor-fetch C RMW recipes, and completion writeback busy / reject / BRESP error / sticky clear handling.
+
+P19G proves that the P17/P18 memory-backed command/completion path can be wrapped by a host-visible SQ/CQ queue model while keeping the existing P16/P15 execution stack and datapaths unchanged.
 
 
 ---
@@ -1575,3 +1643,33 @@ csr_desc_fetch_c_rmw_completion_wb_case208
 csr_completion_wb_error_busy_clear
 ```
 
+
+
+---
+
+## P19G Command / Completion Queue Closure
+
+```text
+P19A: Command / completion queue prototype spec                 PASS
+P19B: Queue CSR register map freeze                             PASS
+P19C: Single-outstanding queue fetch controller                 PASS
+P19D: Command queue -> existing P17 descriptor fetch launch      PASS
+P19E: Completion queue writeback integration                    PASS
+P19F: Queue reject / empty / full / bad pointer handling         PASS
+P19G: Full regression integration                               PASS
+
+Full regression after P19G:
+  TOTAL : 113
+  PASS  : 113
+  FAIL  : 0
+```
+
+Validated P19 full-regression representatives:
+
+```text
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
+csr_queue_reject_error_case102
+```
+
+P19G proves that the host-visible queue prototype can submit one command through SQ memory, launch the existing P17 descriptor-fetch path, reuse the P16/P15 execution stack, write the existing P18 completion record into a CQ slot, advance SQ/CQ pointers after completion commit, and recover from queue disabled / invalid config / empty SQ / bad pointer / CQ full stall scenarios.

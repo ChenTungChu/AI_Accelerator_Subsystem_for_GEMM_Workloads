@@ -159,19 +159,6 @@ AXI interconnect / NoC integration
 
 These can be future milestones after the CSR-resident recipe controller is stable.
 
-### 4.5 Relationship to P18 Completion Writeback
-
-P18 does not change P16 recipe execution semantics.  The recipe sequencer still owns slot dispatch, slot terminal status, recipe done/error/reject status, and recipe performance accumulation.  P18 observes the accepted descriptor-fetch context and P16 terminal status to build a completion record.
-
-Validated P18 recipe-based completion representatives:
-
-```text
-csr_desc_fetch_dma_completion_wb_case102
-csr_desc_fetch_direct_stream_completion_wb_case102
-csr_desc_fetch_c_rmw_completion_wb_case208
-```
-
-
 ---
 
 ## 5. Recommended RTL Partition

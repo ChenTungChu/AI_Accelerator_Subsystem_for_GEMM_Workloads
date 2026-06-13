@@ -386,35 +386,55 @@ DMA load and GEMM compute do not overlap in this baseline.
 BRAM RTL remains unchanged.
 ```
 
----
 
-## 16. P18 completion writeback compatibility note
+15. P17/P18/P19 command path compatibility note
 
-P18 does not change the DMA load or DMA store protocol.  Descriptor-fetch recipes continue to use the existing selected frontend for A/B movement and the existing DMA store path for C export when `OUTPUT_MODE=DMA_STORE` is selected.
+P17/P18/P19 do not change the DMA load/store datapath protocol.
 
-P18 adds a separate completion-memory AXI write master:
+P17 adds descriptor-memory command ingress:
 
 ```text
 P17 descriptor fetch
+    -> P16 recipe snapshot
+    -> P15 job worker
+    -> existing DMA load/store and GEMM datapath
+```
+
+P18 adds completion-memory egress:
+
+```text
+P17 descriptor fetch / P16 recipe terminal status
+    -> P18 completion writeback
+    -> host-visible completion memory
+```
+
+P19 adds a host-visible queue wrapper around the same P17/P18 path:
+
+```text
+P19 SQ command memory
+    -> queue fetch controller
+    -> P17 descriptor fetch
     -> P16 recipe
     -> P15 job worker
-    -> DMA load/store and GEMM datapath
-    -> P18 completion writeback to host-visible completion memory
+    -> existing DMA load/store and GEMM datapath
+    -> P18 completion writeback
+    -> P19 CQ completion memory
 ```
 
-Validated DMA-related P18 full-regression representative:
+The original v1 rules still hold:
 
 ```text
-csr_desc_fetch_dma_completion_wb_case102
+DMA load completes before GEMM start inside each P15 job.
+DMA load and GEMM compute do not overlap in this baseline.
+BRAM RTL remains unchanged.
+DMA / loader / adapter continue to use discrete AXI wires.
 ```
 
-The original DMA integration rules still hold: DMA load completes before GEMM start, DMA load and GEMM compute do not overlap in the current baseline, and BRAM RTL remains unchanged.
-
-Current integrated regression baseline:
+Validated P19 DMA-related representative coverage:
 
 ```text
-TOTAL : 110
-PASS  : 110
-FAIL  : 0
+csr_queue_desc_fetch_dma_case102 PASS
+csr_queue_completion_wb_case102 PASS
+csr_queue_reject_error_case102 PASS
+Full regression after P19G: 113/113 PASS
 ```
-

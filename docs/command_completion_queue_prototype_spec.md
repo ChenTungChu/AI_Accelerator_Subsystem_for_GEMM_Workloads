@@ -46,6 +46,15 @@ P18H / P18I completion-writeback closure:
   FAIL  : 0
 ```
 
+Current closure after P19G:
+
+```text
+P19 command / completion queue closure:
+  TOTAL : 113
+  PASS  : 113
+  FAIL  : 0
+```
+
 ---
 
 ## 2. Baseline Before P19
@@ -482,57 +491,178 @@ If P18 completion writeback fails before commit, P19 must not advance `CQ_TAIL`.
 
 ---
 
-## 10. Queue CSR Window Summary
+## 10. Queue CSR Window Proposal
 
-P19B freezes the software-visible queue CSR window as part of the canonical AXI-Lite CSR map.
+P18 uses the `0x540 - 0x57C` completion-writeback CSR window.  P19 should add a queue CSR window immediately after P18.
 
-```text
-P19 queue CSR base   = 0x580
-P19 queue CSR window = 0x580 - 0x5FC
-```
-
-The canonical register map, access types, reset values, register ownership policy, and register bit definitions are recorded in:
+Recommended base:
 
 ```text
-docs/axi_lite_csr_control_plane_spec.md
+P19 queue CSR base = 0x580
 ```
 
-This P19 queue prototype spec intentionally keeps only the queue architecture, command entry format, completion queue behavior, host programming model, error policy, and validation plan.  It does not duplicate the full CSR table.
-
-Frozen P19B constants used by the queue architecture:
+Existing windows remain unchanged:
 
 ```text
-CSR_QUEUE_BASE_ADDR      = 0x580
-CSR_QUEUE_WINDOW_LAST    = 0x5FC
-CSR_QUEUE_VERSION_RESET  = 0x0001_0019
-CSR_QUEUE_CONTROL_RESET  = 0x0000_001F
-P19_SQ_ENTRY_BYTES       = 0x40
-P19_CQ_ENTRY_BYTES       = 0x40
-P19_SQ_STRIDE_RESET      = 0x0000_0040
-P19_CQ_STRIDE_RESET      = 0x0000_0040
-P19_FIRST_OPCODE         = 0x01  // fetch descriptor table and run recipe
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
 ```
 
-P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.
+### 10.1 Register Map
+
+| Offset | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0x580 | `CSR_QUEUE_VERSION` | RO | `0x0001_0019` | Queue controller version / feature ID. |
+| 0x584 | `CSR_QUEUE_COMMAND` | W1P | 0 | Queue start/kick and sticky clear commands. |
+| 0x588 | `CSR_QUEUE_STATUS` | RO | implementation | Live queue status summary. |
+| 0x58C | `CSR_QUEUE_DONE_STATUS` | RO/W1C | 0 | Sticky queue done / idle status. |
+| 0x590 | `CSR_QUEUE_ERROR_STATUS` | RO/W1C | 0 | Sticky queue error status. |
+| 0x594 | `CSR_QUEUE_CONTROL` | RW | `0x0000_0001` | Queue policy bits. |
+| 0x598 | `CSR_QUEUE_REJECT_STATUS` | RO/W1C | 0 | Sticky queue command/config reject reasons. |
+| 0x59C | `CSR_QUEUE_STATE` | RO | 0 | Current queue controller FSM state. |
+| 0x5A0 | `CSR_SQ_BASE_ADDR` | RW | 0 | Submission queue base address. |
+| 0x5A4 | `CSR_SQ_DEPTH` | RW | 0 | Submission queue depth in entries. |
+| 0x5A8 | `CSR_SQ_HEAD` | RO | 0 | Hardware-owned SQ head counter. |
+| 0x5AC | `CSR_SQ_TAIL` | RW | 0 | Host-owned SQ tail counter. |
+| 0x5B0 | `CSR_SQ_STRIDE` | RW | `0x40` | Submission queue entry stride in bytes. |
+| 0x5B4 | `CSR_CQ_BASE_ADDR` | RW | 0 | Completion queue base address. |
+| 0x5B8 | `CSR_CQ_DEPTH` | RW | 0 | Completion queue depth in entries. |
+| 0x5BC | `CSR_CQ_HEAD` | RW | 0 | Host-owned CQ head counter. |
+| 0x5C0 | `CSR_CQ_TAIL` | RO | 0 | Hardware-owned CQ tail counter. |
+| 0x5C4 | `CSR_CQ_STRIDE` | RW | `0x40` | Completion queue entry stride in bytes. |
+| 0x5C8 | `CSR_QUEUE_CURRENT_INDEX` | RO | 0 | Current SQ physical index being fetched or executed. |
+| 0x5CC | `CSR_QUEUE_COMPLETED_COUNT` | RO | 0 | Number of commands completed through CQ commit. |
+| 0x5D0 | `CSR_QUEUE_ERROR_INDEX` | RO | 0 | SQ index associated with the last queue error. |
+| 0x5D4 | `CSR_QUEUE_ERROR_DETAIL` | RO | 0 | Queue-level error detail. |
+| 0x5D8 | `CSR_QUEUE_LAST_CMD_TAG` | RO | 0 | Last accepted command user tag. |
+| 0x5DC | `CSR_QUEUE_LAST_CMD_CONTROL` | RO | 0 | Last accepted command control word. |
+| 0x5E0 | `CSR_QUEUE_SQ_OCCUPANCY` | RO | 0 | Computed SQ occupancy. |
+| 0x5E4 | `CSR_QUEUE_CQ_OCCUPANCY` | RO | 0 | Computed CQ occupancy. |
+| 0x5E8 | `CSR_QUEUE_CQ_SPACE` | RO | 0 | Computed CQ free entries. |
+| 0x5EC | `CSR_QUEUE_RESERVED_5EC` | RO | 0 | Reserved. |
+| 0x5F0 | `CSR_QUEUE_RESERVED_5F0` | RO | 0 | Reserved. |
+| 0x5F4 | `CSR_QUEUE_RESERVED_5F4` | RO | 0 | Reserved. |
+| 0x5F8 | `CSR_QUEUE_RESERVED_5F8` | RO | 0 | Reserved. |
+| 0x5FC | `CSR_QUEUE_RESERVED_5FC` | RO | 0 | Reserved. |
 
 ---
 
-## 11. Queue CSR Programming Model
+## 11. Queue Register Bit Definitions
 
-The queue CSR programming model is:
+### 11.1 `CSR_QUEUE_VERSION` at 0x580
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| [31:16] | `MAJOR` | RO | 16'h0001 | Queue controller major version. |
+| [15:8] | `MINOR` | RO | 8'h00 | Queue controller minor version. |
+| [7:0] | `FEATURE_ID` | RO | 8'h19 | P19 queue controller feature ID. |
+
+Recommended reset value:
 
 ```text
-1. Host programs SQ base/depth/stride while the queue is idle.
-2. Host programs CQ base/depth/stride while the queue is idle.
-3. Host writes SQ entries into memory.
-4. Host writes CSR_SQ_TAIL as a doorbell value.
-5. Host writes CSR_QUEUE_COMMAND.START_QUEUE.
-6. Hardware fetches SQ entries, runs one command at a time, and writes CQ entries.
-7. Host observes CSR_CQ_TAIL or polls CQ commit words.
-8. Host advances CSR_CQ_HEAD after consuming committed CQ entries.
+0x0001_0019
 ```
 
-Queue base/depth/stride configuration writes while `queue_busy` is high are rejected.  `CSR_SQ_TAIL` and `CSR_CQ_HEAD` remain host-owned queue pointer updates and may be written while the queue controller is enabled.
+### 11.2 `CSR_QUEUE_COMMAND` at 0x584
+
+This is a write-one-pulse register.  Reads return zero.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `START_QUEUE` | W1P | Enable / kick queue processing if accepted. |
+| 1 | `STOP_QUEUE` | W1P | Request the queue controller to stop after the current command. Optional for P19A. |
+| 8 | `CLEAR_QUEUE_DONE` | W1P | Clear queue done / idle sticky bits. |
+| 9 | `CLEAR_QUEUE_ERROR` | W1P | Clear queue error and reject sticky bits. |
+| 10 | `CLEAR_QUEUE_COUNTERS` | W1P | Clear completed count and last-command debug snapshots. |
+| 11 | `RESET_QUEUE_POINTERS` | W1P | Reset SQ/CQ head/tail counters when queue is idle. |
+
+Unsupported combinations:
+
+```text
+START_QUEUE while queue_busy is high
+START_QUEUE while queue error sticky is set and CLEAR_QUEUE_ERROR is not requested
+START_QUEUE with invalid queue configuration
+RESET_QUEUE_POINTERS while queue_busy is high
+unsupported command bits in the same write
+```
+
+Unsupported combinations do not start queue processing and set `CSR_QUEUE_REJECT_STATUS`.
+
+### 11.3 `CSR_QUEUE_STATUS` at 0x588
+
+| Bit | Name | Access | Description |
+|---:|---|---|
+| 0 | `QUEUE_BUSY` | RO | Queue controller is fetching, executing, or completing a command. |
+| 1 | `QUEUE_DONE` | RO | Sticky queue done / stopped / drained status is set. |
+| 2 | `QUEUE_ERROR` | RO | Sticky queue error or reject status is set. |
+| 3 | `QUEUE_ACCEPT_READY` | RO | Queue controller is idle and can accept START_QUEUE. |
+| 4 | `QUEUE_ENABLED` | RO | Queue processing is enabled by control. |
+| 5 | `SQ_EMPTY` | RO | Submission queue has no unconsumed entries. |
+| 6 | `CQ_FULL` | RO | Completion queue has no free entries. |
+| 7 | `QUEUE_STALLED` | RO | Queue is enabled but waiting for SQ entry or CQ space. |
+| 8 | `CMD_FETCH_BUSY` | RO | Command queue fetch is active. |
+| 9 | `DESC_FETCH_BUSY` | RO | P17 descriptor fetch is busy. |
+| 10 | `RECIPE_BUSY` | RO | P16 recipe sequencer is busy. |
+| 11 | `COMP_BUSY` | RO | P18 completion writeback is busy. |
+| 16 | `CSR_READY` | RO | CSR block ready for transactions. |
+
+### 11.4 `CSR_QUEUE_DONE_STATUS` at 0x58C
+
+| Bit | Name | Type | Description |
+|---:|---|---|
+| 0 | `QUEUE_STARTED` | RO/W1C | START_QUEUE was accepted. |
+| 1 | `QUEUE_DRAINED` | RO/W1C | Queue reached SQ empty after processing available commands. |
+| 2 | `COMMAND_COMPLETED` | RO/W1C | At least one command completed and committed to CQ. |
+| 3 | `STOPPED_AFTER_COMMAND` | RO/W1C | Queue stopped due to STOP_QUEUE or STOP_AFTER_THIS. |
+
+### 11.5 `CSR_QUEUE_ERROR_STATUS` at 0x590
+
+| Bit | Name | Type | Description |
+|---:|---|---|
+| 0 | `CMD_FETCH_ERROR` | RO/W1C | Command queue AXI read returned error or malformed response. |
+| 1 | `CMD_VALIDATION_ERROR` | RO/W1C | Command entry failed validation after fetch. |
+| 2 | `DESC_FETCH_ERROR` | RO/W1C | P17 descriptor fetch error propagated to queue level. |
+| 3 | `RECIPE_ERROR` | RO/W1C | P16 recipe error propagated to queue level. |
+| 4 | `COMPLETION_WB_ERROR` | RO/W1C | P18 completion writeback error propagated to queue level. |
+| 5 | `QUEUE_POINTER_ERROR` | RO/W1C | Queue pointer configuration or occupancy calculation invalid. |
+| 6 | `CQ_FULL_ERROR_RESERVED` | RO/W1C | Reserved. P19A should stall on CQ full rather than error. |
+| 8 | `INTERNAL_SEQUENCE_ERROR` | RO/W1C | Queue FSM reached an illegal state or unexpected terminal condition. |
+
+### 11.6 `CSR_QUEUE_CONTROL` at 0x594
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---:|---:|---|
+| 0 | `QUEUE_ENABLE` | RW | 1 | Queue processing may accept START_QUEUE. |
+| 1 | `RUN_UNTIL_EMPTY` | RW | 1 | Continue processing commands until SQ empty. If 0, process one command per START_QUEUE. |
+| 2 | `STOP_ON_ERROR` | RW | 1 | Stop queue processing after a command error. |
+| 3 | `WRITE_COMPLETION_ON_CMD_REJECT` | RW | 1 | Attempt a CQ completion for fetched command validation rejects. |
+| 4 | `AUTO_CLEAR_P17_P18_ON_START` | RW | 1 | Clear relevant P17/P18 sticky status before launching a command. |
+| [31:5] | `RSVD` | RO | 0 | Reserved. |
+
+Recommended reset value:
+
+```text
+0x0000_001F
+```
+
+A smaller first RTL implementation may tie some policy bits to the recommended values and still expose the register for readback/debug.
+
+### 11.7 `CSR_QUEUE_REJECT_STATUS` at 0x598
+
+| Bit | Name | Type | Description |
+|---:|---|---|
+| 0 | `QUEUE_BUSY_REJECT` | RO/W1C | START_QUEUE requested while queue_busy is high. |
+| 1 | `QUEUE_DISABLED_REJECT` | RO/W1C | START_QUEUE requested while QUEUE_ENABLE=0. |
+| 2 | `INVALID_QUEUE_CONFIG_REJECT` | RO/W1C | Base/depth/stride configuration invalid. |
+| 3 | `UNDERLYING_BUSY_REJECT` | RO/W1C | P17/P18/P16/P15/P14 path busy before queue command acceptance. |
+| 4 | `STICKY_ERROR_REJECT` | RO/W1C | START_QUEUE requested while uncleared queue error is sticky. |
+| 5 | `UNSUPPORTED_COMMAND_COMBO` | RO/W1C | Unsupported bits written to `CSR_QUEUE_COMMAND`. |
+| 6 | `RESET_POINTERS_BUSY_REJECT` | RO/W1C | RESET_QUEUE_POINTERS requested while queue_busy is high. |
 
 ---
 
@@ -823,71 +953,89 @@ poll completion_record[0].VALID in memory
 
 ---
 
-## 18. UVM Validation Plan
+## 18. UVM Validation Plan and P19 Closure
 
-Recommended P19 validation sequence:
+P19 was implemented and validated as a correctness-first single-outstanding queue prototype.
+
+Final P19 milestone split:
 
 ```text
-P19A: command / completion queue spec
-P19B: queue CSR register map / helper support
-P19C: command queue fetch engine compile smoke
-P19D: queue controller single DMA command smoke
-P19E: two-command sequential queue smoke
-P19F: C RMW command queue representative
-P19G: Direct Stream command queue representative
-P19H: queue empty / full / busy / invalid command handling
-P19I: command fetch RRESP error and completion writeback error propagation
-P19J: full regression integration
-P19K: docs closure
+P19A: Command / completion queue spec
+P19B: CSR queue register map
+P19C: Single-outstanding queue fetch controller
+P19D: Command queue -> existing P17 descriptor fetch launch
+P19E: Completion queue writeback integration
+P19F: Queue reject / empty / full / bad pointer handling
+P19G: Full regression integration
+P19H: Documentation closure
 ```
 
 ### 18.1 Targeted Smoke Tests
 
-Initial focused tests:
+Validated targeted tests:
 
 ```text
-queue_csr_regs_smoke
-queue_single_dma_desc_fetch_completion_case102
-queue_two_command_dma_case100_102
-queue_c_rmw_case208
-queue_direct_stream_case102
-queue_invalid_command_reject
-queue_empty_full_busy_handling
-queue_cmd_fetch_error
-queue_completion_wb_error
+ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test
+ai_accel_subsys_csr_queue_completion_wb_smoke_test
+ai_accel_subsys_csr_queue_reject_error_test
+```
+
+Targeted coverage:
+
+```text
+SQ command entry fetch and validation
+Queue command context to P17 descriptor-fetch launch
+P18 completion writeback to CQ slot address
+SQ_HEAD advancement after accepted command completion
+CQ_TAIL advancement after completion commit
+QUEUE_ENABLE disabled reject
+invalid queue configuration reject
+empty SQ drained status
+bad SQ pointer reject
+bad CQ pointer reject
+CQ full stall
+CQ full recovery after host advances CQ_HEAD
+post-recovery valid command through P17/P18 to CQ writeback
 ```
 
 ### 18.2 Full Regression Representatives
 
-Recommended first full-regression subset:
+P19G full-regression representatives:
 
 ```text
-csr_queue_single_dma_case102
-csr_queue_two_command_dma_case100_102
-csr_queue_c_rmw_case208
-csr_queue_direct_stream_case102
+csr_queue_desc_fetch_dma_case102
+csr_queue_completion_wb_case102
 csr_queue_reject_error_case102
 ```
 
-These mirror the P18H representative strategy without exploding regression runtime.
+Full regression after P19G:
+
+```text
+TOTAL : 113
+PASS  : 113
+FAIL  : 0
+```
 
 ---
 
-## 19. P19A Closure Criteria
+## 19. P19 Closure Criteria
 
-P19A is complete when this specification is reviewed and frozen enough to start implementation.
+P19 is complete when the queue specification, CSR map, queue fetch controller, queue-to-P17 launch, CQ writeback integration, queue robustness handling, full regression, and documentation closure are complete.
 
-Minimum P19A closure checklist:
+Final P19 closure checklist:
 
 ```text
-Queue design intent defined
-Command entry format defined
-Completion queue reuse of P18 record defined
-Queue pointer model defined
-CSR queue window proposed
-Error / reject policy defined
-Validation plan defined
-Non-goals explicitly listed
+Queue design intent frozen
+Command entry format frozen
+Completion queue reuse of P18 record frozen
+Queue pointer model frozen
+Canonical CSR queue window recorded in axi_lite_csr_control_plane_spec.md
+Single-outstanding queue fetch controller implemented
+Queue command launches existing P17 descriptor fetch
+Queue completion uses existing P18 completion record and writeback engine
+SQ_HEAD and CQ_TAIL advance only after completion commit
+Queue disabled / invalid config / empty SQ / bad pointer / CQ full handling validated
+Full regression 113/113 PASS
 No BRAM / GEMM / DMA / frontend datapath changes required
 ```
 

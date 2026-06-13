@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Completion Writeback P18H: Memory-Backed Completion Writeback Regression Completed
+#   Command / Completion Queue P19G: Host Queue Full Regression Completed
 #
 # Current baseline:
-#   TOTAL : 110
-#   PASS  : 110
+#   TOTAL : 113
+#   PASS  : 113
 #   FAIL  : 0
-#   110/110 PASS
+#   113/113 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -328,3 +328,10 @@ ai_accel_subsys_csr_desc_fetch_c_rmw_completion_wb_test CASE_ID 208 UVM_TOP ai_a
 # 110: csr_completion_wb_error_busy_clear
 ai_accel_subsys_csr_completion_wb_error_busy_clear_test UVM_TOP ai_accel_subsys_csr_uvm_top +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 
+
+# 111: csr_queue_desc_fetch_dma_case102
+ai_accel_subsys_csr_queue_desc_fetch_dma_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 112: csr_queue_completion_wb_case102
+ai_accel_subsys_csr_queue_completion_wb_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 113: csr_queue_reject_error_case102
+ai_accel_subsys_csr_queue_reject_error_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
