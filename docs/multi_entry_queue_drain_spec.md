@@ -893,69 +893,56 @@ PASS  : 117
 FAIL  : 0
 ```
 
+
 ---
 
-## 26. P21 Runtime Doorbell Extension Checkpoint
+## 26. Relationship to P21 Runtime Doorbell / Live Queue Service
 
-P21 extends the P20 in-order queue drain policy with runtime doorbell behavior.
+P21 extends the P20 queue drain model from a batch-drain policy into a live-service policy.
 
-P20 validates batch drain:
-
-```text
-host writes all SQ entries before START_QUEUE
-hardware drains the visible queue until SQ empty / stop / error
-```
-
-P21 validates append-while-active service:
+P20 batch-drain model:
 
 ```text
-host starts the queue with one or more visible SQ entries
-hardware executes one command at a time
-while hardware is active, host may append additional SQ entries
-host publishes the appended entries by updating CSR_SQ_TAIL
-hardware observes the new SQ_TAIL only at command boundaries
-hardware may continue to appended commands without a second START_QUEUE
+host writes all visible SQ entries before START_QUEUE
+hardware drains those visible entries until SQ empty / stop / error
+if the controller reaches SQ empty, queue_busy returns to 0
 ```
 
-P21 does not change the P20 single-active-command rule:
+P21 live-service model:
+
+```text
+host may append SQ entries while queue_busy=1
+host publishes the appended entry by updating CSR_SQ_TAIL
+hardware samples the latest SQ_TAIL only at command boundaries
+hardware can continue to appended commands without another START_QUEUE
+```
+
+The P21 extension preserves all P20 ordering guarantees:
 
 ```text
 one active command at a time
 in-order SQ_HEAD to SQ_TAIL execution
 in-order CQ_TAIL completion production
+no multi-outstanding commands
 no out-of-order completion
-no command prefetch requirement
 no BRAM / GEMM / DMA / frontend datapath changes
 ```
 
-P21A/P21B freeze the following policy:
+Validated P21 runtime-service behavior:
 
 ```text
-CSR_SQ_TAIL is host-owned and may be written while queue_busy is high.
-CSR_CQ_HEAD is host-owned and may be written while queue_busy is high.
-The queue controller samples SQ_TAIL and CQ_HEAD only at safe command boundaries or CQ-full stall checks.
-The active command uses snapshotted SQ/CQ addresses and is not affected by host pointer writes during execution.
-If the controller reaches SQ empty before a runtime append is visible, it reports drained and a later append requires a new START_QUEUE.
-STOP_QUEUE and STOP_AFTER_THIS suppress further runtime-appended commands after the active command completes.
+append-while-active DMA queue service
+append-while-active mixed DMA / Direct Stream queue service
+CQ full command-boundary stall and host CQ_HEAD recovery
+STOP_QUEUE during live service, preserving pending runtime-appended SQ entries
 ```
 
-P21 expected validation milestones:
+Full regression after P21G:
 
 ```text
-P21A: Runtime doorbell / live queue service spec
-P21B: Queue controller live SQ_TAIL observation policy
-P21C: Append-while-active DMA queue smoke
-P21D: Append-while-active mixed queue smoke
-P21E: CQ full stall + host CQ_HEAD recovery during active service
-P21F: STOP_QUEUE during live service
-P21G: Full regression integration
-P21H: Docs closure
+TOTAL : 121
+PASS  : 121
+FAIL  : 0
 ```
 
-Expected P21G representative regression increase:
-
-```text
-Before P21G: 117
-After P21G : 121
-```
-
+P21 is documented separately in `runtime_doorbell_live_queue_service_spec.md` because the P20 policy remains the canonical batch-drain behavior, while P21 defines the safe runtime observation points for host-owned `CSR_SQ_TAIL` and `CSR_CQ_HEAD` updates.

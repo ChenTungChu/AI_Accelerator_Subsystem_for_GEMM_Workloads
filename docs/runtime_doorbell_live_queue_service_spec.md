@@ -504,17 +504,17 @@ No new RTL modules are expected for P21C/P21D.
 
 ## 14. UVM Validation Plan
 
-Recommended P21 milestone split:
+Final P21 milestone split:
 
 ```text
-P21A: Runtime doorbell / live queue service spec
-P21B: Queue controller live SQ_TAIL observation policy
-P21C: Append-while-active DMA queue smoke
-P21D: Append-while-active mixed queue smoke
-P21E: CQ full stall + host CQ_HEAD recovery during active service
-P21F: STOP_QUEUE during live service
-P21G: Full regression integration
-P21H: Docs closure
+P21A: Runtime doorbell / live queue service spec                  PASS
+P21B: Queue controller live SQ_TAIL observation policy             PASS
+P21C: Append-while-active DMA queue smoke                         PASS
+P21D: Append-while-active mixed queue smoke                       PASS
+P21E: CQ full stall + host CQ_HEAD recovery during active service  PASS
+P21F: STOP_QUEUE during live service                              PASS
+P21G: Full regression integration                                 PASS
+P21H: Docs closure                                                PASS
 ```
 
 ### 14.1 P21C Append-While-Active DMA Queue Smoke
@@ -533,7 +533,7 @@ validate CQ[0] and CQ[1] completion records commit in order
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_queue_runtime_append_dma_smoke_test
+ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test
 ```
 
 Representative sequence:
@@ -567,13 +567,14 @@ SQ[0] = DMA descriptor recipe
 SQ[1] = Direct Stream descriptor recipe or C RMW descriptor recipe
 ```
 
-The stronger representative is:
+Validated P21D representative:
 
 ```text
 SQ[0] = DMA descriptor recipe
-SQ[1] = Direct Stream descriptor recipe
-SQ[2] = C RMW descriptor recipe, appended while earlier command is active
+SQ[1] = Direct Stream descriptor recipe, appended while SQ[0] is active
 ```
+
+A later stress extension can add a third C RMW command, but P21D closure intentionally keeps the representative mixed profile to two commands.
 
 ### 14.3 P21E CQ Full Stall + Host Recovery During Active Service
 
@@ -634,10 +635,10 @@ P21G should add a small representative subset to full regression.
 Recommended full-regression representatives:
 
 ```text
-csr_queue_runtime_append_dma_case102
-csr_queue_runtime_append_mixed_case208
-csr_queue_runtime_cq_full_recovery_case102
-csr_queue_runtime_stop_case102
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
 ```
 
 Expected count increase:
@@ -651,7 +652,40 @@ This should remain a representative regression, not an exhaustive runtime queue 
 
 ---
 
-## 16. P21 Closure Criteria
+
+## 16. P21 Validation Result and Closure Status
+
+P21G closes runtime doorbell / live queue service through targeted validation and full-regression integration.
+
+Validated targeted tests:
+
+```text
+ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test
+ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test
+ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test
+ai_accel_subsys_csr_queue_stop_live_service_smoke_test
+```
+
+Validated full-regression representatives:
+
+```text
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
+```
+
+Full regression after P21G:
+
+```text
+TOTAL : 121
+PASS  : 121
+FAIL  : 0
+```
+
+P21H documentation closure records the validated policy without adding new CSR addresses, new SQ/CQ formats, or datapath changes.
+
+## 17. P21 Closure Criteria
 
 P21 is complete when:
 
@@ -664,13 +698,13 @@ active command snapshots are isolated from host pointer updates
 CQ full stall and host CQ_HEAD recovery work during active service
 STOP_QUEUE suppresses further runtime appends after the active command
 STOP_AFTER_THIS suppresses further runtime appends after the marked command
-full regression passes with P21 representatives
+full regression passes with P21 representatives at 121/121
 no BRAM / GEMM / DMA / frontend datapath changes are required
 ```
 
 ---
 
-## 17. Interview Summary
+## 18. Interview Summary
 
 P21 is the step that turns P20 from a batch queue drain into a runtime-serviced queue.
 

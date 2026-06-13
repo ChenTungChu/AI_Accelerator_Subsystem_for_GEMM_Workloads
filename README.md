@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, and multi-entry in-order command queue drain behavior.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, and runtime doorbell / live queue service behavior.
 
 Current milestone:
 
 ```text
-Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
+Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
 
 Regression:
-  TOTAL : 117
-  PASS  : 117
+  TOTAL : 121
+  PASS  : 121
   FAIL  : 0
 ```
 
@@ -51,6 +51,7 @@ CSR descriptor-fetch regression across CSR smoke, DMA recipe, C RMW recipe, Dire
 CSR completion-writeback regression across standalone smoke, DMA, Direct Stream, C RMW, and error/busy/clear handling
 CSR command/completion queue regression across SQ command fetch, queue-to-descriptor-fetch launch, CQ writeback, and queue robustness handling
 CSR multi-entry in-order queue drain regression across auto-drain, mixed command modes, wrap-around, and graceful stop handling
+CSR runtime doorbell / live queue service regression across append-while-active, mixed live service, CQ-full recovery, and STOP_QUEUE handling
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -185,6 +186,22 @@ SQ/CQ monotonic pointer + physical index wrap-around validation
 STOP_AFTER_THIS command-boundary stop validation
 CSR_QUEUE_COMMAND.STOP_QUEUE graceful stop validation
 Full regression after P20G: 117/117 PASS
+```
+
+P21 extends P20 from batch-style queue drain into runtime doorbell / live queue service while preserving the single-active-command execution model.
+
+P21 scope:
+
+```text
+Host may append SQ entries while queue_busy=1
+Host publishes runtime append by updating CSR_SQ_TAIL
+Queue controller observes live SQ_TAIL only at command boundaries
+Active command uses snapshotted SQ/CQ context and is isolated from host pointer writes
+Append-while-active DMA queue validation
+Append-while-active mixed DMA / Direct Stream queue validation
+CQ full command-boundary stall plus host CQ_HEAD recovery during active service
+CSR_QUEUE_COMMAND.STOP_QUEUE suppresses further runtime appends after active command completion
+Full regression after P21G: 121/121 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -851,11 +868,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 117 items and is passing:
+The current full UVM regression contains 121 items and is passing:
 
 ```text
-TOTAL : 117
-PASS  : 117
+TOTAL : 121
+PASS  : 121
 FAIL  : 0
 ```
 
@@ -1021,8 +1038,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 117
-PASS  : 117
+TOTAL : 121
+PASS  : 121
 FAIL  : 0
 ```
 
@@ -1570,6 +1587,17 @@ csr_queue_stop_behavior_case102
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, keep one active command at a time, reuse the existing P17/P16/P15/P18 execution stack, and validate RUN_UNTIL_EMPTY auto-drain, mixed command sequencing, SQ/CQ physical wrap-around, STOP_AFTER_THIS, and STOP_QUEUE behavior.
 
+P21G added these runtime doorbell / live queue service representative items:
+
+```text
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, keep one active command at a time, reuse the existing P17/P16/P15/P18 execution stack, and validate runtime SQ_TAIL doorbell observation, mixed live service, CQ-full command-boundary stall with host CQ_HEAD recovery, and STOP_QUEUE behavior during active queue service.
+
 ---
 
 ## Known Warning
@@ -1589,7 +1617,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
+Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1632,9 +1660,17 @@ Completed:
   P20E: SQ/CQ wrap-around representative validation          PASS
   P20F: STOP_AFTER_THIS / STOP_QUEUE behavior                PASS
   P20G: full regression integration                          PASS
+  P21A: runtime doorbell / live queue service spec            PASS
+  P21B: live SQ_TAIL / CQ_HEAD observation policy             PASS
+  P21C: append-while-active DMA queue smoke                   PASS
+  P21D: append-while-active mixed queue smoke                 PASS
+  P21E: CQ full stall + host CQ_HEAD recovery                 PASS
+  P21F: STOP_QUEUE during live service                        PASS
+  P21G: full regression integration                           PASS
+  P21H: documentation closure                                 PASS
 
 Regression:
-  117/117 PASS
+  121/121 PASS
 ```
 
 
@@ -1642,7 +1678,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, and multi-entry in-order queue drain behavior.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, and runtime doorbell / live queue service behavior.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1657,6 +1693,8 @@ P18H proves that the memory-backed command path now has a matching host-visible 
 P19G proves that the P17/P18 memory-backed command/completion path can be wrapped by a host-visible SQ/CQ queue model while keeping the existing P16/P15 execution stack and datapaths unchanged.
 
 P20G proves that the host-visible queue can drain multiple SQ entries in order with one active command at a time.  Validated P20 behavior includes two-command DMA auto-drain, mixed DMA / Direct Stream / C RMW command sequencing, monotonic SQ/CQ counter wrap to physical ring slots, STOP_AFTER_THIS command-boundary stop, STOP_QUEUE graceful stop, and full regression closure at 117/117 PASS.
+
+P21G proves that runtime doorbell / live queue service works on top of the same in-order queue controller.  The host can append SQ entries while `queue_busy=1`, hardware observes the updated `CSR_SQ_TAIL` only at command boundaries, CQ-full backpressure can recover when the host advances `CSR_CQ_HEAD`, and `STOP_QUEUE` suppresses further runtime-appended commands after the active command completes.  Full regression closes at 121/121 PASS.
 
 
 ---
@@ -1751,3 +1789,35 @@ csr_queue_stop_behavior_case102
 
 P20G proves that the P19 queue prototype can drain multiple SQ entries in order without adding multi-outstanding execution.  The controller still accepts one active command at a time, reuses the existing P17 descriptor-fetch path, P16/P15 execution stack, and P18 completion writeback engine, and advances SQ_HEAD / CQ_TAIL only at command boundaries after completion commit.
 
+
+
+---
+
+## P21G Runtime Doorbell / Live Queue Service Closure
+
+```text
+P21A: Runtime doorbell / live queue service spec                  PASS
+P21B: Queue controller live SQ_TAIL observation policy             PASS
+P21C: Append-while-active DMA queue smoke                         PASS
+P21D: Append-while-active mixed queue smoke                       PASS
+P21E: CQ full stall + host CQ_HEAD recovery during active service  PASS
+P21F: STOP_QUEUE during live service                              PASS
+P21G: Full regression integration                                 PASS
+P21H: Documentation closure                                       PASS
+
+Full regression after P21G:
+  TOTAL : 121
+  PASS  : 121
+  FAIL  : 0
+```
+
+Validated P21 full-regression representatives:
+
+```text
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
+```
+
+P21G proves that the P20 queue drain model can be serviced as a live queue without introducing multi-outstanding execution.  The controller still executes one command at a time, snapshots the active command context, observes host-owned `CSR_SQ_TAIL` and `CSR_CQ_HEAD` only at safe command-boundary / CQ-stall points, reuses the existing P17 descriptor-fetch path, P16/P15 execution stack, and P18 completion writeback engine, and preserves in-order SQ/CQ pointer advancement.

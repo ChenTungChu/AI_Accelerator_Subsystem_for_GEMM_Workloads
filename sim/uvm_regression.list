@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Multi-Entry In-Order Queue Drain P20G: Full Regression Completed
+#   Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
 #
 # Current baseline:
-#   TOTAL : 117
-#   PASS  : 117
+#   TOTAL : 121
+#   PASS  : 121
 #   FAIL  : 0
-#   117/117 PASS
+#   121/121 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -42,6 +42,9 @@
 #   - CSR descriptor-fetch reject / busy / malformed descriptor / AXI RRESP handling
 #   - CSR completion writeback standalone / DMA / Direct Stream / C RMW representative coverage
 #   - CSR completion writeback error / busy / sticky clear handling
+#   - CSR command/completion queue single-command and robustness handling
+#   - CSR multi-entry queue auto-drain, mixed command, wrap-around, and stop behavior
+#   - CSR runtime doorbell / live queue service append, CQ-full recovery, and stop behavior
 #
 # P13D focused DUT additions:
 #   - p13d_c_rmw_accum_case208
@@ -104,6 +107,21 @@
 #   - csr_desc_fetch_direct_stream_completion_wb_case102
 #   - csr_desc_fetch_c_rmw_completion_wb_case208
 #   - csr_completion_wb_error_busy_clear
+#
+# P19/P20 queue additions:
+#   - csr_queue_desc_fetch_dma_case102
+#   - csr_queue_completion_wb_case102
+#   - csr_queue_reject_error_case102
+#   - csr_queue_two_command_dma_case102
+#   - csr_queue_mixed_dma_ds_c_rmw_case208
+#   - csr_queue_wraparound_case102
+#   - csr_queue_stop_behavior_case102
+#
+# P21 runtime doorbell / live service additions:
+#   - csr_queue_runtime_doorbell_dma_case102
+#   - csr_queue_runtime_doorbell_mixed_case102
+#   - csr_queue_cq_full_live_recovery_case102
+#   - csr_queue_stop_live_service_case102
 #
 # 001: smoke CASE_ID=5
 ai_accel_subsys_smoke_test CASE_ID 5 +ENABLE_RESULT_CHECK=1
@@ -344,4 +362,11 @@ ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test CASE_ID 208 UVM_TOP ai_a
 ai_accel_subsys_csr_queue_wraparound_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 117: csr_queue_stop_behavior_case102
 ai_accel_subsys_csr_queue_stop_behavior_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
-
+# 118: csr_queue_runtime_doorbell_dma_case102
+ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 119: csr_queue_runtime_doorbell_mixed_case102
+ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 120: csr_queue_cq_full_live_recovery_case102
+ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 121: csr_queue_stop_live_service_case102
+ai_accel_subsys_csr_queue_stop_live_service_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

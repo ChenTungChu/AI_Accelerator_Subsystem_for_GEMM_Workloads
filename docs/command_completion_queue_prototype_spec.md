@@ -1105,7 +1105,62 @@ csr_queue_stop_behavior_case102
 
 The detailed P20 drain policy is documented in `multi_entry_queue_drain_spec.md`.
 
-## 21. Interview Summary
+
+## 21. Relationship to P21 Runtime Doorbell / Live Queue Service
+
+P21 extends the P19/P20 command / completion queue model without changing the P19 command entry format, CQ completion record format, or canonical queue CSR register map.
+
+P19 proves the single-command queue wrapper:
+
+```text
+one SQ command
+    -> P19 fetch / validation
+    -> P17 descriptor fetch
+    -> P16/P15 execution
+    -> P18 CQ writeback
+    -> SQ_HEAD / CQ_TAIL advancement
+```
+
+P20 repeats that path for all visible commands in a batch.  P21 keeps the same in-order, single-active-command path, but allows the host to append more SQ entries while the controller is still active:
+
+```text
+SQ[0] visible at START_QUEUE
+SQ[1] published later by host writing CMD_CONTROL.VALID last
+host updates CSR_SQ_TAIL while queue_busy=1
+hardware observes the new SQ_TAIL only at the next command boundary
+SQ[1] executes without a second START_QUEUE if the session has not drained
+```
+
+Validated P21 closure:
+
+```text
+P21A: Runtime doorbell / live queue service spec                  PASS
+P21B: Queue controller live SQ_TAIL observation policy             PASS
+P21C: Append-while-active DMA queue smoke                         PASS
+P21D: Append-while-active mixed queue smoke                       PASS
+P21E: CQ full stall + host CQ_HEAD recovery during active service  PASS
+P21F: STOP_QUEUE during live service                              PASS
+P21G: Full regression integration                                 PASS
+P21H: Documentation closure                                       PASS
+
+Full regression after P21G:
+  TOTAL : 121
+  PASS  : 121
+  FAIL  : 0
+```
+
+Validated P21 full-regression representatives:
+
+```text
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
+```
+
+The detailed P21 live-service policy is documented in `runtime_doorbell_live_queue_service_spec.md`.
+
+## 22. Interview Summary
 
 P19 turns the P17/P18 memory-backed command prototype into a small host queue prototype.
 

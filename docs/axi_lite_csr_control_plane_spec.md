@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, and P20 validates multi-entry in-order queue drain behavior using that same P19 queue window.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, and P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses.
 
 ---
 
@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 117/117 after P20G multi-entry queue drain closure
+Full UVM regression baseline passing 121/121 after P21G runtime doorbell / live queue service closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -445,15 +445,15 @@ P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-lis
 | `CSR_SQ_BASE_ADDR` | Host | Program while queue is idle. |
 | `CSR_SQ_DEPTH` | Host | Program while queue is idle. |
 | `CSR_SQ_HEAD` | Hardware | Read-only to host. |
-| `CSR_SQ_TAIL` | Host | May be written as a doorbell value. |
+| `CSR_SQ_TAIL` | Host | May be written as a doorbell value, including while `queue_busy=1` for P21 live service. |
 | `CSR_SQ_STRIDE` | Host | Program while queue is idle. |
 | `CSR_CQ_BASE_ADDR` | Host | Program while queue is idle. |
 | `CSR_CQ_DEPTH` | Host | Program while queue is idle. |
-| `CSR_CQ_HEAD` | Host | May be written after host consumes CQ entries. |
+| `CSR_CQ_HEAD` | Host | May be written after host consumes CQ entries, including during CQ-full live-service recovery. |
 | `CSR_CQ_TAIL` | Hardware | Read-only to host. |
 | `CSR_CQ_STRIDE` | Host | Program while queue is idle. |
 
-Queue base/depth/stride configuration writes while `queue_busy` is high are ignored and set `CSR_QUEUE_REJECT_STATUS.CONFIG_WRITE_BUSY_REJECT`.  `CSR_SQ_TAIL` and `CSR_CQ_HEAD` remain host-owned queue pointer updates and may be written while the queue controller is enabled.
+Queue base/depth/stride configuration writes while `queue_busy` is high are ignored and set `CSR_QUEUE_REJECT_STATUS.CONFIG_WRITE_BUSY_REJECT`.  `CSR_SQ_TAIL` and `CSR_CQ_HEAD` remain host-owned queue pointer updates and may be written while the queue controller is enabled or busy.  P21 constrains the hardware observation points for these live updates to command-boundary checks and CQ-full stall checks; active-command SQ/CQ addresses are taken from the command snapshot.
 
 #### 9.2.3 Queue Configuration Validation
 
@@ -1564,51 +1564,51 @@ csr_queue_stop_behavior_case102
 The canonical queue CSR map remains:
 
 ```text
-P19/P20 queue window: 0x580 - 0x5FC
+P19/P20/P21 queue window: 0x580 - 0x5FC
 ```
 
 
-### P21B Runtime Doorbell Policy Checkpoint
 
-P21B does not add a new CSR window and does not change the P19B-frozen queue CSR address map.  It freezes the runtime meaning of the existing host-owned queue pointer registers during an active queue service session.
+### P21G Runtime Doorbell / Live Queue Service Validation Checkpoint
 
-Canonical queue CSR window remains:
+P21G closes the runtime doorbell / live queue service milestone through targeted validation and full-regression integration.  P21 does not add a new CSR window and does not change the P19B-frozen queue CSR address map.  It validates the runtime meaning of existing host-owned queue pointers: `CSR_SQ_TAIL` as the submission doorbell and `CSR_CQ_HEAD` as completion-consumption recovery state.
+
+```text
+P21A: Runtime doorbell / live queue service spec                  PASS
+P21B: Queue controller live SQ_TAIL observation policy             PASS
+P21C: Append-while-active DMA queue smoke                         PASS
+P21D: Append-while-active mixed queue smoke                       PASS
+P21E: CQ full stall + host CQ_HEAD recovery during active service  PASS
+P21F: STOP_QUEUE during live service                              PASS
+P21G: Full regression integration                                 PASS
+P21H: Documentation closure                                       PASS
+
+Full regression after P21G:
+  TOTAL : 121
+  PASS  : 121
+  FAIL  : 0
+```
+
+Validated P21 queue representatives:
+
+```text
+csr_queue_runtime_doorbell_dma_case102
+csr_queue_runtime_doorbell_mixed_case102
+csr_queue_cq_full_live_recovery_case102
+csr_queue_stop_live_service_case102
+```
+
+The canonical queue CSR map remains:
 
 ```text
 P19/P20/P21 queue window: 0x580 - 0x5FC
 ```
 
-P21B policy for host-owned pointer writes:
+P21 freezes the following CSR ownership policy:
 
 ```text
-CSR_SQ_TAIL may be written by the host while queue_busy is high.
-CSR_CQ_HEAD may be written by the host while queue_busy is high.
-CSR_SQ_TAIL is treated as the runtime submission doorbell.
-CSR_CQ_HEAD is treated as the runtime completion-consumption doorbell.
+CSR_SQ_TAIL is host-owned and may be written while queue_busy=1.
+CSR_CQ_HEAD is host-owned and may be written while queue_busy=1.
+The queue controller observes these live host-owned values only at safe command-boundary or CQ-full stall checks.
+The active command continues to use its snapshotted SQ/CQ addresses and is not affected by host pointer writes during execution.
 ```
-
-The queue controller samples these host-owned pointer registers only at safe points:
-
-```text
-before accepting the first command after START_QUEUE
-after an active command reaches terminal queue status
-after SQ_HEAD advancement for the completed command
-after CQ_TAIL advancement for the committed completion record
-while stalled on CQ full, to detect host CQ_HEAD recovery
-```
-
-The active command context remains snapshot-based:
-
-```text
-active SQ entry address is computed from the SQ_HEAD snapshot
-active CQ entry address is computed from the CQ_TAIL snapshot
-host writes to SQ_TAIL or CQ_HEAD during execution do not change the active command address context
-```
-
-P21B does not change the register map, access types, or reset values.  It only documents the runtime doorbell semantics of the existing P19/P20 queue CSRs.
-
-```text
-P21A: Runtime doorbell / live queue service spec          PASS
-P21B: Queue controller live SQ_TAIL observation policy    PASS
-```
-

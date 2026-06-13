@@ -2309,6 +2309,64 @@ run_reg_item "csr_queue_stop_behavior_case102" {
 }
 
 # ============================================================
+# P21G: Runtime doorbell / live queue service regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P21 targeted validation into the full regression by
+# covering runtime SQ_TAIL doorbell observation, mixed command live
+# service, CQ-full command-boundary stall with live CQ_HEAD recovery,
+# and STOP_QUEUE behavior while the queue service is active.
+# Expected total after P21G: 121.
+# ============================================================
+run_reg_item "csr_queue_runtime_doorbell_dma_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_runtime_doorbell_mixed_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_cq_full_live_recovery_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_stop_live_service_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_stop_live_service_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"
