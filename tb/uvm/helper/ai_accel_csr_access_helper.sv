@@ -169,6 +169,23 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_QUEUE_CQ_OCCUPANCY     = 12'h5E0;
     localparam logic [11:0] CSR_QUEUE_CQ_SPACE         = 12'h5E4;
 
+
+    // ------------------------------------------------------------
+    // P22 Event notification / interrupt-lite CSR window
+    // ------------------------------------------------------------
+    localparam logic [11:0] CSR_EVENT_VERSION      = 12'h600;
+    localparam logic [11:0] CSR_EVENT_COMMAND      = 12'h604;
+    localparam logic [11:0] CSR_EVENT_STATUS       = 12'h608;
+    localparam logic [11:0] CSR_EVENT_PENDING      = 12'h60C;
+    localparam logic [11:0] CSR_EVENT_ENABLE       = 12'h610;
+    localparam logic [11:0] CSR_EVENT_CONTROL      = 12'h614;
+    localparam logic [11:0] CSR_EVENT_LAST_CAUSE   = 12'h618;
+    localparam logic [11:0] CSR_EVENT_COUNT        = 12'h61C;
+    localparam logic [11:0] CSR_EVENT_SNAPSHOT0    = 12'h620;
+    localparam logic [11:0] CSR_EVENT_SNAPSHOT1    = 12'h624;
+    localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
+    localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
+
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
     localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;

@@ -48,6 +48,8 @@ module ai_accel_subsys_csr_top #(
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
     parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
     parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
+    parameter logic [31:0] CSR_EVENT_VERSION_VALUE         = 32'h0001_0022,
+    parameter logic [31:0] CSR_EVENT_CONTROL_RESET         = 32'h0000_0004,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4,
     parameter int          P19_QUEUE_MAX_DEPTH          = 16
 )(
@@ -63,6 +65,9 @@ module ai_accel_subsys_csr_top #(
     // Host-visible control/status register port
     // ------------------------------------------------------------
     axi_lite_if.slave csr_if,
+
+    // P22 interrupt-lite event summary output.
+    output logic event_irq,
 
     // ------------------------------------------------------------
     // External AXI-MM scratchpad host port
@@ -1019,12 +1024,15 @@ module ai_accel_subsys_csr_top #(
         .CSR_DESC_FETCH_VERSION_VALUE(CSR_DESC_FETCH_VERSION_VALUE),
         .CSR_COMPLETION_WB_VERSION_VALUE(CSR_COMPLETION_WB_VERSION_VALUE),
         .CSR_QUEUE_VERSION_VALUE  (CSR_QUEUE_VERSION_VALUE),
+        .CSR_EVENT_VERSION_VALUE  (CSR_EVENT_VERSION_VALUE),
+        .CSR_EVENT_CONTROL_RESET  (CSR_EVENT_CONTROL_RESET),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
         .clk                    (dma_clk),
         .rst_n                  (dma_rst_n),
 
         .csr_if                 (csr_if),
+        .event_irq              (event_irq),
 
         .acc_start_pulse        (csr_acc_start_pulse),
         .gemm_input_stream_mode (csr_gemm_input_stream_mode),

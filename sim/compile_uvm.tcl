@@ -117,7 +117,16 @@ vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/uvm/pkg/ai_accel_su
 # Compile UVM tops
 # --------------------------------------------------------
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_uvm_top.sv
-vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_csr_regs_uvm_top.sv
+# The standalone CSR-register-block top depends on ai_accel_csr_regs_smoke_test.sv.
+# Some integrated subsystem-only branches do not carry that standalone unit test.
+# P22C uses ai_accel_subsys_csr_uvm_top, so keep compile robust by compiling the
+# standalone CSR-regs top only when its owned test file exists.
+if {[file exists "../tb/uvm/test/ai_accel_csr_regs_smoke_test.sv"]} {
+    vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_csr_regs_uvm_top.sv
+} else {
+    puts "INFO: Skipping ai_accel_csr_regs_uvm_top.sv because ../tb/uvm/test/ai_accel_csr_regs_smoke_test.sv was not found."
+    puts "INFO: Integrated subsystem CSR tests still compile through ai_accel_subsys_csr_uvm_top.sv."
+}
 vlog -sv -timescale 1ns/1ps +acc -L uvm12 {*}$INC_LIST ../tb/top/ai_accel_subsys_csr_uvm_top.sv
 
 

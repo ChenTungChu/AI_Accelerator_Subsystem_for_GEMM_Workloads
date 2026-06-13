@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, and P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, and P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model.
 
 ---
 
@@ -292,6 +292,7 @@ P16 slot CSR window            : 0x300 - 0x4FC
 P17 descriptor fetch window    : 0x500 - 0x53C
 P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
 ```
 
 | Offset | Name | Access | Description |
@@ -397,6 +398,7 @@ P16 slot CSR window            : 0x300 - 0x4FC
 P17 descriptor fetch window    : 0x500 - 0x53C
 P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
 ```
 
 P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the queue register map and bit definitions so P19C/P19D implementation can use stable constants.
@@ -504,6 +506,126 @@ CQ entry address = CSR_CQ_BASE_ADDR + (cq_index * CSR_CQ_STRIDE)
 P19B queue entries are fixed at 64 bytes.  The command fetch engine reads one 64-byte SQ entry.  The completion writeback path writes one existing P18 64-byte completion record into the selected CQ entry.
 
 ---
+
+
+### 9.3 P22 Event Notification / Interrupt-Lite CSR Register Window
+
+P22B freezes the software-visible event notification CSR window used by the P22 interrupt-lite layer.
+
+P19/P20/P21 use the `0x580 - 0x5FC` queue CSR window.  P22 adds a small event notification CSR window immediately after the queue window.
+
+Frozen P22B CSR base:
+
+```text
+P22 event notification CSR base = 0x600
+```
+
+Existing windows remain unchanged:
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
+```
+
+P22B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the event register map and bit definitions so later P22 RTL and UVM milestones can use stable constants.
+
+#### 9.3.1 Register Map
+
+| Offset | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0x600 | `CSR_EVENT_VERSION` | RO | `0x0001_0022` | Event notification / interrupt-lite version and feature ID. |
+| 0x604 | `CSR_EVENT_COMMAND` | W1P | 0 | Event pending clear, counter clear, snapshot clear, and software test-event command. |
+| 0x608 | `CSR_EVENT_STATUS` | RO | implementation | Live event / interrupt summary. |
+| 0x60C | `CSR_EVENT_PENDING` | RO/W1C | 0 | Sticky event pending bits. |
+| 0x610 | `CSR_EVENT_ENABLE` | RW | 0 | Per-event interrupt enable bits. Pending capture is independent of this mask. |
+| 0x614 | `CSR_EVENT_CONTROL` | RW | `0x0000_0004` | Global interrupt enable and event snapshot policy. |
+| 0x618 | `CSR_EVENT_LAST_CAUSE` | RO | 0 | Last captured event cause bit index and source class. |
+| 0x61C | `CSR_EVENT_COUNT` | RO | 0 | Number of captured event source firings. |
+| 0x620 | `CSR_EVENT_QUEUE_SNAPSHOT0` | RO | 0 | Queue pointer snapshot for the last event. |
+| 0x624 | `CSR_EVENT_QUEUE_SNAPSHOT1` | RO | 0 | Queue status / done / error snapshot for the last event. |
+| 0x628 | `CSR_EVENT_CQ_THRESHOLD` | RW | 0 | Optional CQ occupancy threshold for threshold event generation. 0 disables threshold events. |
+| 0x62C | `CSR_EVENT_IRQ_COUNT` | RO | 0 | Number of interrupt-eligible event assertions. |
+| 0x630 | `CSR_EVENT_RESERVED_630` | RO | 0 | Reserved. |
+| 0x634 | `CSR_EVENT_RESERVED_634` | RO | 0 | Reserved. |
+| 0x638 | `CSR_EVENT_RESERVED_638` | RO | 0 | Reserved. |
+| 0x63C | `CSR_EVENT_RESERVED_63C` | RO | 0 | Reserved. |
+
+#### 9.3.2 Event Register Ownership Summary
+
+| Register | Owner | Write Policy |
+|---|---|---|
+| `CSR_EVENT_COMMAND` | Host | Write-one-pulse commands. Reads return zero. |
+| `CSR_EVENT_STATUS` | Hardware | Read-only live event / interrupt summary. |
+| `CSR_EVENT_PENDING` | Hardware set / host W1C clear | Host clears sticky event bits after observing the event. |
+| `CSR_EVENT_ENABLE` | Host | May be programmed while the queue is idle or active. Controls interrupt generation only. |
+| `CSR_EVENT_CONTROL` | Host | May be programmed while the queue is idle or active. Controls global interrupt enable and snapshot policy. |
+| `CSR_EVENT_LAST_CAUSE` | Hardware | Debug snapshot of the last event source. |
+| `CSR_EVENT_COUNT` | Hardware | Incremented on captured event source firings. |
+| `CSR_EVENT_QUEUE_SNAPSHOT0/1` | Hardware | Debug snapshot when an event is captured. |
+| `CSR_EVENT_CQ_THRESHOLD` | Host | Optional threshold value. 0 disables threshold events. |
+| `CSR_EVENT_IRQ_COUNT` | Hardware | Incremented when a new event is interrupt-eligible. |
+
+P22 event pending capture is independent of interrupt enable.  Events are captured in `CSR_EVENT_PENDING` even when `CSR_EVENT_ENABLE` is zero or `CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE` is zero.
+
+#### 9.3.3 Event Source Summary
+
+P22B freezes these first event sources:
+
+```text
+QUEUE_COMMAND_COMPLETED_EVENT
+QUEUE_DRAINED_EVENT
+QUEUE_STOPPED_EVENT
+QUEUE_ERROR_EVENT
+CQ_NOT_EMPTY_EVENT
+CQ_THRESHOLD_EVENT
+CQ_FULL_STALL_EVENT
+CQ_SPACE_RECOVERED_EVENT
+RUNTIME_DOORBELL_EVENT
+RUNTIME_APPEND_CONSUMED_EVENT
+TEST_EVENT
+```
+
+The event layer is summary-only.  The CQ completion record remains the authoritative per-command completion detail.
+
+Queue command-completed event generation is tied to the existing P18/P19/P20/P21 completion-commit point:
+
+```text
+P18 completion record final commit succeeds
+    -> P19/P20/P21 advances CQ_TAIL
+    -> P22 sets QUEUE_COMMAND_COMPLETED_EVENT
+```
+
+Runtime doorbell events are tied to P21 live-service semantics:
+
+```text
+host writes CSR_SQ_TAIL while queue_busy=1
+    -> P22 may set RUNTIME_DOORBELL_EVENT
+hardware later accepts the appended command at a command boundary
+    -> P22 may set RUNTIME_APPEND_CONSUMED_EVENT
+```
+
+#### 9.3.4 Interrupt-Lite Output Policy
+
+The P22 notification layer may expose one wrapper-level interrupt output:
+
+```systemverilog
+output logic event_irq
+```
+
+Recommended first implementation:
+
+```text
+event_irq = CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE && |(CSR_EVENT_PENDING & CSR_EVENT_ENABLE)
+```
+
+In the default level mode, `event_irq` remains asserted until software clears all enabled pending bits.  Pulse mode is reserved by `CSR_EVENT_CONTROL.IRQ_PULSE_MODE` for later validation and can remain tied off in the first RTL checkpoint.
+
 
 ## 10. Register Bit Definitions
 
@@ -852,6 +974,205 @@ P19_FIRST_OPCODE         = 0x01  // fetch descriptor table and run recipe
 ```
 
 ---
+
+
+### 10.10 P22 Event Notification / Interrupt-Lite Registers
+
+The P22 event registers use the same AXI-Lite access policy and the same W1P/W1C definitions as the earlier CSR windows.
+
+#### 10.10.1 `CSR_EVENT_VERSION` at 0x600
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| [31:16] | `MAJOR` | RO | 16'h0001 | Event block major version. |
+| [15:8] | `MINOR` | RO | 8'h00 | Event block minor version. |
+| [7:0] | `FEATURE_ID` | RO | 8'h22 | P22 event notification / interrupt-lite feature ID. |
+
+Reset value:
+
+```text
+0x0001_0022
+```
+
+#### 10.10.2 `CSR_EVENT_COMMAND` at 0x604
+
+This is a write-one-pulse register.  Reads return zero.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `CLEAR_EVENT_PENDING` | W1P | Clear all sticky event pending bits. |
+| 1 | `FORCE_TEST_EVENT` | W1P | Generate a software-visible test event for CSR smoke validation. |
+| 8 | `CLEAR_EVENT_COUNTERS` | W1P | Clear event count, IRQ count, last cause, and queue snapshots. |
+| 31:9, 7:2 | `RSVD` | — | Reserved. |
+
+Unsupported command bits are ignored in the first P22 prototype.  They should not set queue-level errors because the event block is observational.
+
+#### 10.10.3 `CSR_EVENT_STATUS` at 0x608
+
+| Bit | Name | Access | Description |
+|---:|---|---|
+| 0 | `EVENT_PENDING_NONZERO` | RO | At least one event pending bit is set. |
+| 1 | `EVENT_IRQ_ELIGIBLE` | RO | At least one pending bit is enabled by `CSR_EVENT_ENABLE`. |
+| 2 | `EVENT_IRQ_OUT` | RO | Current value of the event interrupt-lite output. |
+| 3 | `GLOBAL_IRQ_ENABLE` | RO | Mirror of `CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE`. |
+| 4 | `QUEUE_EVENT_PENDING` | RO | Any queue-level event bit is pending. |
+| 5 | `RUNTIME_EVENT_PENDING` | RO | Any P21 runtime doorbell event bit is pending. |
+| 6 | `TEST_EVENT_PENDING` | RO | Test event pending bit is set. |
+| 31:7 | `RSVD` | RO | Reserved. |
+
+#### 10.10.4 `CSR_EVENT_PENDING` at 0x60C
+
+Sticky pending bits are set by hardware event sources and cleared by W1C writes or by `CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|
+| 0 | `QUEUE_COMMAND_COMPLETED_EVENT` | RO/W1C | A queue command reached completion commit and CQ_TAIL advanced. |
+| 1 | `QUEUE_DRAINED_EVENT` | RO/W1C | The queue reached SQ empty and reported drained. |
+| 2 | `QUEUE_STOPPED_EVENT` | RO/W1C | The queue stopped gracefully due to STOP_QUEUE or STOP_AFTER_THIS. |
+| 3 | `QUEUE_ERROR_EVENT` | RO/W1C | Queue-level error or reject status became sticky. |
+| 4 | `CQ_NOT_EMPTY_EVENT` | RO/W1C | CQ occupancy became non-zero at an event point. |
+| 5 | `CQ_THRESHOLD_EVENT` | RO/W1C | CQ occupancy reached or exceeded `CSR_EVENT_CQ_THRESHOLD` when threshold is non-zero. |
+| 6 | `CQ_FULL_STALL_EVENT` | RO/W1C | Queue stalled because CQ space was zero. |
+| 7 | `CQ_SPACE_RECOVERED_EVENT` | RO/W1C | Host advanced CQ_HEAD and CQ-full stall became recoverable. |
+| 8 | `RUNTIME_DOORBELL_EVENT` | RO/W1C | Host updated SQ_TAIL while queue_busy was high. |
+| 9 | `RUNTIME_APPEND_CONSUMED_EVENT` | RO/W1C | A runtime-appended SQ command was accepted at a command boundary. |
+| 10 | `TEST_EVENT` | RO/W1C | Software-generated test event. |
+| 31:11 | `RSVD` | RO/W1C | Reserved. |
+
+Reserved pending bits should read zero.  W1C writes to reserved bits are ignored.
+
+#### 10.10.5 `CSR_EVENT_ENABLE` at 0x610
+
+`CSR_EVENT_ENABLE` uses the same bit positions as `CSR_EVENT_PENDING`.  A set enable bit allows the corresponding pending bit to contribute to `event_irq` when `GLOBAL_IRQ_ENABLE=1`.
+
+| Bit | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `QUEUE_COMMAND_COMPLETED_EVENT_EN` | RW | 0 | Enable command-completed event interrupt contribution. |
+| 1 | `QUEUE_DRAINED_EVENT_EN` | RW | 0 | Enable drained event interrupt contribution. |
+| 2 | `QUEUE_STOPPED_EVENT_EN` | RW | 0 | Enable stopped event interrupt contribution. |
+| 3 | `QUEUE_ERROR_EVENT_EN` | RW | 0 | Enable queue-error event interrupt contribution. |
+| 4 | `CQ_NOT_EMPTY_EVENT_EN` | RW | 0 | Enable CQ-not-empty event interrupt contribution. |
+| 5 | `CQ_THRESHOLD_EVENT_EN` | RW | 0 | Enable CQ-threshold event interrupt contribution. |
+| 6 | `CQ_FULL_STALL_EVENT_EN` | RW | 0 | Enable CQ-full-stall event interrupt contribution. |
+| 7 | `CQ_SPACE_RECOVERED_EVENT_EN` | RW | 0 | Enable CQ-space-recovered event interrupt contribution. |
+| 8 | `RUNTIME_DOORBELL_EVENT_EN` | RW | 0 | Enable runtime-doorbell event interrupt contribution. |
+| 9 | `RUNTIME_APPEND_CONSUMED_EVENT_EN` | RW | 0 | Enable runtime-append-consumed event interrupt contribution. |
+| 10 | `TEST_EVENT_EN` | RW | 0 | Enable test-event interrupt contribution. |
+| 31:11 | `RSVD` | RO | 0 | Reserved. |
+
+Pending bits are captured even when their enable bits are zero.
+
+#### 10.10.6 `CSR_EVENT_CONTROL` at 0x614
+
+| Bit | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `GLOBAL_IRQ_ENABLE` | RW | 0 | Enable the shared event interrupt-lite output. |
+| 1 | `IRQ_PULSE_MODE` | RW | 0 | 0 = level while enabled pending is non-zero. 1 = one-cycle pulse on new enabled event. Pulse mode may remain reserved in first RTL. |
+| 2 | `CAPTURE_QUEUE_SNAPSHOTS` | RW | 1 | Capture queue pointer/status snapshots when an event fires. |
+| 3 | `COUNT_TEST_EVENTS` | RW | 0 | Include software-forced test events in `CSR_EVENT_COUNT`. |
+| 31:4 | `RSVD` | RO | 0 | Reserved. |
+
+Reset value:
+
+```text
+0x0000_0004
+```
+
+#### 10.10.7 `CSR_EVENT_LAST_CAUSE` at 0x618
+
+Recommended encoding:
+
+```text
+[7:0]   last event bit index
+[15:8]  event source class
+[23:16] queue FSM state snapshot, if available
+[31:24] reserved
+```
+
+Recommended event source class values:
+
+| Value | Name |
+|---:|---|
+| 0x00 | `EVENT_SRC_NONE` |
+| 0x01 | `EVENT_SRC_QUEUE_COMPLETION` |
+| 0x02 | `EVENT_SRC_QUEUE_TERMINAL` |
+| 0x03 | `EVENT_SRC_QUEUE_ERROR` |
+| 0x04 | `EVENT_SRC_CQ_BACKPRESSURE` |
+| 0x05 | `EVENT_SRC_RUNTIME_DOORBELL` |
+| 0x06 | `EVENT_SRC_SOFTWARE_TEST` |
+
+#### 10.10.8 `CSR_EVENT_COUNT` at 0x61C
+
+`CSR_EVENT_COUNT` increments whenever an event source sets at least one pending bit.  It is cleared by `CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS`.
+
+If multiple event bits are generated by the same source in one cycle, the first implementation may count that as one event-source firing.
+
+#### 10.10.9 `CSR_EVENT_QUEUE_SNAPSHOT0` at 0x620
+
+Recommended encoding:
+
+```text
+[7:0]    SQ_HEAD low byte
+[15:8]   SQ_TAIL low byte
+[23:16]  CQ_HEAD low byte
+[31:24]  CQ_TAIL low byte
+```
+
+A later implementation may widen or reinterpret the snapshot fields without changing the CSR address.
+
+#### 10.10.10 `CSR_EVENT_QUEUE_SNAPSHOT1` at 0x624
+
+Recommended encoding:
+
+```text
+[7:0]    CSR_QUEUE_STATUS[7:0]
+[15:8]   CSR_QUEUE_DONE_STATUS[7:0]
+[23:16]  CSR_QUEUE_ERROR_STATUS[7:0]
+[31:24]  CSR_QUEUE_REJECT_STATUS[7:0]
+```
+
+#### 10.10.11 `CSR_EVENT_CQ_THRESHOLD` at 0x628
+
+`CSR_EVENT_CQ_THRESHOLD` is an optional CQ occupancy threshold.
+
+```text
+0 disables threshold event generation
+non-zero threshold generates CQ_THRESHOLD_EVENT when CQ occupancy is greater than or equal to the programmed value at an event sampling point
+```
+
+The threshold is a debug/notification policy field only.  It does not affect CQ full stall behavior.
+
+#### 10.10.12 `CSR_EVENT_IRQ_COUNT` at 0x62C
+
+`CSR_EVENT_IRQ_COUNT` increments when a newly captured event is interrupt-eligible:
+
+```text
+GLOBAL_IRQ_ENABLE=1
+and at least one newly captured event bit is enabled in CSR_EVENT_ENABLE
+```
+
+It is cleared by `CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS`.
+
+#### 10.10.13 P22B Frozen Constants
+
+```text
+CSR_EVENT_BASE_ADDR          = 0x600
+CSR_EVENT_WINDOW_LAST        = 0x63C
+CSR_EVENT_VERSION_RESET      = 0x0001_0022
+CSR_EVENT_CONTROL_RESET      = 0x0000_0004
+P22_EVENT_QUEUE_COMPLETED    = 0
+P22_EVENT_QUEUE_DRAINED      = 1
+P22_EVENT_QUEUE_STOPPED      = 2
+P22_EVENT_QUEUE_ERROR        = 3
+P22_EVENT_CQ_NOT_EMPTY       = 4
+P22_EVENT_CQ_THRESHOLD       = 5
+P22_EVENT_CQ_FULL_STALL      = 6
+P22_EVENT_CQ_SPACE_RECOVERED = 7
+P22_EVENT_RUNTIME_DOORBELL   = 8
+P22_EVENT_RUNTIME_CONSUMED   = 9
+P22_EVENT_TEST               = 10
+```
+
 
 ## 11. Configuration Register Defaults
 
@@ -1612,3 +1933,29 @@ CSR_CQ_HEAD is host-owned and may be written while queue_busy=1.
 The queue controller observes these live host-owned values only at safe command-boundary or CQ-full stall checks.
 The active command continues to use its snapshotted SQ/CQ addresses and is not affected by host pointer writes during execution.
 ```
+
+
+### P22B Event Notification / Interrupt-Lite CSR Map Checkpoint
+
+P22A/P22B define the lightweight event notification / interrupt-lite layer above the validated P21 live queue service model.  P22 does not change the P19/P20/P21 queue CSR window, the P19 SQ command format, or the P18 completion record format.  It adds a small event CSR window that captures queue-level completion, drained, stopped, error, CQ backpressure, and runtime-doorbell events.
+
+```text
+P22A: Event notification / interrupt-lite prototype spec          PASS
+P22B: Event CSR register map freeze                               PASS
+```
+
+P22B CSR window:
+
+```text
+0x600 - 0x63C
+```
+
+P22A/P22B are documentation checkpoints only.  They do not add RTL, UVM tests, Tcl scripts, README updates, regression-list items, or full-regression count changes.
+
+The canonical event CSR map is:
+
+```text
+P22 event notification window: 0x600 - 0x63C
+```
+
+The event layer is summary-only.  The CQ completion record remains the authoritative per-command completion detail.

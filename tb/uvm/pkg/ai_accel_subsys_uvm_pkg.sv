@@ -204,6 +204,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_stop_live_service_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P22 Event notification / interrupt-lite integrated smoke
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_event_csr_smoke_test.sv"
+
 endpackage
 
 `endif

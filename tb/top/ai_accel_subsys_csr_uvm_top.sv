@@ -513,6 +513,8 @@ module ai_accel_subsys_csr_uvm_top;
         .rst_n (dma_rst_n)
     );
 
+    logic event_irq;
+
     // ============================================================
     // UVM control/config interface
     // ============================================================
@@ -534,6 +536,12 @@ module ai_accel_subsys_csr_uvm_top;
 
     // ============================================================
     // Completion-writeback destination injection control interface
+    //
+    // Kept in the integrated CSR UVM top because the shared UVM
+    // package includes P18G completion-writeback error tests that
+    // declare a virtual comp_wb_inject_if.  Questa resolves virtual
+    // interface types at elaboration even when the current UVM_TEST
+    // is unrelated to completion writeback.
     // ============================================================
     comp_wb_inject_if comp_wb_inject_vif (
         .clk (dma_clk)
@@ -1556,6 +1564,7 @@ module ai_accel_subsys_csr_uvm_top;
         .core_rst_n           (core_rst_n),
 
         .csr_if               (csr_if),
+        .event_irq            (event_irq),
         .axi0_if              (axi0_if),
 
         // DMA source AXI-MM read master port

@@ -15,6 +15,8 @@ module ai_accel_csr_regs #(
     parameter logic [31:0] CSR_DESC_FETCH_VERSION_VALUE = 32'h0001_0017,
     parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
     parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
+    parameter logic [31:0] CSR_EVENT_VERSION_VALUE         = 32'h0001_0022,
+    parameter logic [31:0] CSR_EVENT_CONTROL_RESET         = 32'h0000_0004,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
     input  logic clk,
@@ -323,7 +325,12 @@ module ai_accel_csr_regs #(
     // ------------------------------------------------------------
     input  logic [31:0] gemm_perf_busy_cycles,
     input  logic [31:0] gemm_perf_mac_count,
-    input  logic [31:0] gemm_perf_output_count
+    input  logic [31:0] gemm_perf_output_count,
+
+    // ------------------------------------------------------------
+    // P22 interrupt-lite event summary output
+    // ------------------------------------------------------------
+    output logic event_irq
 );
 
     localparam int STRB_WIDTH = CSR_DATA_WIDTH / 8;
@@ -524,6 +531,68 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5F4_ADDR     = 12'h5F4;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5F8_ADDR     = 12'h5F8;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_QUEUE_RESERVED_5FC_ADDR     = 12'h5FC;
+
+
+    // ------------------------------------------------------------
+    // P22 event notification / interrupt-lite CSR window
+    // ------------------------------------------------------------
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_VERSION_ADDR      = 12'h600;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_COMMAND_ADDR      = 12'h604;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_STATUS_ADDR       = 12'h608;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_PENDING_ADDR      = 12'h60C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_ENABLE_ADDR       = 12'h610;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_CONTROL_ADDR      = 12'h614;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_LAST_CAUSE_ADDR   = 12'h618;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_COUNT_ADDR        = 12'h61C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_SNAPSHOT0_ADDR    = 12'h620;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_SNAPSHOT1_ADDR    = 12'h624;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_CQ_THRESHOLD_ADDR = 12'h628;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_IRQ_COUNT_ADDR    = 12'h62C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_630_ADDR = 12'h630;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_634_ADDR = 12'h634;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_638_ADDR = 12'h638;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_63C_ADDR = 12'h63C;
+
+    // ------------------------------------------------------------
+    // P22 event notification constants
+    // ------------------------------------------------------------
+    localparam int EVENT_WIDTH = 11;
+
+    // CSR_EVENT_COMMAND bits
+    localparam int EVENT_CMD_CLEAR_PENDING  = 0;
+    localparam int EVENT_CMD_FORCE_TEST     = 1;
+    localparam int EVENT_CMD_CLEAR_COUNTERS = 8;
+
+    // CSR_EVENT_CONTROL bits
+    localparam int EVENT_CONTROL_GLOBAL_IRQ_ENABLE = 0;
+    localparam int EVENT_CONTROL_IRQ_PULSE_MODE    = 1; // Reserved in P22C; read/write only.
+    localparam int EVENT_CONTROL_CAPTURE_SNAPSHOT  = 2;
+    localparam int EVENT_CONTROL_COUNT_TEST_EVENTS = 3;
+
+    // Event source bits frozen by P22B
+    localparam int P22_EVENT_QUEUE_COMPLETED    = 0;
+    localparam int P22_EVENT_QUEUE_DRAINED      = 1;
+    localparam int P22_EVENT_QUEUE_STOPPED      = 2;
+    localparam int P22_EVENT_QUEUE_ERROR        = 3;
+    localparam int P22_EVENT_CQ_NOT_EMPTY       = 4;
+    localparam int P22_EVENT_CQ_THRESHOLD       = 5;
+    localparam int P22_EVENT_CQ_FULL_STALL      = 6;
+    localparam int P22_EVENT_CQ_SPACE_RECOVERED = 7;
+    localparam int P22_EVENT_RUNTIME_DOORBELL   = 8;
+    localparam int P22_EVENT_RUNTIME_CONSUMED   = 9;
+    localparam int P22_EVENT_TEST               = 10;
+
+    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_07FF;
+    localparam logic [31:0] EVENT_CONTROL_WR_MASK = 32'h0000_000F;
+
+    // Source-class values used in CSR_EVENT_LAST_CAUSE[15:8]
+    localparam logic [7:0] EVENT_SRC_NONE             = 8'h00;
+    localparam logic [7:0] EVENT_SRC_QUEUE_COMPLETION = 8'h01;
+    localparam logic [7:0] EVENT_SRC_QUEUE_TERMINAL   = 8'h02;
+    localparam logic [7:0] EVENT_SRC_QUEUE_ERROR      = 8'h03;
+    localparam logic [7:0] EVENT_SRC_CQ_BACKPRESSURE  = 8'h04;
+    localparam logic [7:0] EVENT_SRC_RUNTIME_DOORBELL = 8'h05;
+    localparam logic [7:0] EVENT_SRC_SOFTWARE_TEST    = 8'h06;
 
     // ------------------------------------------------------------
     // Command bits
@@ -841,6 +910,34 @@ module ai_accel_csr_regs #(
     logic [31:0] queue_cq_tail_q;
     logic [31:0] queue_cq_stride_q;
     logic [31:0] queue_extra_error_status_q;
+
+
+    logic [31:0] event_pending_q;
+    logic [31:0] event_enable_q;
+    logic [31:0] event_control_q;
+    logic [31:0] event_last_cause_q;
+    logic [31:0] event_count_q;
+    logic [31:0] event_snapshot0_q;
+    logic [31:0] event_snapshot1_q;
+    logic [31:0] event_cq_threshold_q;
+    logic [31:0] event_irq_count_q;
+
+    logic [31:0] event_status_read_data;
+    logic [31:0] event_command_masked;
+    logic [31:0] event_source_mask;
+    logic [31:0] event_clear_mask;
+    logic        event_clear_pending_cmd;
+    logic        event_clear_counters_cmd;
+    logic        event_force_test_cmd;
+    logic        event_threshold_hit;
+    logic        event_countable;
+    logic        event_irq_eligible_new;
+    logic [31:0] event_snapshot0_comb;
+    logic [31:0] event_snapshot1_comb;
+
+    logic        queue_done_stopped_d_q;
+    logic        queue_cq_full_stall_d_q;
+    logic        queue_cq_space_nonzero_d_q;
 
     // ------------------------------------------------------------
     // Internal command decode helpers
@@ -1313,7 +1410,24 @@ CSR_QUEUE_VERSION_ADDR,
             CSR_QUEUE_RESERVED_5F0_ADDR,
             CSR_QUEUE_RESERVED_5F4_ADDR,
             CSR_QUEUE_RESERVED_5F8_ADDR,
-            CSR_QUEUE_RESERVED_5FC_ADDR: begin
+            CSR_QUEUE_RESERVED_5FC_ADDR,
+
+            CSR_EVENT_VERSION_ADDR,
+            CSR_EVENT_COMMAND_ADDR,
+            CSR_EVENT_STATUS_ADDR,
+            CSR_EVENT_PENDING_ADDR,
+            CSR_EVENT_ENABLE_ADDR,
+            CSR_EVENT_CONTROL_ADDR,
+            CSR_EVENT_LAST_CAUSE_ADDR,
+            CSR_EVENT_COUNT_ADDR,
+            CSR_EVENT_SNAPSHOT0_ADDR,
+            CSR_EVENT_SNAPSHOT1_ADDR,
+            CSR_EVENT_CQ_THRESHOLD_ADDR,
+            CSR_EVENT_IRQ_COUNT_ADDR,
+            CSR_EVENT_RESERVED_630_ADDR,
+            CSR_EVENT_RESERVED_634_ADDR,
+            CSR_EVENT_RESERVED_638_ADDR,
+            CSR_EVENT_RESERVED_63C_ADDR: begin
                 return 1'b1;
             end
 
@@ -1830,6 +1944,56 @@ CSR_QUEUE_VERSION_ADDR,
                 return queue_cq_space;
             end
 
+
+
+            CSR_EVENT_VERSION_ADDR: begin
+                return CSR_EVENT_VERSION_VALUE;
+            end
+
+            CSR_EVENT_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_EVENT_STATUS_ADDR: begin
+                return event_status_read_data;
+            end
+
+            CSR_EVENT_PENDING_ADDR: begin
+                return event_pending_q & EVENT_VALID_MASK;
+            end
+
+            CSR_EVENT_ENABLE_ADDR: begin
+                return event_enable_q & EVENT_VALID_MASK;
+            end
+
+            CSR_EVENT_CONTROL_ADDR: begin
+                return event_control_q & EVENT_CONTROL_WR_MASK;
+            end
+
+            CSR_EVENT_LAST_CAUSE_ADDR: begin
+                return event_last_cause_q;
+            end
+
+            CSR_EVENT_COUNT_ADDR: begin
+                return event_count_q;
+            end
+
+            CSR_EVENT_SNAPSHOT0_ADDR: begin
+                return event_snapshot0_q;
+            end
+
+            CSR_EVENT_SNAPSHOT1_ADDR: begin
+                return event_snapshot1_q;
+            end
+
+            CSR_EVENT_CQ_THRESHOLD_ADDR: begin
+                return event_cq_threshold_q;
+            end
+
+            CSR_EVENT_IRQ_COUNT_ADDR: begin
+                return event_irq_count_q;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -1838,6 +2002,71 @@ CSR_QUEUE_VERSION_ADDR,
                 return 32'h0000_0000;
             end
         endcase
+    end
+    endfunction
+
+
+
+    function automatic logic [7:0] first_event_index(input logic [31:0] mask);
+        logic found;
+    begin
+        found = 1'b0;
+        first_event_index = 8'hFF;
+        for (int unsigned i = 0; i < 32; i++) begin
+            if (!found && mask[i]) begin
+                first_event_index = i;
+                found = 1'b1;
+            end
+        end
+    end
+    endfunction
+
+    function automatic logic [7:0] event_source_class(input logic [7:0] event_index);
+    begin
+        unique case (event_index)
+            P22_EVENT_QUEUE_COMPLETED: begin
+                event_source_class = EVENT_SRC_QUEUE_COMPLETION;
+            end
+
+            P22_EVENT_QUEUE_DRAINED,
+            P22_EVENT_QUEUE_STOPPED: begin
+                event_source_class = EVENT_SRC_QUEUE_TERMINAL;
+            end
+
+            P22_EVENT_QUEUE_ERROR: begin
+                event_source_class = EVENT_SRC_QUEUE_ERROR;
+            end
+
+            P22_EVENT_CQ_NOT_EMPTY,
+            P22_EVENT_CQ_THRESHOLD,
+            P22_EVENT_CQ_FULL_STALL,
+            P22_EVENT_CQ_SPACE_RECOVERED: begin
+                event_source_class = EVENT_SRC_CQ_BACKPRESSURE;
+            end
+
+            P22_EVENT_RUNTIME_DOORBELL,
+            P22_EVENT_RUNTIME_CONSUMED: begin
+                event_source_class = EVENT_SRC_RUNTIME_DOORBELL;
+            end
+
+            P22_EVENT_TEST: begin
+                event_source_class = EVENT_SRC_SOFTWARE_TEST;
+            end
+
+            default: begin
+                event_source_class = EVENT_SRC_NONE;
+            end
+        endcase
+    end
+    endfunction
+
+    function automatic logic [31:0] build_event_last_cause(input logic [31:0] event_mask);
+        logic [7:0] idx;
+        logic [7:0] src_class;
+    begin
+        idx       = first_event_index(event_mask);
+        src_class = event_source_class(idx);
+        build_event_last_cause = {8'h00, event_snapshot1_comb[7:0], src_class, idx};
     end
     endfunction
 
@@ -1969,6 +2198,85 @@ CSR_QUEUE_VERSION_ADDR,
         queue_status_read_data[10] = job_busy;
         queue_status_read_data[11] = micro_op_busy;
         queue_status_read_data[16] = 1'b1;
+
+
+        // P22 event-source composition.  P22C validates the event CSR
+        // window with the software-generated TEST_EVENT.  Queue-derived
+        // pulses are already wired here so later P22D/P22E can validate
+        // real queue completion / drained / error / CQ-backpressure events
+        // without adding another CSR block or standalone top.
+        event_command_masked = write_data & strobe_to_mask(write_strb);
+
+        event_clear_pending_cmd = write_apply && write_addr_valid &&
+                                  (write_addr == CSR_EVENT_COMMAND_ADDR) &&
+                                  (|write_strb) &&
+                                  event_command_masked[EVENT_CMD_CLEAR_PENDING];
+
+        event_clear_counters_cmd = write_apply && write_addr_valid &&
+                                   (write_addr == CSR_EVENT_COMMAND_ADDR) &&
+                                   (|write_strb) &&
+                                   event_command_masked[EVENT_CMD_CLEAR_COUNTERS];
+
+        event_force_test_cmd = write_apply && write_addr_valid &&
+                               (write_addr == CSR_EVENT_COMMAND_ADDR) &&
+                               (|write_strb) &&
+                               event_command_masked[EVENT_CMD_FORCE_TEST];
+
+        event_snapshot0_comb = {queue_state[7:0],
+                                queue_current_index[7:0],
+                                queue_sq_head_q[7:0],
+                                queue_sq_tail_q[7:0]};
+        event_snapshot1_comb = {queue_cq_head_q[7:0],
+                                queue_cq_tail_q[7:0],
+                                queue_cq_space[7:0],
+                                queue_cq_occupancy[7:0]};
+
+        event_source_mask = 32'h0000_0000;
+        event_source_mask[P22_EVENT_QUEUE_COMPLETED]    = queue_completion_commit_pulse;
+        event_source_mask[P22_EVENT_QUEUE_DRAINED]      = queue_drained_pulse;
+        event_source_mask[P22_EVENT_QUEUE_STOPPED]      = queue_done_status[3] & ~queue_done_stopped_d_q;
+        event_source_mask[P22_EVENT_QUEUE_ERROR]        = queue_error_pulse | queue_completion_error_pulse;
+        event_source_mask[P22_EVENT_CQ_NOT_EMPTY]       = queue_completion_commit_pulse;
+        event_source_mask[P22_EVENT_CQ_FULL_STALL]      = queue_cq_full_stall & ~queue_cq_full_stall_d_q;
+        event_source_mask[P22_EVENT_CQ_SPACE_RECOVERED] = queue_busy & (queue_cq_space != 32'h0000_0000) &
+                                                          ~queue_cq_space_nonzero_d_q;
+        event_source_mask[P22_EVENT_RUNTIME_DOORBELL]   = 1'b0;
+        event_source_mask[P22_EVENT_RUNTIME_CONSUMED]   = 1'b0;
+        event_source_mask[P22_EVENT_TEST]               = event_force_test_cmd;
+
+        event_threshold_hit = (event_cq_threshold_q != 32'h0000_0000) &&
+                              (queue_cq_occupancy >= event_cq_threshold_q) &&
+                              (|(event_source_mask & ~(32'h1 << P22_EVENT_CQ_THRESHOLD)));
+        if (event_threshold_hit) begin
+            event_source_mask[P22_EVENT_CQ_THRESHOLD] = 1'b1;
+        end
+
+        event_source_mask = event_source_mask & EVENT_VALID_MASK;
+
+        event_clear_mask = 32'h0000_0000;
+        if (event_clear_pending_cmd) begin
+            event_clear_mask = EVENT_VALID_MASK;
+        end
+        if (write_apply && write_addr_valid &&
+            (write_addr == CSR_EVENT_PENDING_ADDR) && (|write_strb)) begin
+            event_clear_mask = event_clear_mask | (event_command_masked & EVENT_VALID_MASK);
+        end
+
+        event_countable = |(event_source_mask &
+                            ~(event_control_q[EVENT_CONTROL_COUNT_TEST_EVENTS] ?
+                              32'h0000_0000 : (32'h1 << P22_EVENT_TEST)));
+
+        event_irq_eligible_new = event_control_q[EVENT_CONTROL_GLOBAL_IRQ_ENABLE] &&
+                                 |(event_source_mask & event_enable_q & EVENT_VALID_MASK);
+
+        event_status_read_data = 32'h0000_0000;
+        event_status_read_data[0] = |(event_pending_q & EVENT_VALID_MASK);
+        event_status_read_data[1] = |(event_pending_q & event_enable_q & EVENT_VALID_MASK);
+        event_status_read_data[2] = event_irq;
+        event_status_read_data[3] = event_control_q[EVENT_CONTROL_GLOBAL_IRQ_ENABLE];
+        event_status_read_data[4] = |(event_pending_q[7:0]);
+        event_status_read_data[5] = |(event_pending_q[P22_EVENT_RUNTIME_CONSUMED:P22_EVENT_RUNTIME_DOORBELL]);
+        event_status_read_data[6] = event_pending_q[P22_EVENT_TEST];
     end
 
     // ------------------------------------------------------------
@@ -1983,6 +2291,9 @@ CSR_QUEUE_VERSION_ADDR,
     assign csr_if.rvalid  = rvalid_q;
     assign csr_if.rdata   = rdata_q;
     assign csr_if.rresp   = rresp_q;
+
+    assign event_irq = event_control_q[EVENT_CONTROL_GLOBAL_IRQ_ENABLE] &&
+                       |(event_pending_q & event_enable_q & EVENT_VALID_MASK);
 
     always_comb begin
         aw_fire = csr_if.awvalid && csr_if.awready;
@@ -2183,6 +2494,19 @@ CSR_QUEUE_VERSION_ADDR,
             queue_cq_stride_q    <= 32'h0000_0040;
             queue_extra_error_status_q <= 32'h0000_0000;
 
+            event_pending_q      <= 32'h0000_0000;
+            event_enable_q       <= 32'h0000_0000;
+            event_control_q      <= CSR_EVENT_CONTROL_RESET & EVENT_CONTROL_WR_MASK;
+            event_last_cause_q   <= 32'h0000_0000;
+            event_count_q        <= 32'h0000_0000;
+            event_snapshot0_q    <= 32'h0000_0000;
+            event_snapshot1_q    <= 32'h0000_0000;
+            event_cq_threshold_q <= 32'h0000_0000;
+            event_irq_count_q    <= 32'h0000_0000;
+            queue_done_stopped_d_q      <= 1'b0;
+            queue_cq_full_stall_d_q     <= 1'b0;
+            queue_cq_space_nonzero_d_q  <= 1'b0;
+
             for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
                 recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
                 recipe_slot_base_addr_a_q[slot_i]      <= 32'h0000_0000;
@@ -2263,6 +2587,38 @@ CSR_QUEUE_VERSION_ADDR,
             queue_stop_pulse        <= 1'b0;
             queue_clear_done_pulse  <= 1'b0;
             queue_clear_error_pulse <= 1'b0;
+
+
+            queue_done_stopped_d_q     <= queue_done_status[3];
+            queue_cq_full_stall_d_q    <= queue_cq_full_stall;
+            queue_cq_space_nonzero_d_q <= (queue_cq_space != 32'h0000_0000);
+
+            event_pending_q <= (event_pending_q & ~event_clear_mask) | event_source_mask;
+
+            if (event_clear_counters_cmd) begin
+                event_last_cause_q <= 32'h0000_0000;
+                event_count_q      <= 32'h0000_0000;
+                event_snapshot0_q  <= 32'h0000_0000;
+                event_snapshot1_q  <= 32'h0000_0000;
+                event_irq_count_q  <= 32'h0000_0000;
+            end
+            else begin
+                if (|event_source_mask) begin
+                    event_last_cause_q <= build_event_last_cause(event_source_mask);
+                    if (event_control_q[EVENT_CONTROL_CAPTURE_SNAPSHOT]) begin
+                        event_snapshot0_q <= event_snapshot0_comb;
+                        event_snapshot1_q <= event_snapshot1_comb;
+                    end
+                end
+
+                if (event_countable) begin
+                    event_count_q <= event_count_q + 32'd1;
+                end
+
+                if (event_irq_eligible_new) begin
+                    event_irq_count_q <= event_irq_count_q + 32'd1;
+                end
+            end
 
             if (queue_completion_commit_pulse) begin
                 queue_sq_head_q <= queue_sq_head_q + 32'd1;
@@ -2909,6 +3265,29 @@ CSR_QUEUE_VERSION_ADDR,
 
                         CSR_QUEUE_CQ_STRIDE_ADDR: begin
                             queue_cq_stride_q <= apply_wstrb32(queue_cq_stride_q, write_data, write_strb);
+                        end
+
+
+                        CSR_EVENT_COMMAND_ADDR: begin
+                            // W1P commands are handled by event_clear_* / event_force_test_cmd.
+                        end
+
+                        CSR_EVENT_PENDING_ADDR: begin
+                            // W1C clear is handled by event_clear_mask.
+                        end
+
+                        CSR_EVENT_ENABLE_ADDR: begin
+                            event_enable_q <= apply_wstrb32(event_enable_q, write_data, write_strb) &
+                                              EVENT_VALID_MASK;
+                        end
+
+                        CSR_EVENT_CONTROL_ADDR: begin
+                            event_control_q <= apply_wstrb32(event_control_q, write_data, write_strb) &
+                                               EVENT_CONTROL_WR_MASK;
+                        end
+
+                        CSR_EVENT_CQ_THRESHOLD_ADDR: begin
+                            event_cq_threshold_q <= apply_wstrb32(event_cq_threshold_q, write_data, write_strb);
                         end
 
                         CSR_DONE_STATUS_ADDR: begin
