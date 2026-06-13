@@ -201,6 +201,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test.sv"
 
 endpackage
 
