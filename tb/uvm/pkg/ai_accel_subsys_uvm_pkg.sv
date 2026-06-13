@@ -196,6 +196,12 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_queue_wraparound_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_stop_behavior_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P21 runtime doorbell / live queue service tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test.sv"
+
 endpackage
 
 `endif

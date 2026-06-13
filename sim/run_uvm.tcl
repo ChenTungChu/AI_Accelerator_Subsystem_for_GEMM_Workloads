@@ -95,6 +95,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_queue_mixed_dma_ds_c_rmw_smoke_test \
     ai_accel_subsys_csr_queue_wraparound_smoke_test \
     ai_accel_subsys_csr_queue_stop_behavior_smoke_test \
+    ai_accel_subsys_csr_queue_runtime_doorbell_dma_smoke_test \
+    ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test \
 ]
 
 # --------------------------------------------------
