@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, and P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, and P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses.
 
 ---
 
@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 125/125 after P22G event notification / interrupt-lite closure
+Full UVM regression baseline passing 129/129 after P23G event-driven host runtime closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -2009,4 +2009,38 @@ The canonical event CSR map remains:
 ```text
 P22 event notification window: 0x600 - 0x63C
 ```
+
+### P23G Event-Driven Host Runtime CSR Usage Checkpoint
+
+P23 does not introduce a new CSR window, register offset, access type, reset value, or bit definition.
+
+P23 reuses the existing CSR windows:
+
+```text
+P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
+```
+
+Validated P23 CSR usage:
+
+```text
+host initializes SQ/CQ base, depth, stride, SQ_TAIL, and CQ_HEAD through the P19 queue window
+host starts or stops queue service through CSR_QUEUE_COMMAND
+host publishes runtime appends through CSR_SQ_TAIL
+host publishes CQ consumption / CQ-full recovery through CSR_CQ_HEAD
+host arms event notification through CSR_EVENT_ENABLE and CSR_EVENT_CONTROL
+host waits on EVENT_STATUS / event_irq semantics
+host W1C-clears handled CSR_EVENT_PENDING bits
+host observes queue error, stopped, drained, and completion events through the existing event pending bits
+```
+
+Validated P23 full-regression result:
+
+```text
+TOTAL : 129
+PASS  : 129
+FAIL  : 0
+```
+
+The canonical CSR map remains unchanged from P22.  P23 is a UVM/helper and validation milestone for the software usage pattern of the existing queue and event CSR windows.
 

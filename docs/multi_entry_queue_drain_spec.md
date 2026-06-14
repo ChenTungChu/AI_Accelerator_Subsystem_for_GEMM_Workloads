@@ -893,56 +893,26 @@ PASS  : 117
 FAIL  : 0
 ```
 
+## 26. P23 Event-Driven Queue-Drain Validation
 
----
+P23 reuses the P20 multi-entry in-order drain model from an event-driven host-runtime perspective.
 
-## 26. Relationship to P21 Runtime Doorbell / Live Queue Service
-
-P21 extends the P20 queue drain model from a batch-drain policy into a live-service policy.
-
-P20 batch-drain model:
+Additional validation from P23:
 
 ```text
-host writes all visible SQ entries before START_QUEUE
-hardware drains those visible entries until SQ empty / stop / error
-if the controller reaches SQ empty, queue_busy returns to 0
+P23D validates two-command in-order drain through a host runtime that waits on P22 event notification before consuming CQ records.
+P23E validates that runtime-appended commands still complete in order without a second START_QUEUE.
+P23F validates CQ-full recovery by consuming CQ and advancing CQ_HEAD, then allowing the in-order drain loop to resume.
+P23F validates STOP_QUEUE interaction with a pending runtime-appended SQ entry.
 ```
 
-P21 live-service model:
+Validated P23 full-regression representatives that exercise P20 drain behavior:
 
 ```text
-host may append SQ entries while queue_busy=1
-host publishes the appended entry by updating CSR_SQ_TAIL
-hardware samples the latest SQ_TAIL only at command boundaries
-hardware can continue to appended commands without another START_QUEUE
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
 ```
 
-The P21 extension preserves all P20 ordering guarantees:
+The P20 single-active-command and in-order CQ completion policies remain unchanged.  P23 only changes the UVM host programming style: the host runtime waits on event notification, consumes CQ, advances CQ_HEAD, and W1C-acks event bits.
 
-```text
-one active command at a time
-in-order SQ_HEAD to SQ_TAIL execution
-in-order CQ_TAIL completion production
-no multi-outstanding commands
-no out-of-order completion
-no BRAM / GEMM / DMA / frontend datapath changes
-```
-
-Validated P21 runtime-service behavior:
-
-```text
-append-while-active DMA queue service
-append-while-active mixed DMA / Direct Stream queue service
-CQ full command-boundary stall and host CQ_HEAD recovery
-STOP_QUEUE during live service, preserving pending runtime-appended SQ entries
-```
-
-Full regression after P21G:
-
-```text
-TOTAL : 121
-PASS  : 121
-FAIL  : 0
-```
-
-P21 is documented separately in `runtime_doorbell_live_queue_service_spec.md` because the P20 policy remains the canonical batch-drain behavior, while P21 defines the safe runtime observation points for host-owned `CSR_SQ_TAIL` and `CSR_CQ_HEAD` updates.

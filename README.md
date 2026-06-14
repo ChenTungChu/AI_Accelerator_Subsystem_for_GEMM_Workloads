@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, and event notification / interrupt-lite behavior.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, and event-driven host runtime / queue driver model validation.
 
 Current milestone:
 
 ```text
-Event Notification / Interrupt-Lite P22G: Full Regression Completed
+Event-Driven Host Runtime / Queue Driver Model P23G: Full Regression Completed
 
 Regression:
-  TOTAL : 125
-  PASS  : 125
+  TOTAL : 129
+  PASS  : 129
   FAIL  : 0
 ```
 
@@ -53,6 +53,7 @@ CSR command/completion queue regression across SQ command fetch, queue-to-descri
 CSR multi-entry in-order queue drain regression across auto-drain, mixed command modes, wrap-around, and graceful stop handling
 CSR runtime doorbell / live queue service regression across append-while-active, mixed live service, CQ-full recovery, and STOP_QUEUE handling
 CSR event notification / interrupt-lite regression across event CSR smoke, queue-completion events, queue-terminal/error events, and mask / W1C / re-arm behavior
+CSR event-driven host runtime regression across SQ submit, event wait, CQ consume, runtime append, CQ-full recovery, STOP_QUEUE, and queue error handling
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -217,6 +218,21 @@ Queue command-completed and CQ-not-empty event validation after CQ commit
 Queue drained / stopped / error event validation
 Event mask / W1C clear / CLEAR_PENDING / re-arm behavior validation
 Full regression after P22G: 125/125 PASS
+```
+
+P23 raises the validated P19/P20/P21/P22 queue and event stack into a driver-style UVM host runtime model.  The runtime helper submits SQ commands, rings the queue doorbell, waits on P22 event notification, consumes CQ records, advances CQ_HEAD, clears/re-arms event bits, and handles CQ-full / STOP_QUEUE / queue-error cases without changing the hardware datapath.
+
+P23 scope:
+
+```text
+UVM host runtime helper / driver-style API
+Event-driven single SQ command service validation
+Event-driven multi-command queue drain validation
+Runtime SQ_TAIL append / live doorbell validation
+CQ-full recovery through CQ_HEAD update from an event-driven host model
+STOP_QUEUE stopped-event handling and restart of pending SQ entries
+QUEUE_ERROR_EVENT handling for invalid SQ commands
+Full regression after P23G: 129/129 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -883,11 +899,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 125 items and is passing:
+The current full UVM regression contains 129 items and is passing:
 
 ```text
-TOTAL : 125
-PASS  : 125
+TOTAL : 129
+PASS  : 129
 FAIL  : 0
 ```
 
@@ -1053,8 +1069,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 125
-PASS  : 125
+TOTAL : 129
+PASS  : 129
 FAIL  : 0
 ```
 
@@ -1624,6 +1640,17 @@ csr_event_mask_w1c_rearm
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, integrate the P22 event CSR window into the existing CSR wrapper, and validate software test events, real queue completion / CQ-not-empty events, drained / stopped / error terminal events, and mask / W1C / CLEAR_PENDING / re-arm behavior.
 
+P23G added these event-driven host runtime representative items:
+
+```text
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, reuse the P19 SQ/CQ queue, P21 runtime doorbell behavior, and P22 event CSR window, and validate a driver-style host runtime loop: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C ack/re-arm events, recover CQ-full, handle STOP_QUEUE, and observe queue errors.
+
 ---
 
 ## Known Warning
@@ -1888,4 +1915,36 @@ csr_event_mask_w1c_rearm
 ```
 
 P22G proves that the notification layer is integrated into the existing CSR wrapper rather than implemented as a standalone event block.  The event CSR window at `0x600 - 0x63C` captures summary queue events, exposes per-event enables and W1C pending bits, and drives a single interrupt-lite summary output.  The completion queue record remains the authoritative per-command completion detail.
+
+## P23G Event-Driven Host Runtime Closure
+
+```text
+P23A: Event-driven host runtime prototype spec                    PASS
+P23B: UVM host runtime helper / driver-style API                  PASS
+P23C: Event-driven single queue command smoke                     PASS
+P23D: Event-driven multi-command queue drain smoke                PASS
+P23E: Event-driven runtime append / live doorbell smoke           PASS
+P23F: Event-driven CQ full recovery / stopped / error handling    PASS
+P23G: Full regression integration                                 PASS
+P23H: Documentation closure                                       PASS
+```
+
+Full regression after P23G:
+
+```text
+TOTAL : 129
+PASS  : 129
+FAIL  : 0
+```
+
+Validated P23 full-regression representatives:
+
+```text
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+P23 validates the existing queue/event hardware from a driver-style host-runtime perspective.  The host runtime initializes SQ/CQ state, submits SQ commands, publishes SQ_TAIL as a doorbell, waits on the P22 event layer, consumes CQ records, advances CQ_HEAD, W1C-acks event bits, and continues or recovers service across CQ-full, STOP_QUEUE, and invalid-command cases.  No BRAM, GEMM, DMA, AXI-Stream, Direct Stream, SQ format, CQ format, or CSR map changes were introduced for P23.
 

@@ -530,44 +530,45 @@ Runtime appends do not bypass STOP_QUEUE or STOP_AFTER_THIS.  P22 may notify tha
 
 ---
 
-## 12. Implemented RTL Delta for P22C/P22D/P22E
+## 12. Suggested RTL Delta for Later P22C/P22D
 
-P22 keeps the event notification logic integrated into the existing CSR wrapper path.  It does not retain a standalone event CSR block, standalone event injection interface, or standalone event UVM top.
+P22A/P22B do not implement RTL, but the expected RTL delta should remain small.
 
-Modified RTL:
+Likely modified RTL:
 
 ```text
 rtl/csr/ai_accel_csr_regs.sv
 rtl/top/ai_accel_subsys_csr_top.sv
 ```
 
-Modified UVM top / package integration:
+Possible new small RTL:
 
 ```text
-tb/top/ai_accel_subsys_csr_uvm_top.sv
-tb/uvm/helper/ai_accel_csr_access_helper.sv
-tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+rtl/csr/ai_accel_event_notifier.sv
 ```
 
-Event source inputs are generated from existing queue and CSR state transitions:
+Expected event notifier inputs:
 
 ```text
-queue command completion / CQ commit
-queue drained terminal state
-queue stopped terminal state
-queue validation / propagated error
-CQ non-empty observation
-software TEST_EVENT command
+queue_command_completed_pulse
+queue_drained_pulse
+queue_stopped_pulse
+queue_error_pulse
+cq_full_stall_pulse
+cq_space_recovered_pulse
+runtime_doorbell_pulse
+runtime_append_consumed_pulse
+queue pointer/status snapshot buses
 ```
 
-Event outputs remain summary-only:
+Expected event notifier outputs:
 
 ```text
-CSR_EVENT_PENDING / CSR_EVENT_STATUS CSR readback
-event_irq interrupt-lite summary output
+event_pending_status
+event_irq
 ```
 
-No BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath module is modified for P22.
+No BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath module should be modified for P22.
 
 ---
 
@@ -685,6 +686,8 @@ no BRAM / GEMM / DMA / frontend datapath changes are required
 
 ---
 
+---
+
 ## 16. P22 Validation Result and Closure Status
 
 P22G closes event notification / interrupt-lite through targeted validation and full-regression integration.
@@ -732,3 +735,39 @@ The CQ record is still the authoritative completion detail; the interrupt only s
 ```
 
 The design stays small because it uses a single shared notification output, sticky pending bits, per-event enables, and the already validated P21 queue completion and command-boundary events.
+
+## 17. P23 Event-Driven Host Runtime Usage Validation
+
+P23 reuses the P22 event notification / interrupt-lite CSR layer as the host-runtime notification mechanism.  No P23 event CSR address, bit definition, reset value, or interrupt output change is introduced.
+
+Validated P23 host-runtime usage:
+
+```text
+host runtime arms EVENT_ENABLE and GLOBAL_IRQ_ENABLE
+host runtime submits SQ commands through the P19 queue model
+queue completion / CQ-not-empty / drained / stopped / error sources set EVENT_PENDING
+host runtime waits on the event layer before inspecting CQ records and queue status
+host runtime consumes CQ records and advances CSR_CQ_HEAD
+host runtime clears handled EVENT_PENDING bits with W1C
+host runtime reuses the same event path for CQ full recovery, STOP_QUEUE handling, and invalid SQ command error handling
+```
+
+Validated P23 full-regression representatives using the P22 event layer:
+
+```text
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+P23G full regression result:
+
+```text
+TOTAL : 129
+PASS  : 129
+FAIL  : 0
+```
+
+The CQ completion record remains the authoritative per-command completion detail.  P22 continues to provide only summary notification that tells the host runtime which status or CQ records should be inspected.
+

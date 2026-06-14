@@ -1220,3 +1220,30 @@ P19 wraps both with a small in-order host queue: command entries in memory, comp
 ```
 
 The result is still small enough for a single-person RTL/UVM project, but it demonstrates a realistic accelerator software interface: host-visible submission queue, host-visible completion queue, CSR doorbell/control, error/status handling, and end-to-end command-to-completion validation.
+
+## 20. P23 Event-Driven Host Runtime Validation
+
+P23 validates the P19 command / completion queue model under a driver-style host runtime rather than only feature-centric queue tests.
+
+Validated P23 queue usage:
+
+```text
+single SQ command submit -> event wait -> CQ consume
+multiple SQ commands drained in order from one START_QUEUE
+runtime SQ_TAIL append while queue service is live
+CQ_HEAD update used as host-visible CQ consumption and CQ-full recovery doorbell
+STOP_QUEUE handling with pending SQ entry preserved until restart
+invalid SQ command converted into queue error status and QUEUE_ERROR_EVENT
+```
+
+Validated P23 full-regression representatives:
+
+```text
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+P23 does not change the P19 SQ command entry, P18 CQ completion record, queue CSR window, monotonic head/tail pointer model, or single-active-command execution policy.  It validates that a host runtime can use those existing mechanisms as a complete submit / notify / consume / recover loop.
+

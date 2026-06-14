@@ -697,7 +697,7 @@ active command snapshots are isolated from host pointer updates
 CQ full stall and host CQ_HEAD recovery work during active service
 STOP_QUEUE suppresses further runtime appends after the active command
 STOP_AFTER_THIS suppresses further runtime appends after the marked command
-full regression passes with P21 representatives at 121/121
+full regression passes with P21 representatives at 121/121 and P22 event representatives at 125/125
 no BRAM / GEMM / DMA / frontend datapath changes are required
 ```
 
@@ -769,3 +769,37 @@ no datapath rewrite
 ```
 
 The main design advantage is that P21 improves host-interface realism while preserving a small, deterministic queue controller.
+
+## 18. P23 Event-Driven Runtime Validation
+
+P23 revalidates the P21 runtime doorbell / live queue service behavior through a driver-style host runtime model layered above the existing queue and event CSRs.
+
+Additional P23 validation over the P21 behavior:
+
+```text
+P23E validates runtime append from the host-runtime helper.
+SQ[1] is written while queue service is live.
+Host publishes SQ_TAIL 1 -> 2 as the runtime doorbell.
+Hardware consumes SQ[1] without a second START_QUEUE.
+CQ[0] and CQ[1] commit in order.
+The host runtime waits on P22 event notification before consuming CQ records.
+```
+
+P23F also revalidates related live-service recovery paths:
+
+```text
+CQ-full recovery through host CQ_HEAD update while service remains active
+STOP_QUEUE behavior while a runtime-appended SQ entry remains pending
+restart of the pending SQ entry after stopped-event handling
+invalid SQ command error notification through QUEUE_ERROR_EVENT
+```
+
+Validated P23 full-regression representatives that exercise P21 live-service policy:
+
+```text
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+P23 does not change the P21 command-boundary observation rule.  Runtime SQ_TAIL and CQ_HEAD updates are still observed only at safe queue-controller decision points; the active command remains isolated by its snapshotted command context.
+

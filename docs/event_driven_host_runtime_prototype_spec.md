@@ -43,6 +43,15 @@ P22H event notification / interrupt-lite closure:
   FAIL  : 0
 ```
 
+Current closure after P23G/P23H:
+
+```text
+P23 event-driven host runtime / queue driver model closure:
+  TOTAL : 129
+  PASS  : 129
+  FAIL  : 0
+```
+
 ---
 
 ## 2. Baseline Before P23
@@ -602,13 +611,13 @@ ai_accel_subsys_csr_event_runtime_recovery_smoke_test
 
 P23G should add a small representative subset to full regression.
 
-Recommended full-regression representatives:
+Validated full-regression representatives:
 
 ```text
-csr_event_runtime_single_cmd_case102
-csr_event_runtime_multi_cmd_case102
-csr_event_runtime_append_case102
-csr_event_runtime_recovery_case102
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
 ```
 
 Expected count increase:
@@ -669,3 +678,66 @@ no datapath rewrite
 ```
 
 The main value of P23 is that it demonstrates an end-to-end host programming model, not just isolated RTL features.
+
+## 21. P23 Validation Result and Closure Status
+
+P23 is closed through P23G full regression integration and P23H documentation closure.
+
+Validated implementation / UVM milestones:
+
+```text
+P23A: Event-driven host runtime prototype spec                    PASS
+P23B: UVM host runtime helper / driver-style API                  PASS
+P23C: Event-driven single queue command smoke                     PASS
+P23D: Event-driven multi-command queue drain smoke                PASS
+P23E: Event-driven runtime append / live doorbell smoke           PASS
+P23F: Event-driven CQ full recovery / stopped / error handling    PASS
+P23G: Full regression integration                                 PASS
+P23H: Documentation closure                                       PASS
+```
+
+Validated test names:
+
+```text
+ai_accel_subsys_csr_event_driven_single_queue_command_smoke_test
+ai_accel_subsys_csr_event_driven_multi_command_queue_drain_smoke_test
+ai_accel_subsys_csr_event_driven_runtime_append_smoke_test
+ai_accel_subsys_csr_event_driven_cq_full_stop_error_smoke_test
+```
+
+Validated full-regression entries:
+
+```text
+csr_event_driven_single_queue_command_case102
+csr_event_driven_multi_command_queue_drain_case102
+csr_event_driven_runtime_append_case102
+csr_event_driven_cq_full_stop_error_case102
+```
+
+Full regression after P23G:
+
+```text
+TOTAL : 129
+PASS  : 129
+FAIL  : 0
+```
+
+Validated host-runtime behavior:
+
+```text
+initialize SQ/CQ and P22 event state
+program SQ command entries with VALID written last
+publish SQ_TAIL as the queue doorbell
+start a queue session when idle
+wait on P22 event notification instead of polling all queue state as the primary completion mechanism
+read and validate CQ completion records after event notification
+advance CSR_CQ_HEAD after host consumption
+W1C-ack handled event bits and re-arm the event path
+append SQ entries while live queue service is active
+recover CQ-full stalls by consuming CQ and updating CSR_CQ_HEAD
+handle STOP_QUEUE / stopped event paths
+handle invalid SQ command / QUEUE_ERROR_EVENT paths
+```
+
+P23 did not introduce any new CSR address, SQ entry format, CQ entry format, completion record format, interrupt-vector model, BRAM behavior, GEMM datapath behavior, DMA behavior, AXI-Stream behavior, or Direct Stream behavior.
+
