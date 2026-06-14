@@ -23,6 +23,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../helper/ai_accel_subsys_case_helper.sv"
     `include "../helper/ai_accel_subsys_axi_host_helper.sv"
     `include "../helper/ai_accel_csr_access_helper.sv"
+    `include "../helper/ai_accel_event_driven_host_runtime_helper.sv"
 
     // ------------------------------------------------------------
     // Result bridge
@@ -211,6 +212,14 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_queue_completion_event_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test.sv"
+
+    // ------------------------------------------------------------
+    // P23 event-driven host runtime tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_event_driven_single_queue_command_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_driven_multi_command_queue_drain_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_driven_runtime_append_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_driven_cq_full_stop_error_smoke_test.sv"
 
 endpackage
 

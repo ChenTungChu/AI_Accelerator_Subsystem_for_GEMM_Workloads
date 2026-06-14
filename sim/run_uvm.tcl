@@ -103,6 +103,10 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_queue_completion_event_smoke_test \
     ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test \
     ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test \
+    ai_accel_subsys_csr_event_driven_single_queue_command_smoke_test \
+    ai_accel_subsys_csr_event_driven_multi_command_queue_drain_smoke_test \
+    ai_accel_subsys_csr_event_driven_runtime_append_smoke_test \
+    ai_accel_subsys_csr_event_driven_cq_full_stop_error_smoke_test \
 ]
 
 # --------------------------------------------------
