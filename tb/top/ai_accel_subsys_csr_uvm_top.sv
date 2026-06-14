@@ -456,6 +456,15 @@ module ai_accel_subsys_csr_uvm_top;
     int unsigned               comp_wb_inject_base_aw_count;
     int unsigned               comp_wb_bresp_error_gen_q;
 
+    // P24E TB-only completion-writeback block injection.
+    // This holds BRESP off after accepting AW/W so the completion engine
+    // remains busy long enough for the queue watchdog to expire in the
+    // completion-writeback phase.
+    logic                      comp_wb_inject_bresp_block_q;
+    int signed                 comp_wb_inject_bresp_block_beat_q;
+    int unsigned               comp_wb_inject_block_base_aw_count;
+    int unsigned               comp_wb_bresp_block_gen_q;
+
     wire comp_aw_fire = comp_axi_awvalid && comp_axi_awready;
     wire comp_w_fire  = comp_axi_wvalid  && comp_axi_wready;
     wire comp_b_fire  = comp_axi_bvalid  && comp_axi_bready;
@@ -789,6 +798,25 @@ module ai_accel_subsys_csr_uvm_top;
     end
     endfunction
 
+
+    function automatic logic comp_should_block_bresp(
+        input int unsigned aw_beat_idx
+    );
+        int signed rel_beat;
+    begin
+        if (aw_beat_idx >= comp_wb_inject_block_base_aw_count) begin
+            rel_beat = int'(aw_beat_idx - comp_wb_inject_block_base_aw_count);
+        end
+        else begin
+            rel_beat = -1;
+        end
+
+        return comp_wb_inject_bresp_block_q &&
+               (comp_wb_inject_bresp_block_beat_q >= 0) &&
+               (rel_beat == comp_wb_inject_bresp_block_beat_q);
+    end
+    endfunction
+
     // ------------------------------------------------------------
     // P18 completion writeback destination model.
     //
@@ -797,8 +825,10 @@ module ai_accel_subsys_csr_uvm_top;
     // engine is the only writer in the standalone smoke, so this does
     // not interfere with DMA-store result checking.
     //
-    // P18G adds a TB-only BRESP injection hook through
-    // comp_wb_inject_if.  The hook is preserved here because the
+    // P18G adds a TB-only BRESP error injection hook through
+    // comp_wb_inject_if.  P24E extends the same hook with a BRESP
+    // block mode for watchdog timeout validation.  The hook is preserved
+    // here because the
     // shared UVM package contains completion-writeback error tests;
     // keeping the interface instantiated also prevents Questa virtual
     // interface type-resolution failures during elaboration.
@@ -826,6 +856,11 @@ module ai_accel_subsys_csr_uvm_top;
             comp_wb_inject_bresp_error_beat_q <= -1;
             comp_wb_inject_base_aw_count      <= 0;
             comp_wb_bresp_error_gen_q         <= 0;
+
+            comp_wb_inject_bresp_block_q      <= 1'b0;
+            comp_wb_inject_bresp_block_beat_q <= -1;
+            comp_wb_inject_block_base_aw_count <= 0;
+            comp_wb_bresp_block_gen_q         <= 0;
         end else begin
             if (comp_wb_inject_vif.bresp_error_gen !=
                 comp_wb_bresp_error_gen_q) begin
@@ -833,6 +868,15 @@ module ai_accel_subsys_csr_uvm_top;
                 comp_wb_inject_bresp_error_beat_q <= comp_wb_inject_vif.bresp_error_beat;
                 comp_wb_inject_base_aw_count      <= comp_aw_count;
                 comp_wb_bresp_error_gen_q         <= comp_wb_inject_vif.bresp_error_gen;
+            end
+
+
+            if (comp_wb_inject_vif.bresp_block_gen !=
+                comp_wb_bresp_block_gen_q) begin
+                comp_wb_inject_bresp_block_q      <= comp_wb_inject_vif.bresp_block_enable;
+                comp_wb_inject_bresp_block_beat_q <= comp_wb_inject_vif.bresp_block_beat;
+                comp_wb_inject_block_base_aw_count <= comp_aw_count;
+                comp_wb_bresp_block_gen_q         <= comp_wb_inject_vif.bresp_block_gen;
             end
 
             if (comp_aw_fire) begin
@@ -872,6 +916,7 @@ module ai_accel_subsys_csr_uvm_top;
                 logic [DATA_WIDTH-1:0]     w_data_now;
                 logic [DATA_WIDTH/8-1:0]   w_strb_now;
                 logic [1:0]                bresp_now;
+                logic                      block_bresp_now;
                 int unsigned               aw_beat_idx_now;
 
                 aw_id_now       = comp_aw_fire ? comp_axi_awid   : comp_aw_pending_id;
@@ -880,23 +925,26 @@ module ai_accel_subsys_csr_uvm_top;
                 w_data_now      = comp_w_fire  ? comp_axi_wdata  : comp_w_pending_data;
                 w_strb_now      = comp_w_fire  ? comp_axi_wstrb  : comp_w_pending_strb;
                 bresp_now       = comp_next_bresp(aw_beat_idx_now);
+                block_bresp_now = comp_should_block_bresp(aw_beat_idx_now);
 
-                if (bresp_now == AXI_RESP_OKAY) begin
-                    comp_apply_write(aw_addr_now, w_data_now, w_strb_now);
+                if (!block_bresp_now) begin
+                    if (bresp_now == AXI_RESP_OKAY) begin
+                        comp_apply_write(aw_addr_now, w_data_now, w_strb_now);
+                    end
+
+                    comp_bid_q    <= aw_id_now;
+                    comp_bresp_q  <= bresp_now;
+                    comp_bvalid_q <= 1'b1;
+
+                    comp_aw_pending_valid    <= 1'b0;
+                    comp_aw_pending_id       <= '0;
+                    comp_aw_pending_addr     <= '0;
+                    comp_aw_pending_beat_idx <= 0;
+                    comp_w_pending_valid     <= 1'b0;
+                    comp_w_pending_data      <= '0;
+                    comp_w_pending_strb      <= '0;
+                    comp_w_pending_last      <= 1'b0;
                 end
-
-                comp_bid_q    <= aw_id_now;
-                comp_bresp_q  <= bresp_now;
-                comp_bvalid_q <= 1'b1;
-
-                comp_aw_pending_valid    <= 1'b0;
-                comp_aw_pending_id       <= '0;
-                comp_aw_pending_addr     <= '0;
-                comp_aw_pending_beat_idx <= 0;
-                comp_w_pending_valid     <= 1'b0;
-                comp_w_pending_data      <= '0;
-                comp_w_pending_strb      <= '0;
-                comp_w_pending_last      <= 1'b0;
             end
         end
     end

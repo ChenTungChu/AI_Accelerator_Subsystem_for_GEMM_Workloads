@@ -225,6 +225,8 @@ package ai_accel_subsys_uvm_pkg;
     // P24 queue timeout / watchdog tests
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_timeout_recovery_smoke_test.sv"
 
 endpackage
 
