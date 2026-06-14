@@ -1160,7 +1160,52 @@ csr_queue_stop_live_service_case102
 
 The detailed P21 live-service policy is documented in `runtime_doorbell_live_queue_service_spec.md`.
 
-## 22. Interview Summary
+
+## 22. Relationship to P22 Event Notification / Interrupt-Lite
+
+P22 extends the P19/P20/P21 queue model with a summary notification layer.  It does not change the P19 command entry format, P18 completion record format, P19/P20/P21 queue pointer model, or queue CSR window.
+
+P19/P20/P21 remain the authoritative queue execution and completion model:
+
+```text
+SQ command entry
+    -> queue fetch / validation
+    -> P17 descriptor fetch
+    -> P16/P15 execution
+    -> P18 CQ writeback
+    -> SQ_HEAD / CQ_TAIL advancement after completion commit
+```
+
+P22 observes selected queue-level events after those existing state transitions:
+
+```text
+completion commit and CQ_TAIL advancement -> QUEUE_COMMAND_COMPLETED_EVENT
+CQ occupancy becomes non-zero              -> CQ_NOT_EMPTY_EVENT
+SQ empty drain                             -> QUEUE_DRAINED_EVENT
+graceful STOP_QUEUE / STOP_AFTER_THIS      -> QUEUE_STOPPED_EVENT
+queue validation / propagated error        -> QUEUE_ERROR_EVENT
+```
+
+The CQ record remains the authoritative per-command completion detail.  P22 only tells software that queue state or completion state should be inspected through the existing CSR and CQ memory interfaces.
+
+Validated P22 full-regression representatives:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+Full regression after P22G:
+
+```text
+TOTAL : 125
+PASS  : 125
+FAIL  : 0
+```
+
+## 23. Interview Summary
 
 P19 turns the P17/P18 memory-backed command prototype into a small host queue prototype.
 

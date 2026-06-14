@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
+#   Event Notification / Interrupt-Lite P22G: Full Regression Completed
 #
 # Current baseline:
-#   TOTAL : 121
-#   PASS  : 121
+#   TOTAL : 125
+#   PASS  : 125
 #   FAIL  : 0
-#   121/121 PASS
+#   125/125 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -45,6 +45,7 @@
 #   - CSR command/completion queue single-command and robustness handling
 #   - CSR multi-entry queue auto-drain, mixed command, wrap-around, and stop behavior
 #   - CSR runtime doorbell / live queue service append, CQ-full recovery, and stop behavior
+#   - CSR event notification / interrupt-lite event CSR, queue event, and mask/W1C/re-arm behavior
 #
 # P13D focused DUT additions:
 #   - p13d_c_rmw_accum_case208
@@ -122,6 +123,12 @@
 #   - csr_queue_runtime_doorbell_mixed_case102
 #   - csr_queue_cq_full_live_recovery_case102
 #   - csr_queue_stop_live_service_case102
+#
+# P22G event notification / interrupt-lite additions:
+#   - csr_event_csr_smoke
+#   - csr_queue_completion_event_case102
+#   - csr_queue_drained_stopped_error_event_case102
+#   - csr_event_mask_w1c_rearm
 #
 # 001: smoke CASE_ID=5
 ai_accel_subsys_smoke_test CASE_ID 5 +ENABLE_RESULT_CHECK=1
@@ -370,3 +377,12 @@ ai_accel_subsys_csr_queue_runtime_doorbell_mixed_smoke_test CASE_ID 102 UVM_TOP 
 ai_accel_subsys_csr_queue_cq_full_live_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 121: csr_queue_stop_live_service_case102
 ai_accel_subsys_csr_queue_stop_live_service_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 122: csr_event_csr_smoke
+ai_accel_subsys_event_csr_smoke_test UVM_TOP ai_accel_subsys_csr_uvm_top +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 123: csr_queue_completion_event_case102
+ai_accel_subsys_csr_queue_completion_event_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 124: csr_queue_drained_stopped_error_event_case102
+ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 125: csr_event_mask_w1c_rearm
+ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test UVM_TOP ai_accel_subsys_csr_uvm_top +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

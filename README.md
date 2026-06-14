@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, and runtime doorbell / live queue service behavior.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, and event notification / interrupt-lite behavior.
 
 Current milestone:
 
 ```text
-Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
+Event Notification / Interrupt-Lite P22G: Full Regression Completed
 
 Regression:
-  TOTAL : 121
-  PASS  : 121
+  TOTAL : 125
+  PASS  : 125
   FAIL  : 0
 ```
 
@@ -52,6 +52,7 @@ CSR completion-writeback regression across standalone smoke, DMA, Direct Stream,
 CSR command/completion queue regression across SQ command fetch, queue-to-descriptor-fetch launch, CQ writeback, and queue robustness handling
 CSR multi-entry in-order queue drain regression across auto-drain, mixed command modes, wrap-around, and graceful stop handling
 CSR runtime doorbell / live queue service regression across append-while-active, mixed live service, CQ-full recovery, and STOP_QUEUE handling
+CSR event notification / interrupt-lite regression across event CSR smoke, queue-completion events, queue-terminal/error events, and mask / W1C / re-arm behavior
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -202,6 +203,20 @@ Append-while-active mixed DMA / Direct Stream queue validation
 CQ full command-boundary stall plus host CQ_HEAD recovery during active service
 CSR_QUEUE_COMMAND.STOP_QUEUE suppresses further runtime appends after active command completion
 Full regression after P21G: 121/121 PASS
+```
+
+P22 adds an event notification / interrupt-lite CSR layer above the validated P19/P20/P21 queue status model.  The CQ completion record remains the authoritative per-command completion detail, while P22 exposes sticky summary event bits and one shared interrupt-lite summary output for software-visible queue progress notification.
+
+P22 scope:
+
+```text
+P22 event notification CSR window at 0x600 - 0x63C
+Integrated event CSR register smoke validation
+Software TEST_EVENT pending / enable / global IRQ / W1C / counter behavior
+Queue command-completed and CQ-not-empty event validation after CQ commit
+Queue drained / stopped / error event validation
+Event mask / W1C clear / CLEAR_PENDING / re-arm behavior validation
+Full regression after P22G: 125/125 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -868,11 +883,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 121 items and is passing:
+The current full UVM regression contains 125 items and is passing:
 
 ```text
-TOTAL : 121
-PASS  : 121
+TOTAL : 125
+PASS  : 125
 FAIL  : 0
 ```
 
@@ -1038,8 +1053,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 121
-PASS  : 121
+TOTAL : 125
+PASS  : 125
 FAIL  : 0
 ```
 
@@ -1598,6 +1613,17 @@ csr_queue_stop_live_service_case102
 
 These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, keep one active command at a time, reuse the existing P17/P16/P15/P18 execution stack, and validate runtime SQ_TAIL doorbell observation, mixed live service, CQ-full command-boundary stall with host CQ_HEAD recovery, and STOP_QUEUE behavior during active queue service.
 
+P22G added these event notification / interrupt-lite representative items:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+These use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, integrate the P22 event CSR window into the existing CSR wrapper, and validate software test events, real queue completion / CQ-not-empty events, drained / stopped / error terminal events, and mask / W1C / CLEAR_PENDING / re-arm behavior.
+
 ---
 
 ## Known Warning
@@ -1617,7 +1643,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Runtime Doorbell / Live Queue Service P21G: Full Regression Completed
+Event Notification / Interrupt-Lite P22G: Full Regression Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1668,9 +1694,17 @@ Completed:
   P21F: STOP_QUEUE during live service                        PASS
   P21G: full regression integration                           PASS
   P21H: documentation closure                                 PASS
+  P22A: event notification / interrupt-lite prototype spec      PASS
+  P22B: event CSR register map freeze                            PASS
+  P22C: integrated event CSR smoke                               PASS
+  P22D: queue completion event smoke                             PASS
+  P22E: queue drained / stopped / error event smoke              PASS
+  P22F: event mask / W1C clear / re-arm behavior                 PASS
+  P22G: full regression integration                              PASS
+  P22H: documentation closure                                    PASS
 
 Regression:
-  121/121 PASS
+  125/125 PASS
 ```
 
 
@@ -1678,7 +1712,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, and runtime doorbell / live queue service behavior.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, and event notification / interrupt-lite behavior.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1695,6 +1729,8 @@ P19G proves that the P17/P18 memory-backed command/completion path can be wrappe
 P20G proves that the host-visible queue can drain multiple SQ entries in order with one active command at a time.  Validated P20 behavior includes two-command DMA auto-drain, mixed DMA / Direct Stream / C RMW command sequencing, monotonic SQ/CQ counter wrap to physical ring slots, STOP_AFTER_THIS command-boundary stop, STOP_QUEUE graceful stop, and full regression closure at 117/117 PASS.
 
 P21G proves that runtime doorbell / live queue service works on top of the same in-order queue controller.  The host can append SQ entries while `queue_busy=1`, hardware observes the updated `CSR_SQ_TAIL` only at command boundaries, CQ-full backpressure can recover when the host advances `CSR_CQ_HEAD`, and `STOP_QUEUE` suppresses further runtime-appended commands after the active command completes.  Full regression closes at 121/121 PASS.
+
+P22G proves that the queue subsystem now has a lightweight event notification / interrupt-lite layer.  The P22 event CSR window captures software TEST_EVENTs, real queue command-completed and CQ-not-empty events, queue drained / stopped / error terminal events, and mask / W1C / re-arm behavior without changing the SQ/CQ formats, CQ completion records, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapaths.  Full regression closes at 125/125 PASS.
 
 
 ---
@@ -1821,3 +1857,35 @@ csr_queue_stop_live_service_case102
 ```
 
 P21G proves that the P20 queue drain model can be serviced as a live queue without introducing multi-outstanding execution.  The controller still executes one command at a time, snapshots the active command context, observes host-owned `CSR_SQ_TAIL` and `CSR_CQ_HEAD` only at safe command-boundary / CQ-stall points, reuses the existing P17 descriptor-fetch path, P16/P15 execution stack, and P18 completion writeback engine, and preserves in-order SQ/CQ pointer advancement.
+
+---
+
+## P22G Event Notification / Interrupt-Lite Closure
+
+```text
+P22A: Event notification / interrupt-lite prototype spec          PASS
+P22B: Event CSR register map freeze                               PASS
+P22C: Integrated Event CSR smoke                                  PASS
+P22D: Queue completion event smoke                                PASS
+P22E: Queue drained / stopped / error event smoke                 PASS
+P22F: Event mask / W1C clear / re-arm behavior                    PASS
+P22G: Full regression integration                                 PASS
+P22H: Documentation closure                                       PASS
+
+Full regression after P22G:
+  TOTAL : 125
+  PASS  : 125
+  FAIL  : 0
+```
+
+Validated P22 full-regression representatives:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+P22G proves that the notification layer is integrated into the existing CSR wrapper rather than implemented as a standalone event block.  The event CSR window at `0x600 - 0x63C` captures summary queue events, exposes per-event enables and W1C pending bits, and drives a single interrupt-lite summary output.  The completion queue record remains the authoritative per-command completion detail.
+

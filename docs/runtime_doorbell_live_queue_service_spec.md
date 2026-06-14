@@ -567,14 +567,13 @@ SQ[0] = DMA descriptor recipe
 SQ[1] = Direct Stream descriptor recipe or C RMW descriptor recipe
 ```
 
-Validated P21D representative:
+The stronger representative is:
 
 ```text
 SQ[0] = DMA descriptor recipe
-SQ[1] = Direct Stream descriptor recipe, appended while SQ[0] is active
+SQ[1] = Direct Stream descriptor recipe
+SQ[2] = C RMW descriptor recipe, appended while earlier command is active
 ```
-
-A later stress extension can add a third C RMW command, but P21D closure intentionally keeps the representative mixed profile to two commands.
 
 ### 14.3 P21E CQ Full Stall + Host Recovery During Active Service
 
@@ -704,7 +703,49 @@ no BRAM / GEMM / DMA / frontend datapath changes are required
 
 ---
 
-## 18. Interview Summary
+
+## 18. Relationship to P22 Event Notification / Interrupt-Lite
+
+P22 adds a notification layer above the P21 live queue service model.  P21 keeps the ownership and ordering policy; P22 only observes summary events and exposes them through the event CSR window.
+
+P21 runtime-service semantics remain unchanged:
+
+```text
+one active command at a time
+host may update CSR_SQ_TAIL while queue_busy=1
+host may update CSR_CQ_HEAD while queue_busy=1
+hardware observes live host-owned pointers only at command boundaries or CQ-full stall checks
+active command context is snapshotted and isolated from runtime host pointer writes
+```
+
+P22 may summarize those existing transitions as events:
+
+```text
+QUEUE_COMMAND_COMPLETED_EVENT after CQ completion commit
+CQ_NOT_EMPTY_EVENT after completion production
+QUEUE_DRAINED_EVENT when the live service reaches SQ empty
+QUEUE_STOPPED_EVENT when STOP_QUEUE suppresses runtime appends after the active command
+QUEUE_ERROR_EVENT when queue validation or lower-level error reaches sticky status
+```
+
+Validated P22 full-regression representatives:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+Full regression after P22G:
+
+```text
+TOTAL : 125
+PASS  : 125
+FAIL  : 0
+```
+
+## 19. Interview Summary
 
 P21 is the step that turns P20 from a batch queue drain into a runtime-serviced queue.
 

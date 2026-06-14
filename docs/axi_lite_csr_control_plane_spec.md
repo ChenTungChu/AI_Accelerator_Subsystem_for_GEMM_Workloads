@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 121/121 after P21G runtime doorbell / live queue service closure
+Full UVM regression baseline passing 125/125 after P22G event notification / interrupt-lite closure
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -1959,3 +1959,54 @@ P22 event notification window: 0x600 - 0x63C
 ```
 
 The event layer is summary-only.  The CQ completion record remains the authoritative per-command completion detail.
+
+### P22G Event Notification / Interrupt-Lite Validation Checkpoint
+
+P22G closes the event notification / interrupt-lite milestone through integrated CSR validation, real queue-event validation, event clear / re-arm validation, and full-regression integration.  P22 does not change the P19/P20/P21 queue CSR window, the P19 SQ command entry format, the P18 completion record format, or any BRAM / GEMM / DMA / frontend datapath behavior.
+
+```text
+P22A: Event notification / interrupt-lite prototype spec          PASS
+P22B: Event CSR register map freeze                               PASS
+P22C: Integrated Event CSR smoke                                  PASS
+P22D: Queue completion event smoke                                PASS
+P22E: Queue drained / stopped / error event smoke                 PASS
+P22F: Event mask / W1C clear / re-arm behavior                    PASS
+P22G: Full regression integration                                 PASS
+P22H: Documentation closure                                       PASS
+
+Full regression after P22G:
+  TOTAL : 125
+  PASS  : 125
+  FAIL  : 0
+```
+
+Validated P22 event representatives:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+Validated P22 event behavior:
+
+```text
+CSR_EVENT_VERSION / COMMAND / STATUS / PENDING / ENABLE / CONTROL readback
+TEST_EVENT pending capture and W1C / CLEAR_PENDING clear
+mask disabled capture without IRQ assertion
+late enable / late GLOBAL_IRQ_ENABLE level IRQ behavior
+W1C clear followed by same-event re-arm
+QUEUE_COMMAND_COMPLETED_EVENT after CQ completion commit
+CQ_NOT_EMPTY_EVENT after CQ occupancy becomes non-zero
+QUEUE_DRAINED_EVENT on empty-SQ drain
+QUEUE_STOPPED_EVENT on graceful STOP_QUEUE command-boundary stop
+QUEUE_ERROR_EVENT on queue validation error
+```
+
+The canonical event CSR map remains:
+
+```text
+P22 event notification window: 0x600 - 0x63C
+```
+

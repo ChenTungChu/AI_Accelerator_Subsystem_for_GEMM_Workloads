@@ -1,8 +1,8 @@
-# P22 Event Notification / Interrupt-Lite Prototype Spec
+# P22 Event Notification / Interrupt-Lite Spec
 
 ## 1. Purpose
 
-This document defines the P22A/P22B event notification / interrupt-lite prototype for the AI Accelerator Subsystem.
+This document defines the P22 event notification / interrupt-lite layer for the AI Accelerator Subsystem.
 
 P19 introduced a host-visible submission queue and completion queue around the existing P17 descriptor-fetch and P18 completion-writeback path:
 
@@ -50,12 +50,21 @@ queue completion / drained / stopped / error / CQ backpressure / runtime doorbel
 
 P22 does not replace the completion queue.  The completion record in CQ memory remains the authoritative per-command result.  P22 only adds a summary notification mechanism that tells software that something worth checking has happened.
 
-Current baseline entering P22A/P22B:
+Baseline entering P22A/P22B:
 
 ```text
 P21H runtime doorbell / live queue service closure:
   TOTAL : 121
   PASS  : 121
+  FAIL  : 0
+```
+
+Current closure after P22G/P22H:
+
+```text
+P22 event notification / interrupt-lite closure:
+  TOTAL : 125
+  PASS  : 125
   FAIL  : 0
 ```
 
@@ -521,45 +530,44 @@ Runtime appends do not bypass STOP_QUEUE or STOP_AFTER_THIS.  P22 may notify tha
 
 ---
 
-## 12. Suggested RTL Delta for Later P22C/P22D
+## 12. Implemented RTL Delta for P22C/P22D/P22E
 
-P22A/P22B do not implement RTL, but the expected RTL delta should remain small.
+P22 keeps the event notification logic integrated into the existing CSR wrapper path.  It does not retain a standalone event CSR block, standalone event injection interface, or standalone event UVM top.
 
-Likely modified RTL:
+Modified RTL:
 
 ```text
 rtl/csr/ai_accel_csr_regs.sv
 rtl/top/ai_accel_subsys_csr_top.sv
 ```
 
-Possible new small RTL:
+Modified UVM top / package integration:
 
 ```text
-rtl/csr/ai_accel_event_notifier.sv
+tb/top/ai_accel_subsys_csr_uvm_top.sv
+tb/uvm/helper/ai_accel_csr_access_helper.sv
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
 ```
 
-Expected event notifier inputs:
+Event source inputs are generated from existing queue and CSR state transitions:
 
 ```text
-queue_command_completed_pulse
-queue_drained_pulse
-queue_stopped_pulse
-queue_error_pulse
-cq_full_stall_pulse
-cq_space_recovered_pulse
-runtime_doorbell_pulse
-runtime_append_consumed_pulse
-queue pointer/status snapshot buses
+queue command completion / CQ commit
+queue drained terminal state
+queue stopped terminal state
+queue validation / propagated error
+CQ non-empty observation
+software TEST_EVENT command
 ```
 
-Expected event notifier outputs:
+Event outputs remain summary-only:
 
 ```text
-event_pending_status
-event_irq
+CSR_EVENT_PENDING / CSR_EVENT_STATUS CSR readback
+event_irq interrupt-lite summary output
 ```
 
-No BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath module should be modified for P22.
+No BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath module is modified for P22.
 
 ---
 
@@ -570,15 +578,15 @@ Recommended P22 milestone split:
 ```text
 P22A: Event notification / interrupt-lite prototype spec
 P22B: Event CSR register map freeze
-P22C: Event CSR block plumbing / standalone event smoke
-P22D: Queue completion / drained event notification smoke
-P22E: Queue stopped / error / CQ backpressure event smoke
+P22C: Integrated Event CSR smoke
+P22D: Queue completion event smoke
+P22E: Queue drained / stopped / error event smoke
 P22F: Event mask / W1C clear / re-arm behavior
 P22G: Full regression integration
-P22H: Docs closure
+P22H: Documentation closure
 ```
 
-### 13.1 P22C Standalone Event CSR Smoke
+### 13.1 P22C Integrated Event CSR Smoke
 
 Purpose:
 
@@ -592,9 +600,10 @@ validate CLEAR_EVENT_PENDING command
 validate event counter and last-cause snapshots
 validate event_irq disabled by default
 validate event_irq when globally enabled and enabled pending bit is set
+validate the event CSR window inside `ai_accel_subsys_csr_uvm_top`, without a standalone event top
 ```
 
-### 13.2 P22D Queue Completion / Drained Event Smoke
+### 13.2 P22D Queue Completion Event Smoke
 
 Purpose:
 
@@ -602,22 +611,20 @@ Purpose:
 run one or more queue commands through the P21 queue path
 wait for CQ completion commit
 check QUEUE_COMMAND_COMPLETED_EVENT pending
-check QUEUE_DRAINED_EVENT pending after SQ empty
 check EVENT_COUNT increments
 check EVENT_LAST_CAUSE captures queue source
 check event_irq behavior when enabled
 verify CQ completion records remain correct
 ```
 
-### 13.3 P22E Queue Stopped / Error / CQ Backpressure Event Smoke
+### 13.3 P22E Queue Drained / Stopped / Error Event Smoke
 
 Purpose:
 
 ```text
 validate QUEUE_STOPPED_EVENT after STOP_QUEUE or STOP_AFTER_THIS
 validate QUEUE_ERROR_EVENT after a queue reject/error condition
-validate CQ_FULL_STALL_EVENT when CQ space is zero
-validate CQ_SPACE_RECOVERED_EVENT after host advances CQ_HEAD
+validate QUEUE_DRAINED_EVENT after empty-SQ drain
 validate event pending bits can be cleared independently
 ```
 
@@ -643,10 +650,10 @@ P22G should add a small representative subset to full regression.
 Recommended full-regression representatives:
 
 ```text
-csr_event_regs_smoke
-csr_queue_completion_drained_event_case102
-csr_queue_stop_error_cq_event_case102
-csr_event_mask_clear_rearm_case102
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
 ```
 
 Expected count increase:
@@ -671,8 +678,6 @@ event pending / enable / control registers are implemented
 event_irq output is implemented at the CSR wrapper boundary
 queue command-completed event is validated after CQ commit
 queue drained / stopped / error events are validated
-CQ full stall and CQ space recovery events are validated
-runtime doorbell summary events are validated or explicitly left as optional debug events
 W1C pending clear and interrupt deassertion are validated
 full regression passes with P22 representatives
 no BRAM / GEMM / DMA / frontend datapath changes are required
@@ -680,7 +685,39 @@ no BRAM / GEMM / DMA / frontend datapath changes are required
 
 ---
 
-## 16. Interview Summary
+## 16. P22 Validation Result and Closure Status
+
+P22G closes event notification / interrupt-lite through targeted validation and full-regression integration.
+
+Validated targeted tests:
+
+```text
+ai_accel_subsys_event_csr_smoke_test
+ai_accel_subsys_csr_queue_completion_event_smoke_test
+ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
+ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test
+```
+
+Validated full-regression representatives:
+
+```text
+csr_event_csr_smoke
+csr_queue_completion_event_case102
+csr_queue_drained_stopped_error_event_case102
+csr_event_mask_w1c_rearm
+```
+
+Full regression after P22G:
+
+```text
+TOTAL : 125
+PASS  : 125
+FAIL  : 0
+```
+
+P22H documentation closure records the validated notification behavior without adding a new standalone CSR block, changing the SQ/CQ formats, changing the CQ completion record format, or modifying BRAM / GEMM / DMA / frontend datapaths.
+
+## 17. Interview Summary
 
 P22 adds the missing notification layer above the live host-visible queue.
 
