@@ -1,8 +1,8 @@
-# P18A Completion Writeback Prototype Spec
+# P18 Completion Writeback Prototype Spec
 
 ## 1. Purpose
 
-This document defines the P18A completion-writeback prototype for the AI Accelerator Subsystem.
+This document defines the P18 completion-writeback prototype for the AI Accelerator Subsystem.
 
 P17 completed the memory-resident command ingress path:
 
@@ -135,32 +135,7 @@ ai_accel_subsys_csr_top
         -> external completion-memory AXI write master
 ```
 
-### 4.2 Relationship to P19 Completion Queue
-
-P19 wraps P18 without changing the P18 completion record format or commit-last visibility policy.  In the P19 queue flow, the completion base address is selected from the CQ pointer state instead of only from the standalone `CSR_COMP_BASE_ADDR` debug path:
-
-```text
-completion_base = CSR_CQ_BASE_ADDR + ((CSR_CQ_TAIL % CSR_CQ_DEPTH) * CSR_CQ_STRIDE)
-```
-
-The existing P18 completion writeback engine still owns the memory write ordering:
-
-```text
-write completion payload words first
-rewrite / commit word0 with VALID=1 last
-report completion done only after commit BRESP succeeds
-```
-
-P19 advances `CSR_CQ_TAIL` only after the P18 completion commit has completed successfully.  If completion writeback fails before commit, the CQ tail does not advance and CSR queue / completion error status is the authoritative debug path.
-
-Validated P19 completion-queue flows:
-
-```text
-csr_queue_completion_wb_case102
-csr_queue_reject_error_case102
-```
-
-### 4.3 P18 Does Not Replace CSR Status
+### 4.2 P18 Does Not Replace CSR Status
 
 P18 adds a memory-visible completion record.  It does not remove or redefine existing CSR status registers.
 
@@ -911,19 +886,96 @@ It preserves all validated datapath blocks.
 
 ---
 
-## 19. P18A Closure Status
+## 19. P18A / P18B Closure Status
 
 P18A is considered complete when this spec is added to the docs set and reviewed as the contract for P18B/P18C.
 
 Current status:
 
 ```text
-P18A: Completion writeback prototype spec    DRAFT
+P18A: Completion writeback prototype spec          PASS
+P18B: Completion record format / CSR map freeze    PASS
 ```
 
 
 ---
 
-## P19 completion queue integration note
+## 20. P18B Record / CSR Map Freeze Addendum
 
-P19G validates that the P18 completion writeback engine can be driven by a CQ slot address while preserving the same 64-byte record format and commit-last policy.  The P18 standalone CSR smoke and error/busy/clear coverage remain valid, and the P19 queue path adds CQ pointer advancement after completion commit.
+P18B freezes the exact completion record layout, CSR register map, bit definitions, 64-bit AXI packing rule, and no-partial-WSTRB first implementation write order.  The register map and record layout are documented in the AXI-Lite CSR control-plane spec rather than in a standalone map document.
+
+The companion document is:
+
+```text
+docs/axi_lite_csr_control_plane_spec.md
+```
+
+Key frozen P18B decisions:
+
+```text
+Completion record size             : 64 bytes
+Completion logical words           : 16 x 32-bit
+Completion commit word             : word0, written last
+Completion status word             : word1
+Completion CSR window              : 0x540 - 0x57C
+Completion version reset           : 0x0001_0018
+Completion control reset           : 0x0000_0007
+Completion base alignment          : DATA_WIDTH/8 bytes
+First implementation AXI policy    : 64-bit single-beat writes, AWLEN=0
+First implementation commit policy : rewrite base+0x00 beat at commit time
+DATA_WIDTH=64 write count          : 9 single-beat writes
+```
+
+P18B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  The completion record format and CSR map are integrated into `docs/axi_lite_csr_control_plane_spec.md` instead of creating a separate record/map document, keeping the docs set compact.  This integrated CSR spec is the frozen contract for P18C/P18D implementation.
+
+
+---
+
+## 21. P24B Timeout Completion Record Policy
+
+P24B does not change the 64-byte P18 completion record size or the commit-last visibility rule.
+
+A timeout completion record, when produced, uses the existing P18 record format:
+
+```text
+COMP_COMMIT.VALID        = 1
+COMP_COMMIT.OVERALL_DONE = 0
+COMP_COMMIT.OVERALL_ERROR = 1
+COMP_COMMIT.OVERALL_REJECT = 0 unless the timeout was reporting a reject-completion path
+COMP_STATUS_FLAGS.QUEUE_TIMEOUT = 1
+COMP_ERROR_DETAIL mirrors CSR_QUEUE_ERROR_DETAIL when practical
+```
+
+Recommended timeout commit value pattern:
+
+```text
+VALID=1, OVERALL_ERROR=1, FEATURE_ID=0x18, VERSION=1.0
+Conceptual COMP_COMMIT value: 0x0100_1805
+```
+
+P24B extends `COMP_STATUS_FLAGS` by consuming the first reserved status bit:
+
+| Bit | Name | Description |
+|---:|---|---|
+| 10 | `QUEUE_TIMEOUT` | Queue watchdog expired for the accepted SQ command represented by this completion record. |
+
+All existing lower-level snapshot words remain unchanged.  For a queue-level timeout record:
+
+```text
+COMP_FIRST_USER_TAG / COMP_LAST_USER_TAG may both carry the active SQ CMD_USER_TAG
+COMP_COUNT_SUMMARY keeps the command descriptor count and any available fetched/completed count snapshots
+COMP_DESC_FETCH_* and COMP_RECIPE_* words carry available sticky snapshots at timeout capture
+COMP_PERF_* words carry available performance snapshots or zero when no valid snapshot exists
+COMP_ERROR_DETAIL carries DETAIL_COMMAND_TIMEOUT or a phase-specific DETAIL_TIMEOUT_* code
+```
+
+If the completion writeback engine itself is the stalled or timed-out path, P24 must not require a second nested completion writeback to report that timeout.  In that case:
+
+```text
+CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR is authoritative
+CSR_QUEUE_ERROR_DETAIL is authoritative
+CSR_CQ_TAIL must not advance unless a valid timeout completion record was committed
+host runtime must handle CSR-only timeout reporting
+```
+
+This keeps the timeout mechanism from depending on the same blocked completion path that it is trying to diagnose.

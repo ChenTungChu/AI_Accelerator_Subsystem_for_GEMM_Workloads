@@ -1,3 +1,5 @@
+# P24C compile script: queue timeout watchdog RTL compile smoke
+# Derived from the P22D integrated CSR/queue/event compile flow.
 # --------------------------------------------------------
 # Clean & create work
 # --------------------------------------------------------

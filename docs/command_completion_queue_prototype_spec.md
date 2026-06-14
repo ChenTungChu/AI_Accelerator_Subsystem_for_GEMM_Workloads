@@ -405,7 +405,7 @@ The host should write payload words first and write `CMD_CONTROL.VALID=1` last. 
 | 0x0C | 3  | `CMD_DESC_COUNT` | Number of descriptors to fetch. |
 | 0x10 | 4  | `CMD_DESC_STRIDE` | Byte stride between descriptors. |
 | 0x14 | 5  | `CMD_COMPLETION_FLAGS` | Completion policy / reserved debug flags. |
-| 0x18 | 6  | `CMD_TIMEOUT_CYCLES` | Optional timeout budget. Zero disables timeout in P19A. |
+| 0x18 | 6  | `CMD_TIMEOUT_CYCLES` | P24 per-command watchdog budget in dma_clk cycles. Zero disables timeout for this command. |
 | 0x1C | 7  | `CMD_RESERVED_07` | Reserved. |
 | 0x20 | 8  | `CMD_RESERVED_08` | Reserved. |
 | 0x24 | 9  | `CMD_RESERVED_09` | Reserved. |
@@ -451,6 +451,25 @@ underlying P17/P18/P16/P15 engines are idle before command acceptance
 ```
 
 Invalid command entries become queue-level command rejects.  If the command entry was fetched from SQ and CQ space is available, P19 should write a reject completion record into CQ using the P18 completion writeback path where practical.  If completion writeback cannot be attempted, CSR queue error status is authoritative.
+
+### 8.4 P24B `CMD_TIMEOUT_CYCLES` Semantics
+
+P24B freezes word6 as a per-command watchdog budget.
+
+```text
+CMD_TIMEOUT_CYCLES == 0
+  timeout disabled; legacy P19/P20/P21/P22/P23 behavior is preserved
+
+CMD_TIMEOUT_CYCLES != 0
+  value is snapshotted when the SQ command is accepted
+  watchdog counts dma_clk cycles while the accepted command owns the queue active context
+  if terminal queue status arrives first, watchdog is cleared normally
+  if watchdog expires first, the queue reports COMMAND_TIMEOUT_ERROR
+```
+
+The timeout budget is part of the active command snapshot.  Host writes to the SQ entry after command acceptance must not modify the active timeout budget.
+
+CQ-full before command acceptance does not start the command watchdog.  Command fetch errors before command contents are known use the existing command-fetch error policy, not the timeout policy.
 
 ---
 
@@ -918,6 +937,29 @@ P19 stops if STOP_ON_ERROR=1
 CSR completion-writeback status is authoritative for writeback failure detail
 ```
 
+### 16.5 P24B Command Timeout Error
+
+If an accepted SQ command has `CMD_TIMEOUT_CYCLES != 0` and the watchdog expires before terminal queue status:
+
+```text
+P24 sets CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR
+P24 records DETAIL_COMMAND_TIMEOUT or a phase-specific DETAIL_TIMEOUT_* code in CSR_QUEUE_ERROR_DETAIL
+P24 records the active SQ/CQ physical index in CSR_QUEUE_ERROR_INDEX
+P24 preserves CSR_QUEUE_LAST_CMD_TAG / CSR_QUEUE_LAST_CMD_CONTROL for the timed-out command
+P24 stops the active queue service session when STOP_ON_ERROR=1
+P22 raises QUEUE_ERROR_EVENT
+```
+
+Pointer policy:
+
+```text
+SQ_HEAD advances when the accepted command is converted into a timeout terminal status
+CQ_TAIL advances only if a timeout completion record commits successfully
+CQ_TAIL must not advance if the completion writeback path is the timed-out path and no valid CQ record was committed
+```
+
+If a timeout CQ record is committed, the record uses the existing P18 64-byte completion format with `OVERALL_ERROR=1` and the P24 timeout status/detail encoding.  If no timeout CQ record is committed, the queue CSR error status is authoritative.
+
 ---
 
 ## 17. Memory Ordering and Commit Policy
@@ -1247,3 +1289,25 @@ csr_event_driven_cq_full_stop_error_case102
 
 P23 does not change the P19 SQ command entry, P18 CQ completion record, queue CSR window, monotonic head/tail pointer model, or single-active-command execution policy.  It validates that a host runtime can use those existing mechanisms as a complete submit / notify / consume / recover loop.
 
+
+
+---
+
+## 24. P24 Timeout / Watchdog Policy Freeze
+
+P24B converts the existing `CMD_TIMEOUT_CYCLES` SQ word from optional debug metadata into the canonical per-command watchdog budget.
+
+Frozen P24B queue policy:
+
+```text
+No SQ entry size change
+No CQ entry size change
+No queue CSR address change
+No P22 event bit change
+CMD_TIMEOUT_CYCLES=0 preserves existing behavior
+Accepted command timeout sets CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR
+Timeout wakes the host through P22 QUEUE_ERROR_EVENT
+Timeout completion records are optional and must follow the existing P18 commit-last policy
+```
+
+The queue runtime remains correctness-first and single-active-command.  Timeout does not introduce preemption, rollback, out-of-order completion, or a new lower-level abort protocol.

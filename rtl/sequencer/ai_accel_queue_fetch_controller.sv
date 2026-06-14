@@ -1,15 +1,20 @@
+// File: rtl/sequencer/ai_accel_queue_fetch_controller.sv
 // ============================================================
 // ai_accel_queue_fetch_controller
 // ============================================================
-// P19F single-outstanding command queue fetch controller.
+// P24C single-outstanding command queue fetch controller.
 //
-// Scope through P19F:
+// Scope through P24C:
 //   - Reads one 64-byte SQ command entry from command memory.
 //   - Parses and validates the command entry.
 //   - Presents one accepted/rejected command context to downstream logic.
 //   - Does not launch P17 descriptor fetch directly yet.
 //   - Does not update SQ_HEAD / CQ_TAIL directly.
 //   - Adds queue disabled / invalid config / empty / full / bad pointer handling.
+//   - Exposes CMD_TIMEOUT_CYCLES from SQ word6 to the wrapper-level
+//     P24C watchdog. Runtime timeout detection remains in the CSR top
+//     queue glue because this fetch block does not own the downstream
+//     descriptor/recipe/completion terminal state.
 //
 // Integration intent for P19D/P19E:
 //   cmd_valid/cmd_ready handshake becomes the boundary into the existing
@@ -168,7 +173,7 @@ module ai_accel_queue_fetch_controller #(
     localparam int Q_REJ_BAD_POINTER       = 3;
     localparam int Q_REJ_UNSUPPORTED_COMBO = 5;
 
-    // Error detail encodings used by this P19F RTL.
+    // Error detail encodings used by this P24C RTL.
     localparam logic [31:0] ERR_NONE                 = 32'h0000_0000;
     localparam logic [31:0] ERR_DISABLED             = 32'h0000_0001;
     localparam logic [31:0] ERR_INVALID_CFG          = 32'h0000_0002;
@@ -637,11 +642,11 @@ module ai_accel_queue_fetch_controller #(
     assign queue_cq_occupancy  = cq_occupancy_w;
     assign queue_cq_space      = cq_space_w;
 
-    // P19F baseline is defined for 64-bit AXI data width.
+    // P24C baseline is defined for 64-bit AXI data width.
     // Keep this as a simulation-time guard rather than adding a second unverified path.
     initial begin
         if (DATA_WIDTH != 64) begin
-            $error("ai_accel_queue_fetch_controller P19F supports DATA_WIDTH=64 in the current baseline");
+            $error("ai_accel_queue_fetch_controller P24C supports DATA_WIDTH=64 in the current baseline");
         end
         if (SQ_ENTRY_BYTES != 64) begin
             $error("ai_accel_queue_fetch_controller P19C expects SQ_ENTRY_BYTES=64");

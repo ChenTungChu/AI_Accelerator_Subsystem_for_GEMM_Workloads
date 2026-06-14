@@ -684,6 +684,35 @@ module ai_accel_subsys_csr_top #(
     logic                      queue_cmd_stop_after_this_q;
     logic                      queue_stop_requested_q;
 
+    // P24C queue command timeout watchdog.
+    // The watchdog starts when a queue-owned command is accepted into
+    // the descriptor-fetch path.  CMD_TIMEOUT_CYCLES == 0 disables the
+    // watchdog for that command.  A timeout becomes a queue-level sticky
+    // error and is observed by the existing P22 QUEUE_ERROR_EVENT path.
+    localparam int P24_QUEUE_ERROR_TIMEOUT_BIT = 6;
+    localparam logic [7:0] P24_DETAIL_COMMAND_TIMEOUT          = 8'h0C;
+    localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_DESC_FETCH    = 8'h0D;
+    localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_RECIPE        = 8'h0E;
+    localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_COMPLETION_WB = 8'h0F;
+    localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_QUEUE_ADVANCE = 8'h10;
+
+    logic                      queue_timeout_watchdog_active_q;
+    logic [31:0]               queue_timeout_budget_q;
+    logic [31:0]               queue_timeout_count_q;
+    logic [7:0]                queue_timeout_sq_index_q;
+    logic [7:0]                queue_timeout_cq_index_q;
+    logic [31:0]               queue_timeout_user_tag_q;
+    logic [31:0]               queue_timeout_error_status_q;
+    logic [31:0]               queue_timeout_error_detail_q;
+    logic                      queue_timeout_pulse_i;
+
+    logic                      queue_completion_commit_raw_i;
+    logic                      queue_completion_error_raw_i;
+
+    logic                      queue_error_pulse_to_csr;
+    logic [31:0]               queue_error_status_to_csr;
+    logic [31:0]               queue_error_detail_to_csr;
+
     // ============================================================
     // P16 recipe sequencer outputs and status
     // ============================================================
@@ -870,8 +899,38 @@ module ai_accel_subsys_csr_top #(
                                         ds_load_busy_i    ||
                                         dma_store_busy_i;
 
+    function automatic logic [7:0] p24_timeout_detail_code;
+        begin
+            if (queue_completion_active_q || completion_wb_busy_i) begin
+                p24_timeout_detail_code = P24_DETAIL_TIMEOUT_IN_COMPLETION_WB;
+            end else if (recipe_busy_i || job_busy_i || acc_busy_i ||
+                         dma_load_busy_i || axis_load_busy_i ||
+                         ds_load_busy_i || dma_store_busy_i) begin
+                p24_timeout_detail_code = P24_DETAIL_TIMEOUT_IN_RECIPE;
+            end else if (desc_fetch_busy_i) begin
+                p24_timeout_detail_code = P24_DETAIL_TIMEOUT_IN_DESC_FETCH;
+            end else begin
+                p24_timeout_detail_code = P24_DETAIL_COMMAND_TIMEOUT;
+            end
+        end
+    endfunction
+
+    function automatic logic [31:0] p24_build_timeout_detail(
+        input logic [7:0] detail_code,
+        input logic [7:0] sq_index,
+        input logic [7:0] cq_index
+    );
+        begin
+            // P24B policy: low byte carries the timeout detail code.
+            // The next bytes preserve the active SQ/CQ physical indices
+            // so software can correlate the timeout with the queue slot.
+            p24_build_timeout_detail = {8'h00, cq_index, sq_index, detail_code};
+        end
+    endfunction
+
     assign queue_underlying_idle_i = !desc_fetch_start_blocked_i &&
-                                     !completion_wb_busy_i;
+                                     !completion_wb_busy_i &&
+                                     (queue_timeout_error_status_q == 32'h0000_0000);
 
     assign queue_cmd_ready_i = queue_cmd_valid_i &&
                                (queue_cmd_reject_i ||
@@ -916,13 +975,29 @@ module ai_accel_subsys_csr_top #(
             queue_completion_active_q        <= 1'b0;
             queue_cmd_stop_after_this_q      <= 1'b0;
             queue_auto_continue_pending_q    <= 1'b0;
-            queue_stop_requested_q        <= 1'b0;
+            queue_stop_requested_q           <= 1'b0;
+
+            queue_timeout_watchdog_active_q  <= 1'b0;
+            queue_timeout_budget_q           <= 32'h0000_0000;
+            queue_timeout_count_q            <= 32'h0000_0000;
+            queue_timeout_sq_index_q         <= 8'h00;
+            queue_timeout_cq_index_q         <= 8'h00;
+            queue_timeout_user_tag_q         <= 32'h0000_0000;
+            queue_timeout_error_status_q     <= 32'h0000_0000;
+            queue_timeout_error_detail_q     <= 32'h0000_0000;
         end else begin
             if (queue_desc_fetch_start_pulse) begin
                 queue_completion_context_valid_q <= 1'b1;
                 queue_completion_base_addr_q     <= queue_cmd_completion_base_addr_i;
                 queue_completion_flags_q         <= queue_cmd_completion_flags_i;
                 queue_cmd_stop_after_this_q      <= queue_cmd_stop_after_this_i;
+
+                queue_timeout_watchdog_active_q <= (queue_cmd_timeout_cycles_i != 32'h0000_0000);
+                queue_timeout_budget_q          <= queue_cmd_timeout_cycles_i;
+                queue_timeout_count_q           <= 32'h0000_0000;
+                queue_timeout_sq_index_q        <= queue_cmd_sq_index_i;
+                queue_timeout_cq_index_q        <= queue_cmd_cq_index_i;
+                queue_timeout_user_tag_q        <= queue_cmd_user_tag_i;
             end else if (csr_desc_fetch_start_pulse && !desc_fetch_start_blocked_i) begin
                 queue_completion_context_valid_q <= 1'b0;
                 queue_completion_flags_q         <= 32'h0000_0000;
@@ -934,7 +1009,9 @@ module ai_accel_subsys_csr_top #(
                                              queue_completion_flags_q[0];
             end
 
-            if (queue_completion_commit_pulse_i || queue_completion_error_pulse_i) begin
+            if (queue_completion_commit_raw_i ||
+                queue_completion_error_raw_i ||
+                queue_timeout_pulse_i) begin
                 queue_completion_active_q        <= 1'b0;
                 queue_completion_context_valid_q <= 1'b0;
             end
@@ -948,6 +1025,7 @@ module ai_accel_subsys_csr_top #(
                 queue_auto_continue_pending_q <= 1'b1;
             end else if (queue_auto_continue_start_pulse_i ||
                          queue_completion_error_pulse_i ||
+                         queue_timeout_pulse_i ||
                          csr_queue_clear_error_pulse ||
                          csr_queue_clear_done_pulse ||
                          csr_queue_stop_pulse ||
@@ -965,22 +1043,66 @@ module ai_accel_subsys_csr_top #(
             end else if (csr_queue_stop_pulse) begin
                 queue_stop_requested_q <= 1'b1;
             end
+
+            if (csr_queue_clear_error_pulse || !csr_queue_enable) begin
+                queue_timeout_watchdog_active_q <= 1'b0;
+                queue_timeout_budget_q          <= 32'h0000_0000;
+                queue_timeout_count_q           <= 32'h0000_0000;
+                queue_timeout_error_status_q    <= 32'h0000_0000;
+                queue_timeout_error_detail_q    <= 32'h0000_0000;
+            end else if (queue_completion_commit_raw_i || queue_completion_error_raw_i) begin
+                queue_timeout_watchdog_active_q <= 1'b0;
+                queue_timeout_count_q           <= 32'h0000_0000;
+            end else if (queue_timeout_pulse_i) begin
+                queue_timeout_watchdog_active_q <= 1'b0;
+                queue_timeout_error_status_q[P24_QUEUE_ERROR_TIMEOUT_BIT] <= 1'b1;
+                queue_timeout_error_detail_q <= p24_build_timeout_detail(
+                    p24_timeout_detail_code(),
+                    queue_timeout_sq_index_q,
+                    queue_timeout_cq_index_q
+                );
+            end else if (queue_timeout_watchdog_active_q) begin
+                queue_timeout_count_q <= queue_timeout_count_q + 32'd1;
+            end
         end
     end
 
-    assign queue_completion_commit_pulse_i = queue_completion_active_q &&
-                                             completion_wb_done_i;
+    assign queue_completion_commit_raw_i = queue_completion_active_q &&
+                                           completion_wb_done_i;
 
-    assign queue_completion_error_pulse_i = queue_completion_active_q &&
-                                            (completion_wb_error_i || completion_wb_reject_i);
+    assign queue_completion_error_raw_i = queue_completion_active_q &&
+                                          (completion_wb_error_i || completion_wb_reject_i);
+
+    assign queue_timeout_pulse_i = queue_timeout_watchdog_active_q &&
+                                   (queue_timeout_budget_q != 32'h0000_0000) &&
+                                   (queue_timeout_count_q >= (queue_timeout_budget_q - 32'd1)) &&
+                                   !queue_completion_commit_raw_i &&
+                                   !queue_completion_error_raw_i;
+
+    assign queue_completion_commit_pulse_i = queue_completion_commit_raw_i &&
+                                             (queue_timeout_error_status_q == 32'h0000_0000);
+
+    assign queue_completion_error_pulse_i = (queue_completion_error_raw_i &&
+                                             (queue_timeout_error_status_q == 32'h0000_0000)) ||
+                                            queue_timeout_pulse_i;
+
+    assign queue_error_status_to_csr = queue_error_status_i | queue_timeout_error_status_q;
+
+    assign queue_error_pulse_to_csr = queue_error_pulse_i | queue_timeout_pulse_i;
+
+    assign queue_error_detail_to_csr = (queue_timeout_error_status_q != 32'h0000_0000) ?
+                                       queue_timeout_error_detail_q :
+                                       queue_error_detail_i;
 
     assign queue_auto_continue_start_pulse_i = queue_auto_continue_pending_q &&
                                                csr_queue_enable &&
                                                csr_queue_run_until_empty &&
-                                               !queue_busy_i;
+                                               !queue_busy_i &&
+                                               (queue_timeout_error_status_q == 32'h0000_0000);
 
-    assign queue_start_pulse_to_controller = csr_queue_start_pulse ||
-                                             queue_auto_continue_start_pulse_i;
+    assign queue_start_pulse_to_controller = (csr_queue_start_pulse ||
+                                             queue_auto_continue_start_pulse_i) &&
+                                             (queue_timeout_error_status_q == 32'h0000_0000);
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -1196,16 +1318,16 @@ module ai_accel_subsys_csr_top #(
         .queue_drained_pulse            (queue_drained_pulse_i),
         .queue_cmd_fetched_pulse        (queue_cmd_fetched_pulse_i),
         .queue_cmd_validated_pulse      (queue_cmd_validated_pulse_i),
-        .queue_error_pulse              (queue_error_pulse_i),
+        .queue_error_pulse              (queue_error_pulse_to_csr),
         .queue_reject_pulse             (queue_reject_pulse_i),
         .queue_cq_full_stall            (queue_cq_full_stall_i),
         .queue_done_status              (queue_done_status_i),
-        .queue_error_status             (queue_error_status_i),
+        .queue_error_status             (queue_error_status_to_csr),
         .queue_reject_status            (queue_reject_status_i),
         .queue_state                    (queue_state_i),
         .queue_current_index            (queue_current_index_i),
         .queue_error_index              (queue_error_index_i),
-        .queue_error_detail             (queue_error_detail_i),
+        .queue_error_detail             (queue_error_detail_to_csr),
         .queue_last_cmd_tag             (queue_last_cmd_tag_i),
         .queue_last_cmd_control         (queue_last_cmd_control_i),
         .queue_sq_occupancy             (queue_sq_occupancy_i),
@@ -1286,6 +1408,10 @@ module ai_accel_subsys_csr_top #(
     // publish the terminal record into completion queue memory.
     // P20C keeps single-active-command execution and adds wrapper-level
     // auto-continue pulses after CQ commit when RUN_UNTIL_EMPTY is set.
+    // P24C adds a wrapper-level per-command watchdog using the SQ
+    // CMD_TIMEOUT_CYCLES field. Timeout detection is reported through
+    // the existing queue error/status/event path without adding a new
+    // CSR window or changing SQ/CQ entry layout.
     // ============================================================
     ai_accel_queue_fetch_controller #(
         .ADDR_WIDTH          (ADDR_WIDTH),
@@ -1513,13 +1639,19 @@ module ai_accel_subsys_csr_top #(
             completion_wb_auto_perf_output_count_q  <= 32'h0000_0000;
             completion_wb_auto_error_detail_q       <= 32'h0000_0000;
         end else begin
-            if (csr_desc_fetch_clear_error_pulse || csr_desc_fetch_clear_done_pulse) begin
+            if (queue_timeout_pulse_i) begin
+                // The queue command has reached a P24 timeout terminal
+                // condition. Suppress any later normal auto-completion
+                // from a delayed lower-level done pulse for this command.
+                desc_fetch_context_valid_q   <= 1'b0;
+                completion_wb_auto_pending_q <= 1'b0;
+            end else if (csr_desc_fetch_clear_error_pulse || csr_desc_fetch_clear_done_pulse) begin
                 if (!recipe_busy_i && !completion_wb_busy_i) begin
                     desc_fetch_context_valid_q <= 1'b0;
                 end
             end
 
-            if (desc_fetch_recipe_start_pulse) begin
+            if (desc_fetch_recipe_start_pulse && !queue_timeout_pulse_i) begin
                 desc_fetch_context_valid_q    <= 1'b1;
                 desc_fetch_programmed_count_q <= {4'h0, desc_fetch_recipe_count_i};
                 desc_fetch_fetched_count_q    <= {4'h0, desc_fetch_fetched_count_i};
@@ -1531,7 +1663,10 @@ module ai_accel_subsys_csr_top #(
                 desc_fetch_reject_status_q    <= desc_fetch_reject_status_i;
             end
 
-            if (desc_fetch_context_valid_q && recipe_done_i) begin
+            if (desc_fetch_context_valid_q &&
+                recipe_done_i &&
+                (queue_timeout_error_status_q == 32'h0000_0000) &&
+                !queue_timeout_pulse_i) begin
                 completion_wb_auto_pending_q              <= 1'b1;
                 completion_wb_auto_status_flags_q         <= completion_wb_auto_status_flags_next;
                 completion_wb_auto_recipe_done_status_q   <= completion_wb_auto_recipe_done_status_next;
@@ -1555,7 +1690,9 @@ module ai_accel_subsys_csr_top #(
 
     assign completion_wb_auto_start_pulse = completion_wb_auto_pending_q &&
                                             !completion_wb_busy_i &&
-                                            csr_completion_wb_enable;
+                                            csr_completion_wb_enable &&
+                                            (queue_timeout_error_status_q == 32'h0000_0000) &&
+                                            !queue_timeout_pulse_i;
 
     assign completion_wb_start_to_engine = csr_completion_wb_start_pulse |
                                            completion_wb_auto_start_pulse;

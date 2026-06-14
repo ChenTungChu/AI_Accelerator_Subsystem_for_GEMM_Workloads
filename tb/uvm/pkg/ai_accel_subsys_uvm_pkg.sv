@@ -221,6 +221,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_event_driven_runtime_append_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_event_driven_cq_full_stop_error_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P24 queue timeout / watchdog tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test.sv"
+
 endpackage
 
 `endif

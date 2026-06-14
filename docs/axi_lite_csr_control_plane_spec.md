@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, and P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, and P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window.
 
 ---
 
@@ -29,6 +29,7 @@ K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
 Full UVM regression baseline passing 129/129 after P23G event-driven host runtime closure
+P24B timeout / watchdog CSR policy clarification without new CSR addresses
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -860,9 +861,11 @@ Sticky error bits are cleared by W1C writes or by `CSR_QUEUE_COMMAND.CLEAR_QUEUE
 | 3 | `RECIPE_ERROR` | RO/W1C | P16 recipe error propagated to queue level. |
 | 4 | `COMPLETION_WB_ERROR` | RO/W1C | P18 completion writeback error propagated to queue level. |
 | 5 | `QUEUE_POINTER_ERROR` | RO/W1C | Queue pointer configuration or occupancy calculation invalid. |
-| 6 | `CQ_FULL_TIMEOUT_ERROR` | RO/W1C | Reserved for future timeout policy. P19B stalls on CQ full. |
+| 6 | `COMMAND_TIMEOUT_ERROR` | RO/W1C | P24 per-command watchdog expired before the accepted SQ command reached terminal queue status. CQ-full pre-acceptance stall remains a stall, not this error. |
 | 7 | `CONFIG_WRITE_BUSY_ERROR` | RO/W1C | Queue base/depth/stride config write attempted while queue busy. |
 | 8 | `INTERNAL_SEQUENCE_ERROR` | RO/W1C | Queue FSM reached an illegal state or unexpected terminal condition. |
+
+P24B freezes bit 6 as the queue command timeout indication.  The bit is set only for an accepted SQ command whose snapshotted `CMD_TIMEOUT_CYCLES` value is non-zero and whose watchdog expires before terminal queue status.  It is not used for normal CQ-full stalls before command acceptance.  Timeout is a queue-level error subtype, so `CSR_QUEUE_STATUS.QUEUE_ERROR` is also asserted and P22 reports the condition through `QUEUE_ERROR_EVENT`.
 
 #### 10.9.6 `CSR_QUEUE_CONTROL` at 0x594
 
@@ -954,10 +957,30 @@ Recommended `DETAIL_CODE` values:
 | 0x09 | `DETAIL_RECIPE_ERROR` |
 | 0x0A | `DETAIL_COMPLETION_WB_ERROR` |
 | 0x0B | `DETAIL_INTERNAL_SEQUENCE` |
+| 0x0C | `DETAIL_COMMAND_TIMEOUT` |
+| 0x0D | `DETAIL_TIMEOUT_IN_DESC_FETCH` |
+| 0x0E | `DETAIL_TIMEOUT_IN_RECIPE` |
+| 0x0F | `DETAIL_TIMEOUT_IN_COMPLETION_WB` |
+| 0x10 | `DETAIL_TIMEOUT_IN_QUEUE_ADVANCE` |
 
 `CSR_QUEUE_LAST_CMD_TAG` captures `CMD_USER_TAG` from the last accepted SQ entry.
 
 `CSR_QUEUE_LAST_CMD_CONTROL` captures `CMD_CONTROL` from the last accepted SQ entry.
+
+P24B timeout detail policy:
+
+```text
+CSR_QUEUE_ERROR_STATUS[6] = COMMAND_TIMEOUT_ERROR
+CSR_QUEUE_ERROR_DETAIL[7:0] uses one of the DETAIL_TIMEOUT_* codes above
+CSR_QUEUE_ERROR_DETAIL[15:8] captures the active SQ physical index
+CSR_QUEUE_ERROR_DETAIL[23:16] captures the reserved CQ physical index, when one exists
+CSR_QUEUE_ERROR_DETAIL[31:24] captures the queue FSM state when timeout was recorded
+CSR_QUEUE_ERROR_INDEX uses the same SQ/CQ index packing as the current/error index register
+CSR_QUEUE_LAST_CMD_TAG remains the timed-out command's CMD_USER_TAG
+CSR_QUEUE_LAST_CMD_CONTROL remains the timed-out command's CMD_CONTROL snapshot
+```
+
+If a timeout completion record is successfully committed, `CSR_QUEUE_DONE_STATUS.COMMAND_COMPLETED` may also be set because a CQ-visible terminal record exists.  If the timeout occurs while the completion writeback path itself is stuck and no valid CQ record is committed, `CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR` and `CSR_QUEUE_ERROR_DETAIL` are authoritative; `CSR_CQ_TAIL` must not advance without a valid completion commit.
 
 #### 10.9.10 P19B Frozen Constants
 
@@ -971,6 +994,8 @@ P19_CQ_ENTRY_BYTES       = 0x40
 P19_SQ_STRIDE_RESET      = 0x0000_0040
 P19_CQ_STRIDE_RESET      = 0x0000_0040
 P19_FIRST_OPCODE         = 0x01  // fetch descriptor table and run recipe
+P24_QUEUE_TIMEOUT_ERROR_BIT = 6
+P24_DETAIL_COMMAND_TIMEOUT  = 0x0C
 ```
 
 ---
@@ -2044,3 +2069,23 @@ FAIL  : 0
 
 The canonical CSR map remains unchanged from P22.  P23 is a UVM/helper and validation milestone for the software usage pattern of the existing queue and event CSR windows.
 
+
+
+---
+
+## 24. P24B Timeout / Watchdog CSR Policy Addendum
+
+P24B does not allocate new CSR addresses and does not change the P19 queue CSR window or the P22 event CSR window.
+
+Frozen P24B CSR policy:
+
+```text
+Timeout source field       : SQ command word6 CMD_TIMEOUT_CYCLES
+Timeout disabled value     : CMD_TIMEOUT_CYCLES == 0
+Timeout status bit         : CSR_QUEUE_ERROR_STATUS[6] COMMAND_TIMEOUT_ERROR
+Timeout detail register    : CSR_QUEUE_ERROR_DETAIL
+Timeout error index        : CSR_QUEUE_ERROR_INDEX
+Timeout event notification : P22 QUEUE_ERROR_EVENT
+```
+
+Timeout is a queue-level terminal error for an accepted command.  It is not a new command reject, not a new event bit, and not a new CSR window.  CQ-full before command acceptance remains a recoverable queue stall and does not start the command watchdog.
