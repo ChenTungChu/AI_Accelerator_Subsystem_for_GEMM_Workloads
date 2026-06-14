@@ -2479,6 +2479,52 @@ run_reg_item "csr_event_driven_cq_full_stop_error_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P24G: Queue timeout / watchdog regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P24 targeted validation into the full regression by
+# covering descriptor-fetch watchdog timeout, blocked completion
+# writeback timeout, and event-driven host timeout recovery.
+# Expected total after P24G: 132.
+# ============================================================
+run_reg_item "csr_queue_timeout_desc_fetch_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_timeout_completion_wb_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_timeout_recovery_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_timeout_recovery_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
 # ============================================================
 # Final summary
 # ============================================================

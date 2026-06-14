@@ -979,3 +979,39 @@ host runtime must handle CSR-only timeout reporting
 ```
 
 This keeps the timeout mechanism from depending on the same blocked completion path that it is trying to diagnose.
+
+
+---
+
+## 22. P24 Completion-Writeback Timeout Validation Addendum
+
+P24E validates the timeout case where the accepted queue command reaches the completion-writeback phase but the completion writer is blocked before a valid CQ record commits.
+
+Validated completion-timeout policy:
+
+```text
+blocked completion writeback may be reported through queue CSR timeout status
+DETAIL_TIMEOUT_IN_COMPLETION_WB identifies the blocked completion-writeback phase
+CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR is authoritative
+P22 QUEUE_ERROR_EVENT wakes the host runtime
+CQ_TAIL must not advance when no valid completion commit occurs
+no second nested completion writeback is required when the completion writer itself is the stuck path
+```
+
+Validated P24E/P24F behavior:
+
+```text
+completion writeback B response can be held by TB injection
+watchdog expires while completion_wb_busy remains active
+queue reports timeout through CSR and event notification
+host clears timeout state and runs a valid post-timeout command
+post-timeout command commits a normal P18 CQ record
+```
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```

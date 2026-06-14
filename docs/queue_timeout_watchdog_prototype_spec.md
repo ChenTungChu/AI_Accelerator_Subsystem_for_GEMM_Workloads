@@ -572,12 +572,12 @@ Recommended P24 milestone split:
 ```text
 P24A: Queue timeout / watchdog prototype spec
 P24B: Timeout CSR / completion-record policy update                      PASS
-P24C: Queue controller timeout RTL / compile smoke
-P24D: Descriptor-fetch / recipe wait timeout smoke
-P24E: Completion-writeback timeout or blocked-completion smoke
-P24F: Event-driven host timeout recovery smoke
-P24G: Full regression integration
-P24H: Documentation closure
+P24C: Queue controller timeout RTL / compile smoke                    PASS
+P24D: Descriptor-fetch / recipe wait timeout smoke                    PASS
+P24E: Completion-writeback timeout / blocked-completion smoke        PASS
+P24F: Event-driven host timeout recovery smoke                        PASS
+P24G: Full regression integration                                      PASS
+P24H: Documentation closure                                           PASS
 ```
 
 ### 14.1 P24D Descriptor-Fetch / Recipe Wait Timeout Smoke
@@ -643,7 +643,7 @@ Recommended full-regression representatives:
 ```text
 csr_queue_timeout_desc_fetch_case102
 csr_queue_timeout_completion_wb_case102
-csr_event_driven_timeout_recovery_case102
+csr_queue_timeout_recovery_case102
 ```
 
 Expected count increase:
@@ -717,3 +717,49 @@ CSR status is authoritative when timeout completion writeback is unavailable or 
 ```
 
 P24B is documentation-only.  RTL implementation starts in P24C.
+
+
+---
+
+## 19. P24 Validation Result and Closure Status
+
+P24G closes the queue timeout / watchdog feature through targeted validation and full-regression integration.
+
+Validated targeted tests:
+
+```text
+ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
+ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test
+ai_accel_subsys_csr_queue_timeout_recovery_smoke_test
+```
+
+Validated full-regression representatives:
+
+```text
+csr_queue_timeout_desc_fetch_case102
+csr_queue_timeout_completion_wb_case102
+csr_queue_timeout_recovery_case102
+```
+
+Validated behavior:
+
+```text
+CMD_TIMEOUT_CYCLES=0 leaves the existing queue path compatible
+Descriptor-fetch / recipe-side timeout reports DETAIL_TIMEOUT_IN_DESC_FETCH
+Blocked completion-writeback timeout reports DETAIL_TIMEOUT_IN_COMPLETION_WB
+Timeout sets CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR
+Timeout raises P22 QUEUE_ERROR_EVENT
+Event pending bits are W1C-cleanable after timeout
+Host clears sticky queue/lower-level status and restarts with a valid command
+Post-timeout valid command completes and commits a normal CQ record
+```
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```
+
+P24H documentation closure records the validated timeout policy without adding new CSR windows, new event bits, new SQ/CQ formats, or BRAM / GEMM / DMA / frontend datapath changes.

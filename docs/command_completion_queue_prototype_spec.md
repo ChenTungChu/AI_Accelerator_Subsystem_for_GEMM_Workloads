@@ -46,12 +46,12 @@ P18H / P18I completion-writeback closure:
   FAIL  : 0
 ```
 
-Current closure after P19G:
+Current closure after P24G:
 
 ```text
-P19 command / completion queue closure:
-  TOTAL : 113
-  PASS  : 113
+P24 queue timeout / watchdog closure:
+  TOTAL : 132
+  PASS  : 132
   FAIL  : 0
 ```
 
@@ -1311,3 +1311,40 @@ Timeout completion records are optional and must follow the existing P18 commit-
 ```
 
 The queue runtime remains correctness-first and single-active-command.  Timeout does not introduce preemption, rollback, out-of-order completion, or a new lower-level abort protocol.
+
+
+---
+
+## 25. P24 Queue Timeout Validation Addendum
+
+P24 validates the existing P19 command / completion queue model with a per-command watchdog layered on top of the accepted SQ command context.
+
+Validated queue-level timeout behavior:
+
+```text
+CMD_TIMEOUT_CYCLES is snapshotted from SQ word6 when the command is accepted
+CMD_TIMEOUT_CYCLES=0 disables the watchdog and preserves legacy behavior
+watchdog expiry is reported as CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR
+phase-specific timeout detail is reported through CSR_QUEUE_ERROR_DETAIL
+QUEUE_ERROR_EVENT wakes the P23-style host runtime
+SQ_HEAD / CQ_TAIL advance only according to the existing terminal/commit policy
+CQ_TAIL does not advance when completion writeback is blocked and no valid CQ record commits
+```
+
+Validated P24 full-regression representatives:
+
+```text
+csr_queue_timeout_desc_fetch_case102
+csr_queue_timeout_completion_wb_case102
+csr_queue_timeout_recovery_case102
+```
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```
+
+P24 keeps the P19 queue correctness model: one active command, in-order command consumption, in-order completion production, existing 64-byte SQ entries, existing 64-byte CQ records, and no BRAM / datapath changes.

@@ -318,6 +318,7 @@ command validation error
 descriptor-fetch error propagated to queue level
 recipe error propagated to queue level
 completion writeback error
+command watchdog timeout
 invalid queue configuration reject
 START_QUEUE while sticky error is uncleared
 ```
@@ -771,3 +772,38 @@ FAIL  : 0
 
 The CQ completion record remains the authoritative per-command completion detail.  P22 continues to provide only summary notification that tells the host runtime which status or CQ records should be inspected.
 
+
+
+---
+
+## 19. P24 Timeout Event Notification Addendum
+
+P24 reuses the existing P22 `QUEUE_ERROR_EVENT` source for command watchdog timeout.  No new event bit is required.
+
+Validated P24 event behavior:
+
+```text
+timeout sets CSR_EVENT_PENDING.QUEUE_ERROR_EVENT
+QUEUE_ERROR_EVENT wakes the event-driven host runtime
+EVENT_PENDING remains W1C-clearable after timeout
+event snapshot captures the queue error source for debug
+post-timeout recovery can clear/re-arm events and observe normal completion events again
+```
+
+Validated P24 full-regression representatives using P22 events:
+
+```text
+csr_queue_timeout_desc_fetch_case102
+csr_queue_timeout_completion_wb_case102
+csr_queue_timeout_recovery_case102
+```
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```
+
+The CQ record remains the authoritative per-command completion detail when a record commits.  For completion-writeback timeout with no valid CQ commit, queue CSR timeout status/detail are authoritative and P22 only provides the wake-up notification.

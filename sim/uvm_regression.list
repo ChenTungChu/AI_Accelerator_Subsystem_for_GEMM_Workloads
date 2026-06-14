@@ -397,3 +397,10 @@ ai_accel_subsys_csr_event_driven_multi_command_queue_drain_smoke_test CASE_ID 10
 ai_accel_subsys_csr_event_driven_runtime_append_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 129: csr_event_driven_cq_full_stop_error_case102
 ai_accel_subsys_csr_event_driven_cq_full_stop_error_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+# 130: csr_queue_timeout_desc_fetch_case102
+ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 131: csr_queue_timeout_completion_wb_case102
+ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 132: csr_queue_timeout_recovery_case102
+ai_accel_subsys_csr_queue_timeout_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

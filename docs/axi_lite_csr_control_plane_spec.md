@@ -28,7 +28,7 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 129/129 after P23G event-driven host runtime closure
+Full UVM regression baseline passing 132/132 after P24G queue timeout / watchdog closure
 P24B timeout / watchdog CSR policy clarification without new CSR addresses
 ```
 
@@ -2089,3 +2089,41 @@ Timeout event notification : P22 QUEUE_ERROR_EVENT
 ```
 
 Timeout is a queue-level terminal error for an accepted command.  It is not a new command reject, not a new event bit, and not a new CSR window.  CQ-full before command acceptance remains a recoverable queue stall and does not start the command watchdog.
+
+
+---
+
+## 25. P24H Timeout / Watchdog Validation Result
+
+P24H closes the timeout / watchdog CSR policy through targeted validation and full-regression integration.
+
+Validated P24 timeout CSR behavior:
+
+```text
+CMD_TIMEOUT_CYCLES == 0 preserves timeout-disabled legacy behavior
+CMD_TIMEOUT_CYCLES != 0 enables the per-command queue watchdog after SQ command acceptance
+CSR_QUEUE_ERROR_STATUS[6] = COMMAND_TIMEOUT_ERROR is set on timeout
+CSR_QUEUE_ERROR_DETAIL[7:0] records DETAIL_TIMEOUT_IN_DESC_FETCH for descriptor-fetch / recipe wait timeout
+CSR_QUEUE_ERROR_DETAIL[7:0] records DETAIL_TIMEOUT_IN_COMPLETION_WB for blocked completion-writeback timeout
+CSR_QUEUE_LAST_CMD_TAG preserves the timed-out SQ command tag
+CSR_CQ_TAIL does not advance when no valid completion record commits
+P22 QUEUE_ERROR_EVENT is raised for timeout
+```
+
+Validated P24 full-regression representatives:
+
+```text
+csr_queue_timeout_desc_fetch_case102
+csr_queue_timeout_completion_wb_case102
+csr_queue_timeout_recovery_case102
+```
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```
+
+No new CSR window, no new P22 event bit, and no SQ/CQ entry-size change are introduced by P24.

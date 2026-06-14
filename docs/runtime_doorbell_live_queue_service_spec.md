@@ -803,3 +803,33 @@ csr_event_driven_cq_full_stop_error_case102
 
 P23 does not change the P21 command-boundary observation rule.  Runtime SQ_TAIL and CQ_HEAD updates are still observed only at safe queue-controller decision points; the active command remains isolated by its snapshotted command context.
 
+
+
+---
+
+## 19. P24 Timeout Recovery Interaction
+
+P24F validates that the P21/P23 runtime-service model can recover after a command watchdog timeout without changing the live-doorbell pointer rules.
+
+Validated P24F recovery flow:
+
+```text
+host observes P22 QUEUE_ERROR_EVENT
+host reads CSR_QUEUE_ERROR_STATUS / CSR_QUEUE_ERROR_DETAIL
+host W1C-acks event pending bits
+host clears queue and lower-level sticky error status
+host reprograms or restarts a known-good SQ command
+post-timeout command completes normally
+CQ_TAIL advances only after the valid recovery completion commits
+host consumes CQ and advances CQ_HEAD
+```
+
+P24 does not change the P21 command-boundary observation rule.  Runtime `CSR_SQ_TAIL` and `CSR_CQ_HEAD` updates are still observed only at safe queue-controller decision points, and the active command remains isolated by its snapshotted command context.
+
+Full regression after P24G:
+
+```text
+TOTAL : 132
+PASS  : 132
+FAIL  : 0
+```
