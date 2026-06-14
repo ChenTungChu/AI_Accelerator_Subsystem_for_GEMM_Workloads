@@ -2366,6 +2366,61 @@ run_reg_item "csr_queue_stop_live_service_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P22G: Event notification / interrupt-lite regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P22 targeted validation into the full regression by
+# covering the integrated Event CSR window, real queue completion
+# events, terminal queue drained/stopped/error events, and Event CSR
+# mask / W1C clear / re-arm behavior.
+# Expected total after P22G: 125.
+# ============================================================
+run_reg_item "csr_event_csr_smoke" {
+    set UVM_TEST ai_accel_subsys_event_csr_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_completion_event_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_completion_event_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 1
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_drained_stopped_error_event_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_event_mask_w1c_rearm" {
+    set UVM_TEST ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
 # ============================================================
 # Final summary
 # ============================================================

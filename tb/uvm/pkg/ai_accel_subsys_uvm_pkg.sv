@@ -210,6 +210,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_event_csr_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_completion_event_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_mask_w1c_rearm_smoke_test.sv"
 
 endpackage
 
