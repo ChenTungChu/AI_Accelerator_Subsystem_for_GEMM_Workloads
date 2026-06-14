@@ -186,6 +186,34 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
     localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
 
+    // P22 Event command bits
+    localparam int EVENT_CMD_CLEAR_PENDING  = 0;
+    localparam int EVENT_CMD_FORCE_TEST     = 1;
+    localparam int EVENT_CMD_CLEAR_COUNTERS = 8;
+
+    // P22 Event control bits
+    localparam int EVENT_CONTROL_GLOBAL_IRQ_ENABLE = 0;
+    localparam int EVENT_CONTROL_IRQ_PULSE_MODE    = 1;
+    localparam int EVENT_CONTROL_CAPTURE_SNAPSHOT  = 2;
+    localparam int EVENT_CONTROL_COUNT_TEST_EVENTS = 3;
+
+    // P22 Event source bits
+    localparam int P22_EVENT_QUEUE_COMPLETED    = 0;
+    localparam int P22_EVENT_QUEUE_DRAINED      = 1;
+    localparam int P22_EVENT_QUEUE_STOPPED      = 2;
+    localparam int P22_EVENT_QUEUE_ERROR        = 3;
+    localparam int P22_EVENT_CQ_NOT_EMPTY       = 4;
+    localparam int P22_EVENT_CQ_THRESHOLD       = 5;
+    localparam int P22_EVENT_CQ_FULL_STALL      = 6;
+    localparam int P22_EVENT_CQ_SPACE_RECOVERED = 7;
+    localparam int P22_EVENT_RUNTIME_DOORBELL   = 8;
+    localparam int P22_EVENT_RUNTIME_CONSUMED   = 9;
+    localparam int P22_EVENT_TEST               = 10;
+
+    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_07FF;
+    localparam logic [31:0] EVENT_QUEUE_COMPLETED_MASK = 32'h0000_0001;
+    localparam logic [31:0] EVENT_CQ_NOT_EMPTY_MASK    = 32'h0000_0010;
+
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;
     localparam logic [6:0] SLOT_BASE_ADDR_B      = 7'h08;

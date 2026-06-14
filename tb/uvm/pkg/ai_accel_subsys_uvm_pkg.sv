@@ -208,6 +208,8 @@ package ai_accel_subsys_uvm_pkg;
     // P22 Event notification / interrupt-lite integrated smoke
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_event_csr_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_completion_event_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test.sv"
 
 endpackage
 
