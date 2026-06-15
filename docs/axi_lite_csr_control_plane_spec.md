@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, and P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, and P25 validates runtime stress / robustness flows using the existing queue, event, and timeout CSR policy without adding new registers.
 
 ---
 
@@ -28,8 +28,9 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 132/132 after P24G queue timeout / watchdog closure
+Full UVM regression baseline passing 135/135 after P25F runtime stress / robustness closure
 P24B timeout / watchdog CSR policy clarification without new CSR addresses
+P25 runtime stress / robustness validation without new CSR addresses
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -2127,3 +2128,41 @@ FAIL  : 0
 ```
 
 No new CSR window, no new P22 event bit, and no SQ/CQ entry-size change are introduced by P24.
+
+
+---
+
+## 26. P25F Runtime Stress / Robustness CSR Usage Validation
+
+P25F does not allocate new CSR addresses and does not change the P19 queue CSR window, P22 event notification CSR window, P24 timeout bit usage, SQ entry format, or CQ completion record format.
+
+P25 validates stressed software-visible usage of the existing CSR model:
+
+```text
+CSR_SQ_TAIL runtime doorbell writes while queue_busy=1
+CSR_CQ_HEAD updates after delayed CQ consumption
+CSR_QUEUE_COMMAND.START_QUEUE restart after STOP_QUEUE
+CSR_QUEUE_COMMAND.STOP_QUEUE graceful stop during live service
+CSR_QUEUE_ERROR_STATUS[6] COMMAND_TIMEOUT_ERROR after finite-timeout command
+CSR_QUEUE_ERROR_DETAIL timeout detail inspection
+CSR_EVENT_PENDING QUEUE_ERROR_EVENT / completion / stopped event handling
+CSR_EVENT_PENDING W1C cleanup and re-arm across multiple sessions
+```
+
+Validated P25 full-regression representatives:
+
+```text
+csr_event_driven_multi_session_stress_case102
+csr_event_driven_append_consume_stress_case102
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+The canonical CSR address map remains unchanged through P25.  P25 is a runtime robustness validation milestone for the existing P19/P21/P22/P23/P24 programming model.

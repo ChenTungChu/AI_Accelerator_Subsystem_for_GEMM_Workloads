@@ -741,3 +741,62 @@ handle invalid SQ command / QUEUE_ERROR_EVENT paths
 
 P23 did not introduce any new CSR address, SQ entry format, CQ entry format, completion record format, interrupt-vector model, BRAM behavior, GEMM datapath behavior, DMA behavior, AXI-Stream behavior, or Direct Stream behavior.
 
+
+
+---
+
+## 22. P25 Runtime Stress / Robustness Validation
+
+P25 extends the P23 event-driven host runtime model from functional driver-style smoke tests into representative runtime stress / robustness validation.  It does not change the hardware datapath, SQ entry format, CQ entry format, CSR address map, or event bit allocation.
+
+Validated P25 implementation / UVM milestones:
+
+```text
+P25A: Runtime stress / robustness spec                         PASS
+P25B: Event-driven host runtime stress helper extension        PASS
+P25C: Multi-session queue runtime stress smoke                 PASS
+P25D: Runtime append + CQ consume timing variation smoke       PASS
+P25E: STOP / timeout / recovery mixed stress smoke             PASS
+P25F: Full regression integration                              PASS
+P25G: Documentation closure                                    PASS
+```
+
+Validated P25 test names:
+
+```text
+ai_accel_subsys_csr_event_driven_multi_session_stress_test
+ai_accel_subsys_csr_event_driven_append_consume_stress_test
+ai_accel_subsys_csr_event_driven_stop_timeout_recovery_stress_test
+```
+
+Validated full-regression entries:
+
+```text
+csr_event_driven_multi_session_stress_case102
+csr_event_driven_append_consume_stress_case102
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+Validated runtime stress behavior:
+
+```text
+multiple event-driven runtime sessions can be initialized, run, cleaned up, and reused
+runtime SQ append remains visible only through CSR_SQ_TAIL publication and command-boundary observation
+CQ consumption may be intentionally delayed; later CSR_CQ_HEAD updates recover CQ space
+STOP_QUEUE completes the active command but prevents automatic consumption of a pending appended SQ entry
+pending SQ entries can be restarted and completed after stopped-event handling
+timeout produces COMMAND_TIMEOUT_ERROR and QUEUE_ERROR_EVENT
+host clears event, queue, and lower-level sticky state after timeout
+post-timeout valid command completes normally
+final event pending, queue error, and queue reject state are clean
+```
+
+P25 keeps the P23 runtime helper model software-like: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C-ack events, clear sticky errors when required, and restart service only after the observable CSR state is clean.

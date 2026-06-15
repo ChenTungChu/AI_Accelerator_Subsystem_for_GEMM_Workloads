@@ -763,3 +763,39 @@ FAIL  : 0
 ```
 
 P24H documentation closure records the validated timeout policy without adding new CSR windows, new event bits, new SQ/CQ formats, or BRAM / GEMM / DMA / frontend datapath changes.
+
+
+---
+
+## 20. P25 STOP / Timeout / Recovery Stress Addendum
+
+P25E combines graceful STOP_QUEUE handling and timeout recovery in one representative host-runtime stress flow.  It reuses the P24 timeout policy and does not add a new timeout CSR field, event bit, or completion format.
+
+Validated P25 mixed stress behavior:
+
+```text
+STOP_QUEUE during live service lets the active command complete normally
+runtime-appended SQ entry is not consumed automatically after STOP_QUEUE
+host consumes the produced CQ record and clears/re-arms events
+host restarts the queue and completes the pending SQ entry
+finite-timeout command reports COMMAND_TIMEOUT_ERROR and QUEUE_ERROR_EVENT
+host W1C-acks event pending bits and clears queue/lower-level sticky state
+known-good timeout-disabled command completes normally after recovery
+final event pending, queue reusable state, queue error, and queue reject status are clean
+```
+
+Validated P25 timeout-related full-regression representative:
+
+```text
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+P25 reinforces the P24 recovery contract: queue CSR timeout status/detail are authoritative for timeout diagnosis, P22 `QUEUE_ERROR_EVENT` wakes the host runtime, and a valid command can run after explicit sticky-state cleanup.

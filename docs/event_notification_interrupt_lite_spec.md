@@ -807,3 +807,39 @@ FAIL  : 0
 ```
 
 The CQ record remains the authoritative per-command completion detail when a record commits.  For completion-writeback timeout with no valid CQ commit, queue CSR timeout status/detail are authoritative and P22 only provides the wake-up notification.
+
+
+---
+
+## 20. P25 Runtime Stress Event Usage Addendum
+
+P25 reuses the existing P22 event notification / interrupt-lite layer during runtime stress validation.  No new event pending bit, event enable bit, global IRQ policy, or event CSR address is introduced.
+
+Validated P25 event behavior:
+
+```text
+completion-related events can be handled and W1C-cleared across multiple runtime sessions
+runtime append / doorbell stress does not require a new event source
+delayed CQ consumption still recovers by consuming CQ, writing CSR_CQ_HEAD, and clearing/re-arming events
+STOP_QUEUE produces stopped-event handling while preserving pending SQ restart behavior
+timeout produces QUEUE_ERROR_EVENT through the existing P24 policy
+events are clean after final stress cleanup
+```
+
+Validated P25 full-regression representatives using P22 events:
+
+```text
+csr_event_driven_multi_session_stress_case102
+csr_event_driven_append_consume_stress_case102
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+The CQ record remains the authoritative per-command completion detail.  The P22 event layer remains a summary wake-up and re-arm mechanism under P25 stress.

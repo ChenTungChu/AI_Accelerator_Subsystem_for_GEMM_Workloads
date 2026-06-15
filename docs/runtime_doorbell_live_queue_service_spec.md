@@ -833,3 +833,39 @@ TOTAL : 132
 PASS  : 132
 FAIL  : 0
 ```
+
+
+---
+
+## 20. P25 Runtime Stress Interaction
+
+P25 stress validation reuses the P21 live-service policy and applies more aggressive host-runtime timing around it.  The command-boundary observation rule remains unchanged.
+
+Validated P25 stress interaction with P21 policy:
+
+```text
+multiple live-service sessions can reuse the queue after event and pointer cleanup
+host can append while queue service is active and publish the append through CSR_SQ_TAIL
+host may intentionally delay CQ consumption and later recover CQ space through CSR_CQ_HEAD
+STOP_QUEUE suppresses automatic consumption of a pending runtime-appended SQ entry
+pending SQ entry remains restartable after stopped-event cleanup
+timeout recovery does not alter the active-command snapshot or command-boundary pointer observation rules
+```
+
+Validated P25 full-regression representatives exercising P21 live-service policy:
+
+```text
+csr_event_driven_multi_session_stress_case102
+csr_event_driven_append_consume_stress_case102
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+P25 does not turn the queue into a multi-outstanding or out-of-order engine.  It keeps one active command at a time and validates that host pointer/event timing variations remain safe.

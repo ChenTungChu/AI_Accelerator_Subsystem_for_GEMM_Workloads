@@ -46,12 +46,12 @@ P18H / P18I completion-writeback closure:
   FAIL  : 0
 ```
 
-Current closure after P24G:
+Current closure after P25F:
 
 ```text
-P24 queue timeout / watchdog closure:
-  TOTAL : 132
-  PASS  : 132
+P25 runtime stress / robustness closure:
+  TOTAL : 135
+  PASS  : 135
   FAIL  : 0
 ```
 
@@ -1348,3 +1348,39 @@ FAIL  : 0
 ```
 
 P24 keeps the P19 queue correctness model: one active command, in-order command consumption, in-order completion production, existing 64-byte SQ entries, existing 64-byte CQ records, and no BRAM / datapath changes.
+
+
+---
+
+## 26. P25 Runtime Stress / Robustness Queue Validation
+
+P25 validates the existing P19 command / completion queue model under representative runtime stress.  It keeps the same 64-byte SQ command entry, 64-byte CQ completion record, monotonic head/tail pointer model, and single-active-command execution policy.
+
+Validated P25 queue behavior:
+
+```text
+multiple queue sessions can run and cleanly reuse SQ/CQ state
+runtime append remains ordered and becomes visible through SQ_TAIL publication
+delayed CQ consumption and later CQ_HEAD update recover CQ space without queue reset
+STOP_QUEUE stops after the active command and leaves pending SQ work restartable
+timeout recovery clears queue/lower-level sticky state before accepting a valid command
+SQ_HEAD and CQ_TAIL advance only according to existing command terminal and completion commit policy
+```
+
+Validated P25 full-regression representatives:
+
+```text
+csr_event_driven_multi_session_stress_case102
+csr_event_driven_append_consume_stress_case102
+csr_event_driven_stop_timeout_recovery_stress_case102
+```
+
+Full regression after P25F:
+
+```text
+TOTAL : 135
+PASS  : 135
+FAIL  : 0
+```
+
+P25 does not introduce prefetch, multi-outstanding command execution, out-of-order completion, command cancellation, or BRAM / datapath changes.

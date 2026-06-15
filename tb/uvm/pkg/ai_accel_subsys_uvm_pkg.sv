@@ -24,6 +24,7 @@ package ai_accel_subsys_uvm_pkg;
     `include "../helper/ai_accel_subsys_axi_host_helper.sv"
     `include "../helper/ai_accel_csr_access_helper.sv"
     `include "../helper/ai_accel_event_driven_host_runtime_helper.sv"
+    `include "../helper/ai_accel_event_driven_host_runtime_stress_helper.sv"
 
     // ------------------------------------------------------------
     // Result bridge
@@ -227,6 +228,13 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_timeout_recovery_smoke_test.sv"
+
+    // ------------------------------------------------------------
+    // P25 runtime stress / robustness tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_event_driven_multi_session_stress_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_driven_append_consume_stress_test.sv"
+    `include "../test/ai_accel_subsys_csr_event_driven_stop_timeout_recovery_stress_test.sv"
 
 endpackage
 

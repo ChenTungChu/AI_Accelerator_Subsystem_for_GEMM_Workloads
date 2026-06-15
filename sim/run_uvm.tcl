@@ -110,6 +110,9 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test \
     ai_accel_subsys_csr_queue_timeout_completion_wb_smoke_test \
     ai_accel_subsys_csr_queue_timeout_recovery_smoke_test \
+    ai_accel_subsys_csr_event_driven_multi_session_stress_test \
+    ai_accel_subsys_csr_event_driven_append_consume_stress_test \
+    ai_accel_subsys_csr_event_driven_stop_timeout_recovery_stress_test \
 ]
 
 # --------------------------------------------------

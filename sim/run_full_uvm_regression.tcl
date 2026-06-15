@@ -2526,6 +2526,52 @@ run_reg_item "csr_queue_timeout_recovery_case102" {
 }
 
 # ============================================================
+# P25F: Runtime stress / robustness regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P25 targeted validation into the full regression by
+# covering multi-session event-driven runtime reuse, runtime append
+# with delayed CQ consumption / CQ-space recovery, and mixed
+# STOP_QUEUE / timeout / recovery stress.
+# Expected total after P25F: 135.
+# ============================================================
+run_reg_item "csr_event_driven_multi_session_stress_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_driven_multi_session_stress_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_event_driven_append_consume_stress_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_driven_append_consume_stress_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_event_driven_stop_timeout_recovery_stress_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_driven_stop_timeout_recovery_stress_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"
