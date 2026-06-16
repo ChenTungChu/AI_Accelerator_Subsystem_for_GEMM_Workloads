@@ -2166,3 +2166,159 @@ FAIL  : 0
 ```
 
 The canonical CSR address map remains unchanged through P25.  P25 is a runtime robustness validation milestone for the existing P19/P21/P22/P23/P24 programming model.
+
+---
+
+## 27. P26B Queue Lifecycle / Soft-Reset CSR Policy Addendum
+
+P26B does not allocate new CSR addresses and does not change the P19 queue CSR window, P22 event notification CSR window, SQ command entry format, CQ completion record format, descriptor format, or timeout field usage.
+
+P26B freezes the first lifecycle implementation around existing CSR resources:
+
+```text
+Queue lifecycle commands:
+  CSR_QUEUE_COMMAND.START_QUEUE
+  CSR_QUEUE_COMMAND.STOP_QUEUE
+  CSR_QUEUE_COMMAND.CLEAR_QUEUE_DONE
+  CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR
+  CSR_QUEUE_COMMAND.CLEAR_QUEUE_COUNTERS
+  CSR_QUEUE_COMMAND.RESET_QUEUE_POINTERS
+
+Queue diagnostic/status registers:
+  CSR_QUEUE_STATUS
+  CSR_QUEUE_DONE_STATUS
+  CSR_QUEUE_ERROR_STATUS
+  CSR_QUEUE_REJECT_STATUS
+  CSR_QUEUE_ERROR_DETAIL
+  CSR_QUEUE_ERROR_INDEX
+  CSR_QUEUE_LAST_CMD_TAG
+  CSR_QUEUE_LAST_CMD_CONTROL
+  CSR_QUEUE_SQ_OCCUPANCY
+  CSR_QUEUE_CQ_OCCUPANCY
+  CSR_QUEUE_CQ_SPACE
+
+Host-owned queue pointers:
+  CSR_SQ_TAIL
+  CSR_CQ_HEAD
+
+Hardware-owned queue pointers:
+  CSR_SQ_HEAD
+  CSR_CQ_TAIL
+
+Event lifecycle commands:
+  CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING
+  CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS
+  CSR_EVENT_PENDING W1C
+  CSR_EVENT_ENABLE
+  CSR_EVENT_CONTROL
+```
+
+Frozen P26B policy:
+
+```text
+No P26 CSR window is added.
+No lifecycle command bit is added.
+No new queue event bit is added.
+No hardware active-command abort is added.
+No soft-reset-done status bit is added.
+Soft reset completion is inferred by reading clean idle queue/event state.
+```
+
+### 27.1 `RESET_QUEUE_POINTERS` Lifecycle Usage
+
+`CSR_QUEUE_COMMAND.RESET_QUEUE_POINTERS` remains an idle-only session-discard operation.
+
+Allowed P26B use:
+
+```text
+queue_busy == 0
+host does not intend to preserve pending SQ entries
+visible CQ records have been consumed or intentionally discarded
+reused SQ command VALID words are cleared or overwritten by the host
+reused CQ commit words are cleared or overwritten by the host
+queue/event/lower-level sticky state has been cleared or will be cleared before restart
+```
+
+Disallowed P26B use:
+
+```text
+queue_busy == 1
+active command owns a snapshotted SQ/CQ context
+host intends to preserve pending SQ work after STOP_QUEUE
+ordered CQ records still need to be consumed
+```
+
+A busy pointer-reset request continues to use the existing queue reject behavior.  P26B does not redefine pointer reset as command cancellation, DMA abort, descriptor-fetch abort, recipe abort, GEMM abort, or completion-writeback abort.
+
+### 27.2 Work-Preserving STOP_QUEUE Restart
+
+After a graceful STOP_QUEUE terminal state, the host may preserve pending SQ work.
+
+P26B work-preserving restart uses this existing CSR policy:
+
+```text
+do not write RESET_QUEUE_POINTERS
+do not clear pending SQ command VALID words
+consume committed CQ records from completed commands
+advance CSR_CQ_HEAD after CQ consumption
+clear handled event pending bits through CSR_EVENT_PENDING W1C
+clear queue done sticky bits when the next wait should start from clean status
+re-arm CSR_EVENT_ENABLE / CSR_EVENT_CONTROL as needed
+write CSR_QUEUE_COMMAND.START_QUEUE to resume pending SQ work
+```
+
+This policy preserves pending SQ entries that were intentionally not consumed after STOP_QUEUE.
+
+### 27.3 Session-Discard Soft Reset
+
+Session-discard soft reset uses existing CSR commands plus host memory cleanup.
+
+Recommended P26B ordering:
+
+```text
+1. Capture queue/event/lower-level diagnostics when the previous session ended in error.
+2. Consume any CQ records that the host wants to preserve.
+3. Advance CSR_CQ_HEAD only after CQ consumption.
+4. Clear handled event pending bits or issue CLEAR_EVENT_PENDING for full cleanup.
+5. Clear queue done/error/reject sticky bits using existing queue clear commands.
+6. Clear lower-level sticky state using existing lower-level clear commands.
+7. Clear or overwrite recycled SQ command VALID words in host memory.
+8. Clear or overwrite recycled CQ commit words in host memory.
+9. Issue RESET_QUEUE_POINTERS while queue_busy is zero.
+10. Reprogram queue configuration if the next session changes base/depth/stride/control.
+11. Re-arm event enable/global policy before the next event-driven START_QUEUE.
+```
+
+P26B soft reset is not a global CSR reset and does not clear BRAM scratchpad, descriptor memory, completion memory payload, destination/result memory, or datapath state beyond the existing sticky clear mechanisms.
+
+### 27.4 Event Cleanup Usage
+
+P26B freezes the distinction between event service and lifecycle cleanup:
+
+```text
+Normal event service:
+  use CSR_EVENT_PENDING W1C for handled event bits
+
+Session initialization or discard cleanup:
+  CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING may clear all stale pending bits
+  CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS may clear event debug counters/snapshots
+
+Before event-driven service:
+  program CSR_EVENT_ENABLE and CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE as required
+```
+
+The event block remains summary-only.  CQ records, queue status, queue error detail, and lower-level sticky status remain the authoritative diagnostic sources.
+
+### 27.5 Validation Status
+
+P26B is a CSR-policy and helper-plan freeze.  It does not add UVM regression items by itself.
+
+```text
+Full regression remains:
+  TOTAL : 135
+  PASS  : 135
+  FAIL  : 0
+```
+
+P26D/P26E/P26F will validate the frozen policy through lifecycle representative tests before P26G full-regression integration.
+
