@@ -45,6 +45,11 @@ P25 runtime stress / robustness closure:
   TOTAL : 135
   PASS  : 135
   FAIL  : 0
+
+P26 queue lifecycle / soft-reset closure:
+  TOTAL : 138
+  PASS  : 138
+  FAIL  : 0
 ```
 
 ---
@@ -71,6 +76,7 @@ QUEUE_ERROR_EVENT based runtime wake-up and cleanup
 COMMAND_TIMEOUT_ERROR structured queue error reporting
 final queue/event/sticky-state cleanliness validation
 full regression 135/135 PASS after P25F/P25G
+full regression 138/138 PASS after P26G/P26H
 ```
 
 P26 must preserve:
@@ -978,7 +984,7 @@ event W1C versus CLEAR_EVENT_PENDING usage is frozen
 P26C helper extension direction and task plan are documented
 ```
 
-P26B does not add regression tests.  Full-regression count remains 135 until P26G integrates P26D/P26E/P26F representatives.
+P26B does not add regression tests.  P26D/P26E/P26F representatives are integrated later in P26G, where full regression closes at 138/138 PASS.
 
 ---
 
@@ -1088,13 +1094,13 @@ P26A: Queue lifecycle / soft-reset prototype spec                     PASS
 P26B: Lifecycle CSR policy freeze / helper plan                       PASS
 P26C: Host runtime lifecycle helper extension                         PASS
 P26D: Drained-session cleanup + reinit smoke                          PASS
-P26E: STOP_QUEUE stopped-session preserve/restart smoke                IMPLEMENTED / RUN PENDING
-P26F: Timeout/error session-discard reinit + valid restart smoke       TODO
-P26G: Full regression integration                                     TODO
-P26H: Documentation closure                                           TODO
+P26E: STOP_QUEUE stopped-session preserve/restart smoke                PASS
+P26F: Timeout/error lifecycle cleanup + reinit smoke                  PASS
+P26G: Full regression integration                                     PASS
+P26H: Documentation closure                                           PASS
 ```
 
-### 18.1 P26D Drained-Session Cleanup + Reinit Smoke
+### 19.1 P26D Drained-Session Cleanup + Reinit Smoke
 
 Purpose:
 
@@ -1104,8 +1110,8 @@ consume all CQ records
 advance CQ_HEAD
 clear handled event pending bits
 clear queue done sticky bits
-optionally reset pointers while idle
-reinitialize SQ/CQ memory commit words
+preserve the clean monotonic pointer epoch by default
+recycle SQ/CQ memory commit words
 submit a second independent valid command
 confirm normal completion
 confirm final queue/event clean state
@@ -1130,11 +1136,11 @@ P26D implementation checkpoint:
 ```text
 Test file: tb/uvm/test/ai_accel_subsys_csr_queue_lifecycle_drained_reinit_smoke_test.sv
 Package include: ai_accel_subsys_uvm_pkg.sv P26 lifecycle test block
-Regression integration: deferred to P26G
-Full regression count remains 135 until P26G
+Regression integration: completed in P26G
+Full regression count is 138 after P26G
 ```
 
-### 18.2 P26E STOP_QUEUE Stopped-Session Preserve/Restart Smoke
+### 19.2 P26E STOP_QUEUE Stopped-Session Preserve/Restart Smoke
 
 Purpose:
 
@@ -1147,16 +1153,15 @@ consume CQ[0]
 clear stopped event / queue done sticky status
 restart without resetting pointers
 complete SQ[1]
-then run a separate discard cleanup path:
-  clear reusable SQ/CQ memory
-  reset queue pointers while idle
-  reinitialize and prove a fresh command starts at clean pointer state
+restart the preserved pending command with START_QUEUE
+complete the preserved SQ entry
+run final drained cleanup and prove a clean pointer-preserving epoch
 ```
 
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_queue_lifecycle_stop_restart_smoke_test
+ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test
 ```
 
 Expected PASS markers:
@@ -1172,11 +1177,11 @@ P26E implementation checkpoint:
 ```text
 Test: ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test
 Package include: ai_accel_subsys_uvm_pkg.sv P26 lifecycle test block
-Regression integration: deferred to P26G
-Full regression count remains 135 until P26G
+Regression integration: completed in P26G
+Full regression count is 138 after P26G
 ```
 
-### 18.3 P26F Timeout/Error Session-Discard Reinit + Valid Restart Smoke
+### 19.3 P26F Timeout/Error Session-Discard Reinit + Valid Restart Smoke
 
 Purpose:
 
@@ -1200,13 +1205,17 @@ compare result payload where applicable
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_queue_lifecycle_timeout_reinit_smoke_test
+ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test
 ```
 
 Expected PASS markers:
 
 ```text
-[P26F_LIFECYCLE/ERROR_CAPTURE_PASS]
+[P26F_LIFECYCLE/TIMEOUT_OBSERVED]
+[P26F_LIFECYCLE/ERROR_CLEANUP_PASS]
+[P26F_LIFECYCLE/ERROR_DISCARD_PASS]
+[P26F_LIFECYCLE/LOWER_IDLE_PASS]
+[P26F_LIFECYCLE/ERROR_REINIT_READY_PASS]
 [P26F_LIFECYCLE/REINIT_PASS]
 [P26F_LIFECYCLE/PASS]
 ```
@@ -1215,14 +1224,14 @@ Expected PASS markers:
 
 ## 20. Full Regression Plan
 
-P26G should add a small representative lifecycle subset to full regression.
+P26G adds a small representative lifecycle subset to full regression.
 
 Recommended full-regression representatives:
 
 ```text
 csr_queue_lifecycle_drained_reinit_case102
-csr_queue_lifecycle_stop_restart_case102
-csr_queue_lifecycle_timeout_reinit_case102
+csr_queue_lifecycle_stopped_preserve_restart_case102
+csr_queue_lifecycle_timeout_error_reinit_case102
 ```
 
 Expected count increase:
@@ -1232,7 +1241,7 @@ Before P26G: 135
 After P26G : 138
 ```
 
-This keeps P26 representative rather than exhaustive.  Randomized lifecycle policy selection, randomized pointer reset timing, and broader lower-level error matrices can remain future extensions.
+P26G full regression completed with the updated lifecycle subset.  Randomized lifecycle policy selection, randomized pointer reset timing, and broader lower-level error matrices can remain future extensions.
 
 ---
 
@@ -1246,11 +1255,10 @@ P26B freezes whether existing CSR commands are sufficient
 P26C lifecycle helper extension is implemented
 normal drained-session cleanup and reinit passes
 STOP_QUEUE work-preserving restart passes
-STOP_QUEUE discard cleanup and pointer reset passes
 timeout/error discard cleanup and valid restart passes
 P26 representatives are integrated into full regression
-full regression passes at the updated count
-README / CSR / queue / event / runtime / timeout / stress docs record P26 closure
+full regression passes at 138/138
+README / CSR / queue lifecycle / regression list docs record P26 closure
 uvm_regression.list records the updated regression items
 no BRAM / GEMM / DMA / frontend datapath changes are required
 ```
@@ -1314,3 +1322,49 @@ Re-arm events and then submit the timeout-disabled recovery command.
 ```
 
 This refinement preserves the P26 policy of no new CSR window, no new event bit, no abort protocol, and no datapath/BRAM change.
+
+
+---
+
+## 24. P26H Documentation Closure
+
+P26H records the validated queue lifecycle / soft-reset behavior after full-regression closure.
+
+Validated P26 lifecycle milestones:
+
+```text
+P26A: Queue lifecycle / soft-reset prototype spec              PASS
+P26B: Lifecycle CSR policy freeze / helper plan                PASS
+P26C: Host runtime lifecycle helper extension                  PASS
+P26D: Drained-session cleanup + reinit smoke                   PASS
+P26E: STOP_QUEUE stopped-session preserve/restart smoke        PASS
+P26F: Timeout/error lifecycle cleanup + reinit smoke           PASS
+P26G: Full regression integration                              PASS
+P26H: Documentation closure                                    PASS
+```
+
+Validated P26 full-regression representatives:
+
+```text
+csr_queue_lifecycle_drained_reinit_case102
+csr_queue_lifecycle_stopped_preserve_restart_case102
+csr_queue_lifecycle_timeout_error_reinit_case102
+```
+
+Full regression after P26G:
+
+```text
+TOTAL : 138
+PASS  : 138
+FAIL  : 0
+```
+
+Validated lifecycle policy:
+
+```text
+Drained cleanup preserves a clean monotonic SQ/CQ pointer epoch rather than requiring pointer reset to zero.
+STOP_QUEUE work-preserving cleanup keeps pending SQ entries intact and restarts them with START_QUEUE.
+Timeout/error cleanup captures diagnostics first, clears queue/event/lower sticky state, waits for lower-level quiescence, clears late sticky state, re-arms events, and then submits a known-good timeout-disabled command.
+```
+
+P26 does not allocate a new CSR window, queue command bit, event bit, SQ/CQ format, descriptor format, completion record format, BRAM behavior, GEMM datapath behavior, DMA behavior, AXI-Stream behavior, or Direct Stream behavior.

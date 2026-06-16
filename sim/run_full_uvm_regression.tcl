@@ -2571,6 +2571,53 @@ run_reg_item "csr_event_driven_stop_timeout_recovery_stress_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P26G: Queue lifecycle / soft-reset regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P26 targeted validation into the full regression by
+# covering drained-session cleanup + reinit, STOP_QUEUE stopped-
+# session work-preserving restart, and timeout/error lifecycle
+# cleanup + lower-level quiesce + known-good reinit.
+# Expected total after P26G: 138.
+# ============================================================
+run_reg_item "csr_queue_lifecycle_drained_reinit_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_lifecycle_drained_reinit_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_lifecycle_stopped_preserve_restart_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_queue_lifecycle_timeout_error_reinit_case102" {
+    set UVM_TEST ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
 # ============================================================
 # Final summary
 # ============================================================

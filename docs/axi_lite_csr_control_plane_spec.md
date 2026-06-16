@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, and P25 validates runtime stress / robustness flows using the existing queue, event, and timeout CSR policy without adding new registers.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25 validates runtime stress / robustness flows using the existing queue, event, and timeout CSR policy without adding new registers, and P26 validates queue lifecycle / soft-reset cleanup and session reinitialization using the existing queue, event, and lower-level clear commands without adding a new CSR window or new event bit.
 
 ---
 
@@ -28,9 +28,10 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 135/135 after P25F runtime stress / robustness closure
+Full UVM regression baseline passing 138/138 after P26G queue lifecycle / soft-reset closure
 P24B timeout / watchdog CSR policy clarification without new CSR addresses
 P25 runtime stress / robustness validation without new CSR addresses
+P26 queue lifecycle / soft-reset validation without new CSR addresses or event bits
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -2132,21 +2133,24 @@ No new CSR window, no new P22 event bit, and no SQ/CQ entry-size change are intr
 
 ---
 
-## 26. P25F Runtime Stress / Robustness CSR Usage Validation
+## 26. P25H Runtime Stress / Robustness CSR Policy Checkpoint
 
-P25F does not allocate new CSR addresses and does not change the P19 queue CSR window, P22 event notification CSR window, P24 timeout bit usage, SQ entry format, or CQ completion record format.
+P25H does not allocate new CSR addresses and does not change the P19 queue CSR window, the P22 event CSR window, SQ command entry format, CQ completion record format, descriptor format, or timeout field policy.
 
-P25 validates stressed software-visible usage of the existing CSR model:
+P25 validates stress / robustness behavior using existing CSR resources:
 
 ```text
-CSR_SQ_TAIL runtime doorbell writes while queue_busy=1
-CSR_CQ_HEAD updates after delayed CQ consumption
-CSR_QUEUE_COMMAND.START_QUEUE restart after STOP_QUEUE
-CSR_QUEUE_COMMAND.STOP_QUEUE graceful stop during live service
-CSR_QUEUE_ERROR_STATUS[6] COMMAND_TIMEOUT_ERROR after finite-timeout command
-CSR_QUEUE_ERROR_DETAIL timeout detail inspection
-CSR_EVENT_PENDING QUEUE_ERROR_EVENT / completion / stopped event handling
-CSR_EVENT_PENDING W1C cleanup and re-arm across multiple sessions
+CSR_SQ_TAIL runtime append doorbell
+CSR_CQ_HEAD CQ consume / CQ-space recovery update
+CSR_QUEUE_COMMAND.START_QUEUE
+CSR_QUEUE_COMMAND.STOP_QUEUE
+CSR_QUEUE_COMMAND.CLEAR_QUEUE_DONE
+CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR
+CSR_EVENT_PENDING W1C
+CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING
+CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS
+CSR_EVENT_ENABLE / CSR_EVENT_CONTROL re-arm policy
+SQ command word6 CMD_TIMEOUT_CYCLES
 ```
 
 Validated P25 full-regression representatives:
@@ -2165,160 +2169,74 @@ PASS  : 135
 FAIL  : 0
 ```
 
-The canonical CSR address map remains unchanged through P25.  P25 is a runtime robustness validation milestone for the existing P19/P21/P22/P23/P24 programming model.
+P25 is a validation milestone over the existing P19/P21/P22/P23/P24 CSR policy.  It adds no new register, event bit, SQ/CQ format, or datapath behavior.
+
 
 ---
 
-## 27. P26B Queue Lifecycle / Soft-Reset CSR Policy Addendum
+## 27. P26H Queue Lifecycle / Soft-Reset CSR Policy Addendum
 
-P26B does not allocate new CSR addresses and does not change the P19 queue CSR window, P22 event notification CSR window, SQ command entry format, CQ completion record format, descriptor format, or timeout field usage.
+P26H closes the queue lifecycle / soft-reset validation using the CSR policy frozen in P26B.
 
-P26B freezes the first lifecycle implementation around existing CSR resources:
+P26 does not allocate a new CSR window and does not change any canonical CSR address, access type, reset value, or bit definition.
 
-```text
-Queue lifecycle commands:
-  CSR_QUEUE_COMMAND.START_QUEUE
-  CSR_QUEUE_COMMAND.STOP_QUEUE
-  CSR_QUEUE_COMMAND.CLEAR_QUEUE_DONE
-  CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR
-  CSR_QUEUE_COMMAND.CLEAR_QUEUE_COUNTERS
-  CSR_QUEUE_COMMAND.RESET_QUEUE_POINTERS
-
-Queue diagnostic/status registers:
-  CSR_QUEUE_STATUS
-  CSR_QUEUE_DONE_STATUS
-  CSR_QUEUE_ERROR_STATUS
-  CSR_QUEUE_REJECT_STATUS
-  CSR_QUEUE_ERROR_DETAIL
-  CSR_QUEUE_ERROR_INDEX
-  CSR_QUEUE_LAST_CMD_TAG
-  CSR_QUEUE_LAST_CMD_CONTROL
-  CSR_QUEUE_SQ_OCCUPANCY
-  CSR_QUEUE_CQ_OCCUPANCY
-  CSR_QUEUE_CQ_SPACE
-
-Host-owned queue pointers:
-  CSR_SQ_TAIL
-  CSR_CQ_HEAD
-
-Hardware-owned queue pointers:
-  CSR_SQ_HEAD
-  CSR_CQ_TAIL
-
-Event lifecycle commands:
-  CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING
-  CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS
-  CSR_EVENT_PENDING W1C
-  CSR_EVENT_ENABLE
-  CSR_EVENT_CONTROL
-```
-
-Frozen P26B policy:
+Frozen P26 CSR policy:
 
 ```text
-No P26 CSR window is added.
-No lifecycle command bit is added.
-No new queue event bit is added.
-No hardware active-command abort is added.
-No soft-reset-done status bit is added.
-Soft reset completion is inferred by reading clean idle queue/event state.
+No new P26 CSR window
+No new lifecycle command register
+No new queue command bit
+No new event pending bit
+No SQ entry format change
+No CQ completion record format change
+No descriptor format change
+No timeout field change
 ```
 
-### 27.1 `RESET_QUEUE_POINTERS` Lifecycle Usage
-
-`CSR_QUEUE_COMMAND.RESET_QUEUE_POINTERS` remains an idle-only session-discard operation.
-
-Allowed P26B use:
+Validated P26 lifecycle operations use existing CSR resources:
 
 ```text
-queue_busy == 0
-host does not intend to preserve pending SQ entries
-visible CQ records have been consumed or intentionally discarded
-reused SQ command VALID words are cleared or overwritten by the host
-reused CQ commit words are cleared or overwritten by the host
-queue/event/lower-level sticky state has been cleared or will be cleared before restart
+CSR_QUEUE_COMMAND.START_QUEUE
+CSR_QUEUE_COMMAND.STOP_QUEUE
+CSR_QUEUE_COMMAND.CLEAR_QUEUE_DONE
+CSR_QUEUE_COMMAND.CLEAR_QUEUE_ERROR
+CSR_QUEUE_COMMAND.CLEAR_QUEUE_COUNTERS
+CSR_QUEUE_COMMAND.RESET_QUEUE_POINTERS
+CSR_QUEUE_STATUS / DONE_STATUS / ERROR_STATUS / REJECT_STATUS
+CSR_QUEUE_ERROR_DETAIL / ERROR_INDEX / LAST_CMD_TAG / LAST_CMD_CONTROL
+CSR_SQ_HEAD / CSR_SQ_TAIL
+CSR_CQ_HEAD / CSR_CQ_TAIL
+CSR_QUEUE_SQ_OCCUPANCY / CQ_OCCUPANCY / CQ_SPACE
+CSR_EVENT_PENDING W1C
+CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING
+CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS
+CSR_EVENT_ENABLE / CSR_EVENT_CONTROL
+P17/P18/P16/P15/P14 existing lower-level clear commands
 ```
 
-Disallowed P26B use:
+Validated P26 full-regression representatives:
 
 ```text
-queue_busy == 1
-active command owns a snapshotted SQ/CQ context
-host intends to preserve pending SQ work after STOP_QUEUE
-ordered CQ records still need to be consumed
+csr_queue_lifecycle_drained_reinit_case102
+csr_queue_lifecycle_stopped_preserve_restart_case102
+csr_queue_lifecycle_timeout_error_reinit_case102
 ```
 
-A busy pointer-reset request continues to use the existing queue reject behavior.  P26B does not redefine pointer reset as command cancellation, DMA abort, descriptor-fetch abort, recipe abort, GEMM abort, or completion-writeback abort.
-
-### 27.2 Work-Preserving STOP_QUEUE Restart
-
-After a graceful STOP_QUEUE terminal state, the host may preserve pending SQ work.
-
-P26B work-preserving restart uses this existing CSR policy:
+Full regression after P26G:
 
 ```text
-do not write RESET_QUEUE_POINTERS
-do not clear pending SQ command VALID words
-consume committed CQ records from completed commands
-advance CSR_CQ_HEAD after CQ consumption
-clear handled event pending bits through CSR_EVENT_PENDING W1C
-clear queue done sticky bits when the next wait should start from clean status
-re-arm CSR_EVENT_ENABLE / CSR_EVENT_CONTROL as needed
-write CSR_QUEUE_COMMAND.START_QUEUE to resume pending SQ work
+TOTAL : 138
+PASS  : 138
+FAIL  : 0
 ```
 
-This policy preserves pending SQ entries that were intentionally not consumed after STOP_QUEUE.
-
-### 27.3 Session-Discard Soft Reset
-
-Session-discard soft reset uses existing CSR commands plus host memory cleanup.
-
-Recommended P26B ordering:
+Validated P26 CSR usage policy:
 
 ```text
-1. Capture queue/event/lower-level diagnostics when the previous session ended in error.
-2. Consume any CQ records that the host wants to preserve.
-3. Advance CSR_CQ_HEAD only after CQ consumption.
-4. Clear handled event pending bits or issue CLEAR_EVENT_PENDING for full cleanup.
-5. Clear queue done/error/reject sticky bits using existing queue clear commands.
-6. Clear lower-level sticky state using existing lower-level clear commands.
-7. Clear or overwrite recycled SQ command VALID words in host memory.
-8. Clear or overwrite recycled CQ commit words in host memory.
-9. Issue RESET_QUEUE_POINTERS while queue_busy is zero.
-10. Reprogram queue configuration if the next session changes base/depth/stride/control.
-11. Re-arm event enable/global policy before the next event-driven START_QUEUE.
+Drained cleanup may preserve a clean non-zero monotonic pointer epoch when SQ_HEAD == SQ_TAIL and CQ_HEAD == CQ_TAIL.
+STOP_QUEUE work-preserving cleanup must not write RESET_QUEUE_POINTERS and must not clear pending SQ VALID words.
+Timeout/error cleanup captures diagnostics before clear, uses session-discard cleanup, waits for lower-level quiescence before restart, and re-arms events before the known-good recovery command.
+RESET_QUEUE_POINTERS remains an idle-only session-discard operation, not an abort, preemption, rollback, or cancellation mechanism.
 ```
 
-P26B soft reset is not a global CSR reset and does not clear BRAM scratchpad, descriptor memory, completion memory payload, destination/result memory, or datapath state beyond the existing sticky clear mechanisms.
-
-### 27.4 Event Cleanup Usage
-
-P26B freezes the distinction between event service and lifecycle cleanup:
-
-```text
-Normal event service:
-  use CSR_EVENT_PENDING W1C for handled event bits
-
-Session initialization or discard cleanup:
-  CSR_EVENT_COMMAND.CLEAR_EVENT_PENDING may clear all stale pending bits
-  CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS may clear event debug counters/snapshots
-
-Before event-driven service:
-  program CSR_EVENT_ENABLE and CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE as required
-```
-
-The event block remains summary-only.  CQ records, queue status, queue error detail, and lower-level sticky status remain the authoritative diagnostic sources.
-
-### 27.5 Validation Status
-
-P26B is a CSR-policy and helper-plan freeze.  It does not add UVM regression items by itself.
-
-```text
-Full regression remains:
-  TOTAL : 135
-  PASS  : 135
-  FAIL  : 0
-```
-
-P26D/P26E/P26F will validate the frozen policy through lifecycle representative tests before P26G full-regression integration.
-
+P26 keeps the P19 queue CSR window at `0x580 - 0x5FC` and the P22 event CSR window at `0x600 - 0x63C` unchanged.
