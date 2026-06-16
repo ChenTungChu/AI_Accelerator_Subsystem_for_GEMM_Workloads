@@ -115,6 +115,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_event_driven_stop_timeout_recovery_stress_test \
     ai_accel_subsys_csr_queue_lifecycle_drained_reinit_smoke_test \
     ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test \
+    ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test \
 ]
 
 # --------------------------------------------------

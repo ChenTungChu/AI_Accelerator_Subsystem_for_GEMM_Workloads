@@ -242,6 +242,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_queue_lifecycle_drained_reinit_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test.sv"
 
 endpackage
 

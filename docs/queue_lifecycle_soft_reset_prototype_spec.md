@@ -1296,3 +1296,21 @@ A concise interview explanation:
 P26 was my queue lifecycle and soft-reset milestone.  After P25, the runtime stack could already survive multiple sessions, live appends, STOP_QUEUE, delayed CQ consumption, and timeout recovery.  P26 formalized the cleanup contract around those behaviors.  I separated work-preserving restart from session-discard reinitialization, defined when RESET_QUEUE_POINTERS is legal, required the host to consume or recycle CQ records before advancing CQ_HEAD or resetting pointers, and made event/queue/lower-level sticky cleanup explicit.  This makes the subsystem behave more like a host-controlled accelerator device: it can close a session, recover from stop or timeout, re-arm events, and start a new command without relying on a full reset.
 ```
 
+
+---
+
+## P26F Timeout/Error Reinit Smoke Fix Note
+
+P26F timeout/error lifecycle recovery must distinguish queue-level cleanup from lower-level quiescence.
+A command timeout is reported at the queue level, but it does not introduce abort, cancellation, rollback, or preemption for an already-launched P17/P16/P15/P18 path.  Therefore a host-runtime lifecycle recovery sequence may need to wait for lower-level busy indicators to deassert before issuing the known-good recovery `START_QUEUE`.
+
+Frozen P26F recovery refinement:
+
+```text
+Queue/event sticky cleanup is necessary but not always sufficient for immediate restart.
+After timeout cleanup, wait for lower-level busy summary to clear.
+Clear late lower/event/queue sticky status after quiescence.
+Re-arm events and then submit the timeout-disabled recovery command.
+```
+
+This refinement preserves the P26 policy of no new CSR window, no new event bit, no abort protocol, and no datapath/BRAM change.
