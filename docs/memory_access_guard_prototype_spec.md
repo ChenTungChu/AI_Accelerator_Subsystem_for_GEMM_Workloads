@@ -688,9 +688,9 @@ Recommended P27 split:
 P27A: Memory access guard prototype spec                         PASS
 P27B: Memory guard CSR policy / range register map freeze        PASS
 P27C: Guard helper / checker utility integration                 PASS
-P27D: SQ / descriptor range validation smoke                     IMPLEMENTED / RUN PENDING
-P27E: DMA source / destination range validation smoke            TODO
-P27F: CQ / completion writeback guard + lifecycle recovery smoke TODO
+P27D: SQ / descriptor range validation smoke                     PASS
+P27E: DMA source / destination range validation smoke            PASS
+P27F: CQ / completion writeback guard + lifecycle recovery smoke IMPLEMENTED / RUN PENDING
 P27G: Full regression integration                                TODO
 P27H: Documentation closure                                      TODO
 ```
@@ -895,18 +895,37 @@ ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
 Expected PASS markers:
 
 ```text
+[P27E_GUARD/VALID_BASELINE_PASS]
 [P27E_GUARD/SRC_RANGE_REJECT_PASS]
 [P27E_GUARD/DST_RANGE_REJECT_PASS]
 [P27E_GUARD/RECOVERY_PASS]
 [P27E_GUARD/PASS]
 ```
 
-P27E implementation checkpoint:
+P27E validation checkpoint:
 
 ```text
-Test file: tb/uvm/test/ai_accel_subsys_csr_mem_guard_dma_range_smoke_test.sv
-Package include: ai_accel_subsys_uvm_pkg.sv P27 memory access guard test block
-RTL checkpoint: wrapper-level descriptor-payload SRC/DST guard before P16/P15 launch
+RTL files updated:
+  rtl/top/ai_accel_subsys_csr_top.sv
+
+UVM files updated:
+  tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+  tb/uvm/test/ai_accel_subsys_csr_mem_guard_dma_range_smoke_test.sv
+
+Guard coverage:
+  valid SQ/CQ/DESC/SRC/DST range baseline command
+  descriptor-payload source range reject before lower-level preload launch
+  descriptor-payload destination range reject before lower-level DMA store launch
+  P26 lifecycle cleanup and known-good recovery command
+
+Validation status:
+  P27E_GUARD/VALID_BASELINE_PASS observed
+  P27E_GUARD/SRC_RANGE_REJECT_PASS observed
+  P27E_GUARD/DST_RANGE_REJECT_PASS observed
+  P27E_GUARD/RECOVERY_PASS observed
+  P27E_GUARD/PASS observed
+  UVM_WARNING/UVM_ERROR/UVM_FATAL all zero
+
 Regression integration: deferred to P27G
 Full regression count remains 138 until P27G
 ```
@@ -933,10 +952,29 @@ ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
 Expected PASS markers:
 
 ```text
+[P27F_GUARD/VALID_BASELINE_PASS]
 [P27F_GUARD/CQ_RANGE_REJECT_PASS]
 [P27F_GUARD/NO_CQ_WRITE_PASS]
 [P27F_GUARD/RECOVERY_PASS]
 [P27F_GUARD/PASS]
+```
+
+P27F implementation checkpoint:
+
+```text
+UVM files updated:
+  tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+  tb/uvm/test/ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test.sv
+
+Guard coverage:
+  valid SQ/CQ/DESC/SRC/DST range baseline command
+  CQ slot range reject through queue error / P22 QUEUE_ERROR_EVENT
+  unsafe CQ completion writeback suppression when CQ slot is invalid
+  CQ memory remains uncommitted for the rejected slot
+  P26 lifecycle cleanup and known-good recovery command
+
+Regression integration: deferred to P27G
+Full regression count remains 138 until P27G
 ```
 
 ### 14.6 P27G Full Regression Integration
@@ -1136,9 +1174,7 @@ guard check points are identified
 safe reject / no unsafe access behavior is defined
 relationship to P19 queue, P22 event, P24 timeout, and P26 lifecycle is documented
 P27B CSR policy freeze is documented and canonical CSR fields are allocated only in the CSR spec
-P27D SQ / descriptor range validation is implemented and passing
-P27E DMA source / destination range validation smoke is implemented / run pending
-P27F validation direction and PASS markers are documented
+P27D/P27E/P27F validation direction and PASS markers are documented
 no RTL / CSR / Tcl / regression-list changes are required for P27A
 ```
 

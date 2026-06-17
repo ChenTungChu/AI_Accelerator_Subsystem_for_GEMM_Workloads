@@ -118,6 +118,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test \
     ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test \
     ai_accel_subsys_csr_mem_guard_dma_range_smoke_test \
+    ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test \
 ]
 
 # --------------------------------------------------
