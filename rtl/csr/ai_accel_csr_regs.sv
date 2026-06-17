@@ -16,6 +16,7 @@ module ai_accel_csr_regs #(
     parameter logic [31:0] CSR_COMPLETION_WB_VERSION_VALUE = 32'h0001_0018,
     parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
     parameter logic [31:0] CSR_EVENT_VERSION_VALUE         = 32'h0001_0022,
+    parameter logic [31:0] CSR_MEM_GUARD_VERSION_VALUE     = 32'h0001_0027,
     parameter logic [31:0] CSR_EVENT_CONTROL_RESET         = 32'h0000_0004,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
@@ -250,6 +251,36 @@ module ai_accel_csr_regs #(
     input  logic [31:0]           queue_cq_space,
     input  logic                  queue_completion_commit_pulse,
     input  logic                  queue_completion_error_pulse,
+
+    // ------------------------------------------------------------
+    // P27 memory access guard CSR configuration outputs
+    // ------------------------------------------------------------
+    output logic [31:0]           mem_guard_control,
+    output logic [ADDR_WIDTH-1:0] mem_guard_sq_base,
+    output logic [ADDR_WIDTH-1:0] mem_guard_sq_limit,
+    output logic [ADDR_WIDTH-1:0] mem_guard_cq_base,
+    output logic [ADDR_WIDTH-1:0] mem_guard_cq_limit,
+    output logic [ADDR_WIDTH-1:0] mem_guard_desc_base,
+    output logic [ADDR_WIDTH-1:0] mem_guard_desc_limit,
+    output logic [ADDR_WIDTH-1:0] mem_guard_src_base,
+    output logic [ADDR_WIDTH-1:0] mem_guard_src_limit,
+    output logic [ADDR_WIDTH-1:0] mem_guard_dst_base,
+    output logic [ADDR_WIDTH-1:0] mem_guard_dst_limit,
+
+    // ------------------------------------------------------------
+    // P27 memory access guard diagnostics from queue path
+    // ------------------------------------------------------------
+    input  logic                  mem_guard_check_pulse,
+    input  logic                  mem_guard_error_pulse,
+    input  logic [31:0]           mem_guard_error_status,
+    input  logic [31:0]           mem_guard_reject_status,
+    input  logic [31:0]           mem_guard_error_detail,
+    input  logic [ADDR_WIDTH-1:0] mem_guard_error_addr,
+    input  logic [31:0]           mem_guard_error_size_bytes,
+    input  logic [31:0]           mem_guard_error_domain,
+    input  logic [ADDR_WIDTH-1:0] mem_guard_last_check_addr,
+    input  logic [31:0]           mem_guard_last_check_size_bytes,
+    input  logic [31:0]           mem_guard_last_check_domain,
 
     // ------------------------------------------------------------
     // Live status inputs from the future P15 job sequencer
@@ -552,6 +583,91 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_634_ADDR = 12'h634;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_638_ADDR = 12'h638;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_63C_ADDR = 12'h63C;
+
+    // ------------------------------------------------------------
+    // P27 memory access guard CSR window
+    // ------------------------------------------------------------
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_VERSION_ADDR              = 12'h640;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_COMMAND_ADDR              = 12'h644;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_STATUS_ADDR               = 12'h648;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_STATUS_ADDR         = 12'h64C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_CONTROL_ADDR              = 12'h650;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_REJECT_STATUS_ADDR        = 12'h654;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_DETAIL_ADDR         = 12'h658;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_ADDR_ADDR           = 12'h65C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_SIZE_BYTES_ADDR     = 12'h660;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_DOMAIN_ADDR         = 12'h664;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_CHECK_COUNT_ADDR          = 12'h668;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_ERROR_COUNT_ADDR          = 12'h66C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_LAST_CHECK_ADDR_ADDR      = 12'h670;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES_ADDR= 12'h674;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_LAST_CHECK_DOMAIN_ADDR    = 12'h678;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_SQ_BASE_ADDR              = 12'h680;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_SQ_LIMIT_ADDR             = 12'h684;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_CQ_BASE_ADDR              = 12'h688;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_CQ_LIMIT_ADDR             = 12'h68C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_DESC_BASE_ADDR            = 12'h690;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_DESC_LIMIT_ADDR           = 12'h694;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_SRC_BASE_ADDR             = 12'h698;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_SRC_LIMIT_ADDR            = 12'h69C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_DST_BASE_ADDR             = 12'h6A0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_DST_LIMIT_ADDR            = 12'h6A4;
+
+    // ------------------------------------------------------------
+    // P27 memory access guard constants
+    // ------------------------------------------------------------
+    localparam int MEM_GUARD_CMD_CLEAR_ERROR    = 8;
+    localparam int MEM_GUARD_CMD_CLEAR_REJECT   = 9;
+    localparam int MEM_GUARD_CMD_CLEAR_COUNTERS = 10;
+
+    localparam int MEM_GUARD_CONTROL_ENABLE              = 0;
+    localparam int MEM_GUARD_CONTROL_STRICT_REJECT       = 1;
+    localparam int MEM_GUARD_CONTROL_SQ_CHECK_ENABLE     = 4;
+    localparam int MEM_GUARD_CONTROL_CQ_CHECK_ENABLE     = 5;
+    localparam int MEM_GUARD_CONTROL_DESC_CHECK_ENABLE   = 6;
+    localparam int MEM_GUARD_CONTROL_SRC_CHECK_ENABLE    = 7;
+    localparam int MEM_GUARD_CONTROL_DST_CHECK_ENABLE    = 8;
+    localparam int MEM_GUARD_CONTROL_WRITE_CQ_ERROR_SAFE = 12;
+
+    localparam int MEM_GUARD_STATUS_GUARD_ENABLED      = 0;
+    localparam int MEM_GUARD_STATUS_STRICT_ENABLED     = 1;
+    localparam int MEM_GUARD_STATUS_ANY_ERROR          = 2;
+    localparam int MEM_GUARD_STATUS_ANY_REJECT         = 3;
+    localparam int MEM_GUARD_STATUS_SQ_CHECK_ENABLED   = 4;
+    localparam int MEM_GUARD_STATUS_CQ_CHECK_ENABLED   = 5;
+    localparam int MEM_GUARD_STATUS_DESC_CHECK_ENABLED = 6;
+    localparam int MEM_GUARD_STATUS_SRC_CHECK_ENABLED  = 7;
+    localparam int MEM_GUARD_STATUS_DST_CHECK_ENABLED  = 8;
+    localparam int MEM_GUARD_STATUS_ERROR_PENDING      = 9;
+    localparam int MEM_GUARD_STATUS_QUEUE_ERROR_MIRROR = 10;
+
+    localparam int MEM_GUARD_ERR_ANY              = 0;
+    localparam int MEM_GUARD_ERR_SQ_RANGE         = 1;
+    localparam int MEM_GUARD_ERR_CQ_RANGE         = 2;
+    localparam int MEM_GUARD_ERR_DESC_RANGE       = 3;
+    localparam int MEM_GUARD_ERR_SRC_RANGE        = 4;
+    localparam int MEM_GUARD_ERR_DST_RANGE        = 5;
+    localparam int MEM_GUARD_ERR_BASE_LIMIT       = 6;
+    localparam int MEM_GUARD_ERR_ADDR_OVERFLOW    = 7;
+    localparam int MEM_GUARD_ERR_ALIGNMENT        = 8;
+    localparam int MEM_GUARD_ERR_STRIDE           = 9;
+    localparam int MEM_GUARD_ERR_DEPTH            = 10;
+    localparam int MEM_GUARD_ERR_SIZE_ZERO        = 11;
+    localparam int MEM_GUARD_ERR_UNSAFE_CQ_SUPP   = 12;
+    localparam int MEM_GUARD_ERR_DOMAIN_MISMATCH  = 13;
+    localparam int MEM_GUARD_ERR_CONFIG_BUSY      = 14;
+    localparam int MEM_GUARD_ERR_INTERNAL         = 15;
+
+    localparam int MEM_GUARD_REJ_CONFIG_BUSY      = 0;
+    localparam int MEM_GUARD_REJ_INVALID_REGION   = 1;
+    localparam int MEM_GUARD_REJ_UNSUPPORTED_CMD  = 2;
+    localparam int MEM_GUARD_REJ_STRICT_START     = 3;
+
+    localparam int P27_QUEUE_MEMORY_GUARD_ERROR_BIT = 9;
+
+    localparam logic [31:0] MEM_GUARD_CONTROL_WR_MASK = 32'h0000_11F3;
+    localparam logic [31:0] MEM_GUARD_ALL_ERROR_MASK  = 32'h0000_FFFF;
+    localparam logic [31:0] MEM_GUARD_ALL_REJECT_MASK = 32'h0000_000F;
 
     // ------------------------------------------------------------
     // P22 event notification constants
@@ -911,6 +1027,32 @@ module ai_accel_csr_regs #(
     logic [31:0] queue_cq_stride_q;
     logic [31:0] queue_extra_error_status_q;
 
+    logic [31:0] mem_guard_control_q;
+    logic [31:0] mem_guard_error_status_q;
+    logic [31:0] mem_guard_reject_status_q;
+    logic [31:0] mem_guard_error_detail_q;
+    logic [31:0] mem_guard_error_addr_q;
+    logic [31:0] mem_guard_error_size_bytes_q;
+    logic [31:0] mem_guard_error_domain_q;
+    logic [31:0] mem_guard_check_count_q;
+    logic [31:0] mem_guard_error_count_q;
+    logic [31:0] mem_guard_last_check_addr_q;
+    logic [31:0] mem_guard_last_check_size_bytes_q;
+    logic [31:0] mem_guard_last_check_domain_q;
+    logic [31:0] mem_guard_sq_base_q;
+    logic [31:0] mem_guard_sq_limit_q;
+    logic [31:0] mem_guard_cq_base_q;
+    logic [31:0] mem_guard_cq_limit_q;
+    logic [31:0] mem_guard_desc_base_q;
+    logic [31:0] mem_guard_desc_limit_q;
+    logic [31:0] mem_guard_src_base_q;
+    logic [31:0] mem_guard_src_limit_q;
+    logic [31:0] mem_guard_dst_base_q;
+    logic [31:0] mem_guard_dst_limit_q;
+
+    logic [31:0] mem_guard_status_read_data;
+    logic [31:0] mem_guard_command_masked;
+    logic        mem_guard_command_has_active_strobe;
 
     logic [31:0] event_pending_q;
     logic [31:0] event_enable_q;
@@ -1427,7 +1569,33 @@ CSR_QUEUE_VERSION_ADDR,
             CSR_EVENT_RESERVED_630_ADDR,
             CSR_EVENT_RESERVED_634_ADDR,
             CSR_EVENT_RESERVED_638_ADDR,
-            CSR_EVENT_RESERVED_63C_ADDR: begin
+            CSR_EVENT_RESERVED_63C_ADDR,
+
+            CSR_MEM_GUARD_VERSION_ADDR,
+            CSR_MEM_GUARD_COMMAND_ADDR,
+            CSR_MEM_GUARD_STATUS_ADDR,
+            CSR_MEM_GUARD_ERROR_STATUS_ADDR,
+            CSR_MEM_GUARD_CONTROL_ADDR,
+            CSR_MEM_GUARD_REJECT_STATUS_ADDR,
+            CSR_MEM_GUARD_ERROR_DETAIL_ADDR,
+            CSR_MEM_GUARD_ERROR_ADDR_ADDR,
+            CSR_MEM_GUARD_ERROR_SIZE_BYTES_ADDR,
+            CSR_MEM_GUARD_ERROR_DOMAIN_ADDR,
+            CSR_MEM_GUARD_CHECK_COUNT_ADDR,
+            CSR_MEM_GUARD_ERROR_COUNT_ADDR,
+            CSR_MEM_GUARD_LAST_CHECK_ADDR_ADDR,
+            CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES_ADDR,
+            CSR_MEM_GUARD_LAST_CHECK_DOMAIN_ADDR,
+            CSR_MEM_GUARD_SQ_BASE_ADDR,
+            CSR_MEM_GUARD_SQ_LIMIT_ADDR,
+            CSR_MEM_GUARD_CQ_BASE_ADDR,
+            CSR_MEM_GUARD_CQ_LIMIT_ADDR,
+            CSR_MEM_GUARD_DESC_BASE_ADDR,
+            CSR_MEM_GUARD_DESC_LIMIT_ADDR,
+            CSR_MEM_GUARD_SRC_BASE_ADDR,
+            CSR_MEM_GUARD_SRC_LIMIT_ADDR,
+            CSR_MEM_GUARD_DST_BASE_ADDR,
+            CSR_MEM_GUARD_DST_LIMIT_ADDR: begin
                 return 1'b1;
             end
 
@@ -1994,6 +2162,106 @@ CSR_QUEUE_VERSION_ADDR,
                 return event_irq_count_q;
             end
 
+            CSR_MEM_GUARD_VERSION_ADDR: begin
+                return CSR_MEM_GUARD_VERSION_VALUE;
+            end
+
+            CSR_MEM_GUARD_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_MEM_GUARD_STATUS_ADDR: begin
+                return mem_guard_status_read_data;
+            end
+
+            CSR_MEM_GUARD_ERROR_STATUS_ADDR: begin
+                return mem_guard_error_status_q;
+            end
+
+            CSR_MEM_GUARD_CONTROL_ADDR: begin
+                return mem_guard_control_q & MEM_GUARD_CONTROL_WR_MASK;
+            end
+
+            CSR_MEM_GUARD_REJECT_STATUS_ADDR: begin
+                return mem_guard_reject_status_q;
+            end
+
+            CSR_MEM_GUARD_ERROR_DETAIL_ADDR: begin
+                return mem_guard_error_detail_q;
+            end
+
+            CSR_MEM_GUARD_ERROR_ADDR_ADDR: begin
+                return mem_guard_error_addr_q;
+            end
+
+            CSR_MEM_GUARD_ERROR_SIZE_BYTES_ADDR: begin
+                return mem_guard_error_size_bytes_q;
+            end
+
+            CSR_MEM_GUARD_ERROR_DOMAIN_ADDR: begin
+                return mem_guard_error_domain_q;
+            end
+
+            CSR_MEM_GUARD_CHECK_COUNT_ADDR: begin
+                return mem_guard_check_count_q;
+            end
+
+            CSR_MEM_GUARD_ERROR_COUNT_ADDR: begin
+                return mem_guard_error_count_q;
+            end
+
+            CSR_MEM_GUARD_LAST_CHECK_ADDR_ADDR: begin
+                return mem_guard_last_check_addr_q;
+            end
+
+            CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES_ADDR: begin
+                return mem_guard_last_check_size_bytes_q;
+            end
+
+            CSR_MEM_GUARD_LAST_CHECK_DOMAIN_ADDR: begin
+                return mem_guard_last_check_domain_q;
+            end
+
+            CSR_MEM_GUARD_SQ_BASE_ADDR: begin
+                return mem_guard_sq_base_q;
+            end
+
+            CSR_MEM_GUARD_SQ_LIMIT_ADDR: begin
+                return mem_guard_sq_limit_q;
+            end
+
+            CSR_MEM_GUARD_CQ_BASE_ADDR: begin
+                return mem_guard_cq_base_q;
+            end
+
+            CSR_MEM_GUARD_CQ_LIMIT_ADDR: begin
+                return mem_guard_cq_limit_q;
+            end
+
+            CSR_MEM_GUARD_DESC_BASE_ADDR: begin
+                return mem_guard_desc_base_q;
+            end
+
+            CSR_MEM_GUARD_DESC_LIMIT_ADDR: begin
+                return mem_guard_desc_limit_q;
+            end
+
+            CSR_MEM_GUARD_SRC_BASE_ADDR: begin
+                return mem_guard_src_base_q;
+            end
+
+            CSR_MEM_GUARD_SRC_LIMIT_ADDR: begin
+                return mem_guard_src_limit_q;
+            end
+
+            CSR_MEM_GUARD_DST_BASE_ADDR: begin
+                return mem_guard_dst_base_q;
+            end
+
+            CSR_MEM_GUARD_DST_LIMIT_ADDR: begin
+                return mem_guard_dst_limit_q;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -2277,6 +2545,19 @@ CSR_QUEUE_VERSION_ADDR,
         event_status_read_data[4] = |(event_pending_q[7:0]);
         event_status_read_data[5] = |(event_pending_q[P22_EVENT_RUNTIME_CONSUMED:P22_EVENT_RUNTIME_DOORBELL]);
         event_status_read_data[6] = event_pending_q[P22_EVENT_TEST];
+
+        mem_guard_status_read_data = 32'h0000_0000;
+        mem_guard_status_read_data[MEM_GUARD_STATUS_GUARD_ENABLED]      = mem_guard_control_q[MEM_GUARD_CONTROL_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_STRICT_ENABLED]     = mem_guard_control_q[MEM_GUARD_CONTROL_STRICT_REJECT];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_ANY_ERROR]          = |mem_guard_error_status_q;
+        mem_guard_status_read_data[MEM_GUARD_STATUS_ANY_REJECT]         = |mem_guard_reject_status_q;
+        mem_guard_status_read_data[MEM_GUARD_STATUS_SQ_CHECK_ENABLED]   = mem_guard_control_q[MEM_GUARD_CONTROL_SQ_CHECK_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_CQ_CHECK_ENABLED]   = mem_guard_control_q[MEM_GUARD_CONTROL_CQ_CHECK_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_DESC_CHECK_ENABLED] = mem_guard_control_q[MEM_GUARD_CONTROL_DESC_CHECK_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_SRC_CHECK_ENABLED]  = mem_guard_control_q[MEM_GUARD_CONTROL_SRC_CHECK_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_DST_CHECK_ENABLED]  = mem_guard_control_q[MEM_GUARD_CONTROL_DST_CHECK_ENABLE];
+        mem_guard_status_read_data[MEM_GUARD_STATUS_ERROR_PENDING]      = |mem_guard_error_status_q;
+        mem_guard_status_read_data[MEM_GUARD_STATUS_QUEUE_ERROR_MIRROR] = (((queue_error_status | queue_extra_error_status_q) >> P27_QUEUE_MEMORY_GUARD_ERROR_BIT) & 32'h0000_0001);
     end
 
     // ------------------------------------------------------------
@@ -2361,6 +2642,9 @@ CSR_QUEUE_VERSION_ADDR,
         queue_command_has_active_strobe = |write_strb;
         queue_command_masked            = write_data & strobe_to_mask(write_strb);
         queue_command_has_start         = queue_command_masked[QUEUE_CMD_START_BIT];
+
+        mem_guard_command_has_active_strobe = |write_strb;
+        mem_guard_command_masked            = write_data & strobe_to_mask(write_strb);
     end
 
     // ------------------------------------------------------------
@@ -2493,6 +2777,29 @@ CSR_QUEUE_VERSION_ADDR,
             queue_cq_tail_q      <= 32'h0000_0000;
             queue_cq_stride_q    <= 32'h0000_0040;
             queue_extra_error_status_q <= 32'h0000_0000;
+
+            mem_guard_control_q                <= 32'h0000_0000;
+            mem_guard_error_status_q           <= 32'h0000_0000;
+            mem_guard_reject_status_q          <= 32'h0000_0000;
+            mem_guard_error_detail_q           <= 32'h0000_0000;
+            mem_guard_error_addr_q             <= 32'h0000_0000;
+            mem_guard_error_size_bytes_q       <= 32'h0000_0000;
+            mem_guard_error_domain_q           <= 32'h0000_0000;
+            mem_guard_check_count_q            <= 32'h0000_0000;
+            mem_guard_error_count_q            <= 32'h0000_0000;
+            mem_guard_last_check_addr_q        <= 32'h0000_0000;
+            mem_guard_last_check_size_bytes_q  <= 32'h0000_0000;
+            mem_guard_last_check_domain_q      <= 32'h0000_0000;
+            mem_guard_sq_base_q                <= 32'h0000_0000;
+            mem_guard_sq_limit_q               <= 32'h0000_0000;
+            mem_guard_cq_base_q                <= 32'h0000_0000;
+            mem_guard_cq_limit_q               <= 32'h0000_0000;
+            mem_guard_desc_base_q              <= 32'h0000_0000;
+            mem_guard_desc_limit_q             <= 32'h0000_0000;
+            mem_guard_src_base_q               <= 32'h0000_0000;
+            mem_guard_src_limit_q              <= 32'h0000_0000;
+            mem_guard_dst_base_q               <= 32'h0000_0000;
+            mem_guard_dst_limit_q              <= 32'h0000_0000;
 
             event_pending_q      <= 32'h0000_0000;
             event_enable_q       <= 32'h0000_0000;
@@ -2629,6 +2936,23 @@ CSR_QUEUE_VERSION_ADDR,
                 queue_extra_error_status_q <= 32'h0000_0000;
             end else if (queue_completion_error_pulse) begin
                 queue_extra_error_status_q[4] <= 1'b1;
+            end
+
+            if (mem_guard_check_pulse) begin
+                mem_guard_check_count_q           <= mem_guard_check_count_q + 32'd1;
+                mem_guard_last_check_addr_q       <= mem_guard_last_check_addr;
+                mem_guard_last_check_size_bytes_q <= mem_guard_last_check_size_bytes;
+                mem_guard_last_check_domain_q     <= mem_guard_last_check_domain;
+            end
+
+            if (mem_guard_error_pulse) begin
+                mem_guard_error_status_q     <= mem_guard_error_status_q | mem_guard_error_status;
+                mem_guard_reject_status_q    <= mem_guard_reject_status_q | mem_guard_reject_status;
+                mem_guard_error_detail_q     <= mem_guard_error_detail;
+                mem_guard_error_addr_q       <= mem_guard_error_addr;
+                mem_guard_error_size_bytes_q <= mem_guard_error_size_bytes;
+                mem_guard_error_domain_q     <= mem_guard_error_domain;
+                mem_guard_error_count_q      <= mem_guard_error_count_q + 32'd1;
             end
 
             completion_wb_clear_done_holdoff_q  <= 1'b0;
@@ -3181,6 +3505,98 @@ CSR_QUEUE_VERSION_ADDR,
 
                         CSR_COMPLETION_WB_ERROR_DETAIL_ADDR: begin
                             completion_wb_error_detail_q <= apply_wstrb32(completion_wb_error_detail_q, write_data, write_strb);
+                        end
+
+
+                        CSR_MEM_GUARD_COMMAND_ADDR: begin
+                            if (mem_guard_command_has_active_strobe) begin
+                                if (mem_guard_command_masked[MEM_GUARD_CMD_CLEAR_ERROR]) begin
+                                    mem_guard_error_status_q     <= 32'h0000_0000;
+                                    mem_guard_error_detail_q     <= 32'h0000_0000;
+                                    mem_guard_error_addr_q       <= 32'h0000_0000;
+                                    mem_guard_error_size_bytes_q <= 32'h0000_0000;
+                                    mem_guard_error_domain_q     <= 32'h0000_0000;
+                                end
+                                if (mem_guard_command_masked[MEM_GUARD_CMD_CLEAR_REJECT]) begin
+                                    mem_guard_reject_status_q <= 32'h0000_0000;
+                                end
+                                if (mem_guard_command_masked[MEM_GUARD_CMD_CLEAR_COUNTERS]) begin
+                                    mem_guard_check_count_q           <= 32'h0000_0000;
+                                    mem_guard_error_count_q           <= 32'h0000_0000;
+                                    mem_guard_last_check_addr_q       <= 32'h0000_0000;
+                                    mem_guard_last_check_size_bytes_q <= 32'h0000_0000;
+                                    mem_guard_last_check_domain_q     <= 32'h0000_0000;
+                                end
+                            end
+                        end
+
+                        CSR_MEM_GUARD_ERROR_STATUS_ADDR: begin
+                            mem_guard_error_status_q <= mem_guard_error_status_q &
+                                                        ~(write_data & strobe_to_mask(write_strb) & MEM_GUARD_ALL_ERROR_MASK);
+                        end
+
+                        CSR_MEM_GUARD_REJECT_STATUS_ADDR: begin
+                            mem_guard_reject_status_q <= mem_guard_reject_status_q &
+                                                         ~(write_data & strobe_to_mask(write_strb) & MEM_GUARD_ALL_REJECT_MASK);
+                        end
+
+                        CSR_MEM_GUARD_CONTROL_ADDR: begin
+                            if (queue_busy) begin
+                                mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            end else begin
+                                mem_guard_control_q <= apply_wstrb32(mem_guard_control_q, write_data, write_strb) &
+                                                       MEM_GUARD_CONTROL_WR_MASK;
+                            end
+                        end
+
+                        CSR_MEM_GUARD_SQ_BASE_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_sq_base_q <= apply_wstrb32(mem_guard_sq_base_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_SQ_LIMIT_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_sq_limit_q <= apply_wstrb32(mem_guard_sq_limit_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_CQ_BASE_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_cq_base_q <= apply_wstrb32(mem_guard_cq_base_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_CQ_LIMIT_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_cq_limit_q <= apply_wstrb32(mem_guard_cq_limit_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_DESC_BASE_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_desc_base_q <= apply_wstrb32(mem_guard_desc_base_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_DESC_LIMIT_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_desc_limit_q <= apply_wstrb32(mem_guard_desc_limit_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_SRC_BASE_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_src_base_q <= apply_wstrb32(mem_guard_src_base_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_SRC_LIMIT_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_src_limit_q <= apply_wstrb32(mem_guard_src_limit_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_DST_BASE_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_dst_base_q <= apply_wstrb32(mem_guard_dst_base_q, write_data, write_strb);
+                        end
+
+                        CSR_MEM_GUARD_DST_LIMIT_ADDR: begin
+                            if (queue_busy) mem_guard_reject_status_q[MEM_GUARD_REJ_CONFIG_BUSY] <= 1'b1;
+                            else mem_guard_dst_limit_q <= apply_wstrb32(mem_guard_dst_limit_q, write_data, write_strb);
                         end
 
 
@@ -3765,6 +4181,18 @@ CSR_QUEUE_VERSION_ADDR,
     assign queue_cq_head      = queue_cq_head_q;
     assign queue_cq_tail      = queue_cq_tail_q;
     assign queue_cq_stride    = queue_cq_stride_q;
+
+    assign mem_guard_control          = mem_guard_control_q & MEM_GUARD_CONTROL_WR_MASK;
+    assign mem_guard_sq_base          = mem_guard_sq_base_q[ADDR_WIDTH-1:0];
+    assign mem_guard_sq_limit         = mem_guard_sq_limit_q[ADDR_WIDTH-1:0];
+    assign mem_guard_cq_base          = mem_guard_cq_base_q[ADDR_WIDTH-1:0];
+    assign mem_guard_cq_limit         = mem_guard_cq_limit_q[ADDR_WIDTH-1:0];
+    assign mem_guard_desc_base        = mem_guard_desc_base_q[ADDR_WIDTH-1:0];
+    assign mem_guard_desc_limit       = mem_guard_desc_limit_q[ADDR_WIDTH-1:0];
+    assign mem_guard_src_base         = mem_guard_src_base_q[ADDR_WIDTH-1:0];
+    assign mem_guard_src_limit        = mem_guard_src_limit_q[ADDR_WIDTH-1:0];
+    assign mem_guard_dst_base         = mem_guard_dst_base_q[ADDR_WIDTH-1:0];
+    assign mem_guard_dst_limit        = mem_guard_dst_limit_q[ADDR_WIDTH-1:0];
 
     assign completion_wb_enable         = completion_wb_control_q[0];
     assign completion_wb_overall_done   = completion_wb_control_q[1];

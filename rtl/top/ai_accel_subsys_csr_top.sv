@@ -569,6 +569,33 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               queue_cq_occupancy_i;
     logic [31:0]               queue_cq_space_i;
 
+    // ------------------------------------------------------------
+    // P27 memory access guard CSR configuration / diagnostics
+    // ------------------------------------------------------------
+    logic [31:0]               csr_mem_guard_control;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_sq_base;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_sq_limit;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_cq_base;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_cq_limit;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_desc_base;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_desc_limit;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_src_base;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_src_limit;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_dst_base;
+    logic [ADDR_WIDTH-1:0]     csr_mem_guard_dst_limit;
+
+    logic                      mem_guard_check_pulse_i;
+    logic                      mem_guard_error_pulse_i;
+    logic [31:0]               mem_guard_error_status_i;
+    logic [31:0]               mem_guard_reject_status_i;
+    logic [31:0]               mem_guard_error_detail_i;
+    logic [ADDR_WIDTH-1:0]     mem_guard_error_addr_i;
+    logic [31:0]               mem_guard_error_size_bytes_i;
+    logic [31:0]               mem_guard_error_domain_i;
+    logic [ADDR_WIDTH-1:0]     mem_guard_last_check_addr_i;
+    logic [31:0]               mem_guard_last_check_size_bytes_i;
+    logic [31:0]               mem_guard_last_check_domain_i;
+
     logic                      queue_cmd_valid_i;
     logic                      queue_cmd_ready_i;
     logic                      queue_cmd_reject_i;
@@ -1147,6 +1174,7 @@ module ai_accel_subsys_csr_top #(
         .CSR_COMPLETION_WB_VERSION_VALUE(CSR_COMPLETION_WB_VERSION_VALUE),
         .CSR_QUEUE_VERSION_VALUE  (CSR_QUEUE_VERSION_VALUE),
         .CSR_EVENT_VERSION_VALUE  (CSR_EVENT_VERSION_VALUE),
+        .CSR_MEM_GUARD_VERSION_VALUE(32'h0001_0027),
         .CSR_EVENT_CONTROL_RESET  (CSR_EVENT_CONTROL_RESET),
         .P16_RECIPE_QUEUE_DEPTH   (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_csr_regs (
@@ -1336,6 +1364,29 @@ module ai_accel_subsys_csr_top #(
         .queue_completion_commit_pulse (queue_completion_commit_pulse_i),
         .queue_completion_error_pulse  (queue_completion_error_pulse_i),
 
+        .mem_guard_control              (csr_mem_guard_control),
+        .mem_guard_sq_base              (csr_mem_guard_sq_base),
+        .mem_guard_sq_limit             (csr_mem_guard_sq_limit),
+        .mem_guard_cq_base              (csr_mem_guard_cq_base),
+        .mem_guard_cq_limit             (csr_mem_guard_cq_limit),
+        .mem_guard_desc_base            (csr_mem_guard_desc_base),
+        .mem_guard_desc_limit           (csr_mem_guard_desc_limit),
+        .mem_guard_src_base             (csr_mem_guard_src_base),
+        .mem_guard_src_limit            (csr_mem_guard_src_limit),
+        .mem_guard_dst_base             (csr_mem_guard_dst_base),
+        .mem_guard_dst_limit            (csr_mem_guard_dst_limit),
+        .mem_guard_check_pulse          (mem_guard_check_pulse_i),
+        .mem_guard_error_pulse          (mem_guard_error_pulse_i),
+        .mem_guard_error_status         (mem_guard_error_status_i),
+        .mem_guard_reject_status        (mem_guard_reject_status_i),
+        .mem_guard_error_detail         (mem_guard_error_detail_i),
+        .mem_guard_error_addr           (mem_guard_error_addr_i),
+        .mem_guard_error_size_bytes     (mem_guard_error_size_bytes_i),
+        .mem_guard_error_domain         (mem_guard_error_domain_i),
+        .mem_guard_last_check_addr      (mem_guard_last_check_addr_i),
+        .mem_guard_last_check_size_bytes(mem_guard_last_check_size_bytes_i),
+        .mem_guard_last_check_domain    (mem_guard_last_check_domain_i),
+
         .job_busy               (job_busy_i),
         .job_done               (job_done_i),
         .job_gemm_done          (job_gemm_done_i),
@@ -1446,6 +1497,14 @@ module ai_accel_subsys_csr_top #(
         .cq_tail                (csr_queue_cq_tail),
         .cq_stride              (csr_queue_cq_stride),
 
+        .mem_guard_control      (csr_mem_guard_control),
+        .mem_guard_sq_base      (csr_mem_guard_sq_base),
+        .mem_guard_sq_limit     (csr_mem_guard_sq_limit),
+        .mem_guard_cq_base      (csr_mem_guard_cq_base),
+        .mem_guard_cq_limit     (csr_mem_guard_cq_limit),
+        .mem_guard_desc_base    (csr_mem_guard_desc_base),
+        .mem_guard_desc_limit   (csr_mem_guard_desc_limit),
+
         .underlying_idle        (queue_underlying_idle_i),
 
         .cmd_axi_arid           (cmd_src_axi_arid),
@@ -1499,7 +1558,19 @@ module ai_accel_subsys_csr_top #(
         .queue_last_cmd_control (queue_last_cmd_control_i),
         .queue_sq_occupancy     (queue_sq_occupancy_i),
         .queue_cq_occupancy     (queue_cq_occupancy_i),
-        .queue_cq_space         (queue_cq_space_i)
+        .queue_cq_space         (queue_cq_space_i),
+
+        .mem_guard_check_pulse          (mem_guard_check_pulse_i),
+        .mem_guard_error_pulse          (mem_guard_error_pulse_i),
+        .mem_guard_error_status         (mem_guard_error_status_i),
+        .mem_guard_reject_status        (mem_guard_reject_status_i),
+        .mem_guard_error_detail         (mem_guard_error_detail_i),
+        .mem_guard_error_addr           (mem_guard_error_addr_i),
+        .mem_guard_error_size_bytes     (mem_guard_error_size_bytes_i),
+        .mem_guard_error_domain         (mem_guard_error_domain_i),
+        .mem_guard_last_check_addr      (mem_guard_last_check_addr_i),
+        .mem_guard_last_check_size_bytes(mem_guard_last_check_size_bytes_i),
+        .mem_guard_last_check_domain    (mem_guard_last_check_domain_i)
     );
 
     // ============================================================

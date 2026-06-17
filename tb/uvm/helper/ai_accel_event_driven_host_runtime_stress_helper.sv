@@ -4,12 +4,15 @@
 
 // ============================================================
 // P25B event-driven host runtime stress helper extension
+// P26C queue lifecycle helper extension
+// P27C memory guard helper / checker utility extension
 //
 // Scope:
 //   - TB/UVM helper only.
 //   - Extends the existing P23 event-driven host runtime helper.
 //   - Adds reusable stress-oriented snapshot, cleanup, re-arm,
-//     CQ-consume, and queue-reusable checks for P25C/P25D/P25E.
+//     CQ-consume, queue-reusable, lifecycle, and P27 guard setup /
+//     checker utilities.
 //   - Does not change RTL, CSR map, SQ/CQ formats, event bits,
 //     descriptor format, completion record format, or sim flow.
 // ============================================================
@@ -22,6 +25,7 @@ class ai_accel_event_driven_host_runtime_stress_helper
     localparam int unsigned P25_DEFAULT_STRESS_TIMEOUT_CYCLES = 300000;
     localparam int unsigned P25_DEFAULT_REUSABLE_TIMEOUT_CYCLES = 200000;
     localparam int unsigned P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES = 300000;
+    localparam int unsigned P27_DEFAULT_GUARD_TIMEOUT_CYCLES = 300000;
 
     typedef enum int unsigned {
         P26_LIFE_CLEAN_DRAINED,
@@ -75,6 +79,40 @@ class ai_accel_event_driven_host_runtime_stress_helper
         logic [31:0] cq_space;
         logic [31:0] current_index;
     } p26_lifecycle_snapshot_t;
+
+
+    typedef struct {
+        logic [31:0] control;
+        logic [31:0] sq_base;
+        logic [31:0] sq_limit;
+        logic [31:0] cq_base;
+        logic [31:0] cq_limit;
+        logic [31:0] desc_base;
+        logic [31:0] desc_limit;
+        logic [31:0] src_base;
+        logic [31:0] src_limit;
+        logic [31:0] dst_base;
+        logic [31:0] dst_limit;
+    } p27_guard_cfg_t;
+
+    typedef struct {
+        logic [31:0] status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] error_detail;
+        logic [31:0] error_addr;
+        logic [31:0] error_size_bytes;
+        logic [31:0] error_domain;
+        logic [31:0] check_count;
+        logic [31:0] error_count;
+        logic [31:0] last_check_addr;
+        logic [31:0] last_check_size_bytes;
+        logic [31:0] last_check_domain;
+        logic [31:0] queue_status;
+        logic [31:0] queue_error_status;
+        logic [31:0] queue_error_detail;
+        logic [31:0] event_pending;
+    } p27_guard_snapshot_t;
 
     function new(string name = "ai_accel_event_driven_host_runtime_stress_helper");
         super.new(name);
@@ -1209,6 +1247,416 @@ class ai_accel_event_driven_host_runtime_stress_helper
                 snap.cq_head,
                 snap.cq_tail,
                 snap.event_pending),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+
+    // ------------------------------------------------------------
+    // P27 memory guard helper / checker utilities
+    // ------------------------------------------------------------
+    function automatic logic [31:0] host_rt_mem_guard_control_value(
+        input bit guard_enable = 1'b1,
+        input bit strict_reject_enable = 1'b1,
+        input bit sq_check_enable = 1'b1,
+        input bit cq_check_enable = 1'b1,
+        input bit desc_check_enable = 1'b1,
+        input bit src_check_enable = 1'b1,
+        input bit dst_check_enable = 1'b1,
+        input bit write_cq_error_if_safe = 1'b1
+    );
+        logic [31:0] value;
+    begin
+        value = 32'h0000_0000;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_ENABLE]              = guard_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_STRICT_REJECT]       = strict_reject_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_SQ_CHECK_ENABLE]     = sq_check_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_CQ_CHECK_ENABLE]     = cq_check_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_DESC_CHECK_ENABLE]   = desc_check_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_SRC_CHECK_ENABLE]    = src_check_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_DST_CHECK_ENABLE]    = dst_check_enable;
+        value[ai_accel_csr_access_helper::MEM_GUARD_CONTROL_WRITE_CQ_ERROR_SAFE] = write_cq_error_if_safe;
+        return value;
+    end
+    endfunction
+
+    function automatic logic [31:0] host_rt_mem_guard_span_limit(
+        input logic [31:0] base_addr,
+        input logic [31:0] size_bytes
+    );
+        logic [32:0] end_addr_ext;
+    begin
+        end_addr_ext = {1'b0, base_addr} + {1'b0, size_bytes};
+        if (end_addr_ext[32]) begin
+            return 32'hFFFF_FFFF;
+        end
+        return end_addr_ext[31:0];
+    end
+    endfunction
+
+    function automatic bit host_rt_mem_guard_range_valid(
+        input logic [31:0] addr,
+        input logic [31:0] size_bytes,
+        input logic [31:0] region_base,
+        input logic [31:0] region_limit
+    );
+        logic [32:0] end_addr_ext;
+    begin
+        end_addr_ext = {1'b0, addr} + {1'b0, size_bytes};
+        return (size_bytes != 32'h0000_0000) &&
+               (region_base < region_limit) &&
+               (end_addr_ext[32] == 1'b0) &&
+               (addr >= region_base) &&
+               (end_addr_ext[31:0] <= region_limit);
+    end
+    endfunction
+
+    function automatic bit host_rt_mem_guard_region_config_valid(
+        input logic [31:0] region_base,
+        input logic [31:0] region_limit
+    );
+    begin
+        return (region_base < region_limit);
+    end
+    endfunction
+
+    function automatic string host_rt_mem_guard_domain_name(input logic [31:0] domain);
+    begin
+        case (domain)
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_NONE:   return "NONE";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_SQ:     return "SQ";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_CQ:     return "CQ";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_DESC:   return "DESC";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_SRC:    return "SRC";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_DST:    return "DST";
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_CONFIG: return "CONFIG";
+            default: return $sformatf("UNKNOWN_%0d", domain);
+        endcase
+    end
+    endfunction
+
+    function automatic string host_rt_mem_guard_detail_name(input logic [7:0] detail_code);
+    begin
+        case (detail_code)
+            ai_accel_csr_access_helper::P27_DETAIL_SQ_RANGE:        return "SQ_RANGE";
+            ai_accel_csr_access_helper::P27_DETAIL_CQ_RANGE:        return "CQ_RANGE";
+            ai_accel_csr_access_helper::P27_DETAIL_DESC_RANGE:      return "DESC_RANGE";
+            ai_accel_csr_access_helper::P27_DETAIL_SRC_RANGE:       return "SRC_RANGE";
+            ai_accel_csr_access_helper::P27_DETAIL_DST_RANGE:       return "DST_RANGE";
+            ai_accel_csr_access_helper::P27_DETAIL_ADDR_OVERFLOW:   return "ADDR_OVERFLOW";
+            ai_accel_csr_access_helper::P27_DETAIL_ALIGNMENT:       return "ALIGNMENT";
+            ai_accel_csr_access_helper::P27_DETAIL_SPAN_CONFIG:     return "SPAN_CONFIG";
+            ai_accel_csr_access_helper::P27_DETAIL_DOMAIN_MISMATCH: return "DOMAIN_MISMATCH";
+            default: return $sformatf("DETAIL_0x%02h", detail_code);
+        endcase
+    end
+    endfunction
+
+    task automatic host_rt_mem_guard_default_cfg_from_queue(
+        input  p23_queue_cfg_t queue_cfg,
+        input  logic [31:0]    desc_base,
+        input  logic [31:0]    desc_size_bytes,
+        input  logic [31:0]    src_base,
+        input  logic [31:0]    src_limit,
+        input  logic [31:0]    dst_base,
+        input  logic [31:0]    dst_limit,
+        input  logic [31:0]    control,
+        output p27_guard_cfg_t guard_cfg
+    );
+        logic [31:0] sq_size_bytes;
+        logic [31:0] cq_size_bytes;
+    begin
+        sq_size_bytes = queue_cfg.sq_depth * queue_cfg.sq_stride;
+        cq_size_bytes = queue_cfg.cq_depth * queue_cfg.cq_stride;
+
+        guard_cfg.control    = control;
+        guard_cfg.sq_base    = queue_cfg.sq_base;
+        guard_cfg.sq_limit   = host_rt_mem_guard_span_limit(queue_cfg.sq_base, sq_size_bytes);
+        guard_cfg.cq_base    = queue_cfg.cq_base;
+        guard_cfg.cq_limit   = host_rt_mem_guard_span_limit(queue_cfg.cq_base, cq_size_bytes);
+        guard_cfg.desc_base  = desc_base;
+        guard_cfg.desc_limit = host_rt_mem_guard_span_limit(desc_base, desc_size_bytes);
+        guard_cfg.src_base   = src_base;
+        guard_cfg.src_limit  = src_limit;
+        guard_cfg.dst_base   = dst_base;
+        guard_cfg.dst_limit  = dst_limit;
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_program_regions(
+        input p27_guard_cfg_t guard_cfg,
+        input string          label = "host_rt_mem_guard_program_regions"
+    );
+    begin
+        check_ready(label);
+
+        // Program regions while disabled so partially-programmed base/limit pairs
+        // do not create transient enabled-region diagnostics.
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL, 32'h0000_0000);
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_BASE,    guard_cfg.sq_base);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_LIMIT,   guard_cfg.sq_limit);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_BASE,    guard_cfg.cq_base);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_LIMIT,   guard_cfg.cq_limit);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_BASE,  guard_cfg.desc_base);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_LIMIT, guard_cfg.desc_limit);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_BASE,   guard_cfg.src_base);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_LIMIT,  guard_cfg.src_limit);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_BASE,   guard_cfg.dst_base);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_LIMIT,  guard_cfg.dst_limit);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL,    guard_cfg.control);
+
+        `uvm_info("P27_GUARD/PROGRAM",
+            $sformatf("%s: control=0x%08h SQ=[0x%08h,0x%08h) CQ=[0x%08h,0x%08h) DESC=[0x%08h,0x%08h) SRC=[0x%08h,0x%08h) DST=[0x%08h,0x%08h)",
+                label,
+                guard_cfg.control,
+                guard_cfg.sq_base,
+                guard_cfg.sq_limit,
+                guard_cfg.cq_base,
+                guard_cfg.cq_limit,
+                guard_cfg.desc_base,
+                guard_cfg.desc_limit,
+                guard_cfg.src_base,
+                guard_cfg.src_limit,
+                guard_cfg.dst_base,
+                guard_cfg.dst_limit),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_disable(
+        input string label = "host_rt_mem_guard_disable"
+    );
+    begin
+        check_ready(label);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL, 32'h0000_0000);
+        `uvm_info("P27_GUARD/DISABLE",
+            $sformatf("%s: disabled memory guard checks", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_clear_all(
+        input string label = "host_rt_mem_guard_clear_all"
+    );
+        logic [31:0] cmd;
+    begin
+        check_ready(label);
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::MEM_GUARD_CMD_CLEAR_ERROR]    = 1'b1;
+        cmd[ai_accel_csr_access_helper::MEM_GUARD_CMD_CLEAR_REJECT]   = 1'b1;
+        cmd[ai_accel_csr_access_helper::MEM_GUARD_CMD_CLEAR_COUNTERS] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_COMMAND, cmd);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_STATUS,
+                                ai_accel_csr_access_helper::MEM_GUARD_ALL_ERROR_MASK);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_REJECT_STATUS,
+                                ai_accel_csr_access_helper::MEM_GUARD_ALL_REJECT_MASK);
+
+        `uvm_info("P27_GUARD/CLEAR_ALL",
+            $sformatf("%s: cleared guard error/reject/counter state", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_capture_snapshot(
+        output p27_guard_snapshot_t snap,
+        input  string               label = "host_rt_mem_guard_capture_snapshot",
+        input  bit                  log_it = 1'b0
+    );
+    begin
+        check_ready(label);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_STATUS,                snap.status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_STATUS,          snap.error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_REJECT_STATUS,         snap.reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_DETAIL,          snap.error_detail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_ADDR,            snap.error_addr);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_SIZE_BYTES,      snap.error_size_bytes);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_DOMAIN,          snap.error_domain);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_CHECK_COUNT,           snap.check_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_ERROR_COUNT,           snap.error_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_LAST_CHECK_ADDR,       snap.last_check_addr);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES, snap.last_check_size_bytes);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_MEM_GUARD_LAST_CHECK_DOMAIN,     snap.last_check_domain);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS,                    snap.queue_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS,              snap.queue_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_DETAIL,              snap.queue_error_detail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_PENDING,                   snap.event_pending);
+
+        if (log_it) begin
+            host_rt_mem_guard_log_snapshot(label, snap);
+        end
+    end
+    endtask
+
+    function automatic void host_rt_mem_guard_log_snapshot(
+        input string               label,
+        input p27_guard_snapshot_t snap,
+        input uvm_verbosity        verbosity = UVM_MEDIUM
+    );
+        logic [7:0] detail_code;
+    begin
+        detail_code = snap.error_detail[7:0];
+        `uvm_info("P27_GUARD/SNAPSHOT",
+            $sformatf("%s: status=0x%08h error=0x%08h reject=0x%08h detail=0x%08h(%s) addr=0x%08h size=%0d domain=0x%08h(%s) checks=%0d errors=%0d last_check=0x%08h/%0d/%s q_status=0x%08h q_error=0x%08h q_detail=0x%08h event_pending=0x%08h",
+                label,
+                snap.status,
+                snap.error_status,
+                snap.reject_status,
+                snap.error_detail,
+                host_rt_mem_guard_detail_name(detail_code),
+                snap.error_addr,
+                snap.error_size_bytes,
+                snap.error_domain,
+                host_rt_mem_guard_domain_name(snap.error_domain),
+                snap.check_count,
+                snap.error_count,
+                snap.last_check_addr,
+                snap.last_check_size_bytes,
+                host_rt_mem_guard_domain_name(snap.last_check_domain),
+                snap.queue_status,
+                snap.queue_error_status,
+                snap.queue_error_detail,
+                snap.event_pending),
+            verbosity)
+    end
+    endfunction
+
+    task automatic host_rt_mem_guard_check_clean(
+        input string label = "host_rt_mem_guard_check_clean",
+        input bit    require_queue_guard_clean = 1'b1,
+        input bit    require_event_clean = 1'b0
+    );
+        p27_guard_snapshot_t snap;
+    begin
+        host_rt_mem_guard_capture_snapshot(snap, label, 1'b1);
+
+        if (snap.error_status != 32'h0000_0000) begin
+            `uvm_fatal("P27_GUARD/ERROR_DIRTY",
+                $sformatf("%s: guard error status is not clean: error=0x%08h detail=0x%08h addr=0x%08h size=%0d domain=%s",
+                    label,
+                    snap.error_status,
+                    snap.error_detail,
+                    snap.error_addr,
+                    snap.error_size_bytes,
+                    host_rt_mem_guard_domain_name(snap.error_domain)))
+        end
+
+        if (snap.reject_status != 32'h0000_0000) begin
+            `uvm_fatal("P27_GUARD/REJECT_DIRTY",
+                $sformatf("%s: guard reject status is not clean: reject=0x%08h", label, snap.reject_status))
+        end
+
+        if (require_queue_guard_clean &&
+            snap.queue_error_status[ai_accel_csr_access_helper::P27_QUEUE_MEMORY_GUARD_ERROR_BIT]) begin
+            `uvm_fatal("P27_GUARD/QUEUE_ERROR_DIRTY",
+                $sformatf("%s: queue MEMORY_GUARD_ERROR bit is still set: queue_error=0x%08h queue_detail=0x%08h",
+                    label,
+                    snap.queue_error_status,
+                    snap.queue_error_detail))
+        end
+
+        if (require_event_clean && (snap.event_pending != 32'h0000_0000)) begin
+            `uvm_fatal("P27_GUARD/EVENT_DIRTY",
+                $sformatf("%s: event pending is not clean: pending=0x%08h", label, snap.event_pending))
+        end
+
+        `uvm_info("P27_GUARD/CLEAN_PASS",
+            $sformatf("%s: guard clean check PASS status=0x%08h checks=%0d errors=%0d",
+                label,
+                snap.status,
+                snap.check_count,
+                snap.error_count),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_expect_error(
+        input logic [31:0] required_error_mask,
+        input logic [31:0] expected_domain,
+        input logic [7:0]  expected_detail,
+        input string       label = "host_rt_mem_guard_expect_error"
+    );
+        p27_guard_snapshot_t snap;
+        logic [31:0] queue_guard_mask;
+    begin
+        queue_guard_mask = 32'h0000_0001 << ai_accel_csr_access_helper::P27_QUEUE_MEMORY_GUARD_ERROR_BIT;
+        host_rt_mem_guard_capture_snapshot(snap, label, 1'b1);
+
+        if ((snap.error_status & required_error_mask) != required_error_mask) begin
+            `uvm_fatal("P27_GUARD/EXPECTED_ERROR_MISSING",
+                $sformatf("%s: required guard error mask 0x%08h missing, actual=0x%08h detail=0x%08h domain=%s",
+                    label,
+                    required_error_mask,
+                    snap.error_status,
+                    snap.error_detail,
+                    host_rt_mem_guard_domain_name(snap.error_domain)))
+        end
+
+        if (expected_domain != 32'h0000_0000) begin
+            if ((snap.error_domain != expected_domain) && (snap.error_detail[15:8] != expected_domain[7:0])) begin
+                `uvm_fatal("P27_GUARD/DOMAIN_MISMATCH",
+                    $sformatf("%s: expected domain %s(%0d), actual domain=%s(%0d), detail=0x%08h",
+                        label,
+                        host_rt_mem_guard_domain_name(expected_domain),
+                        expected_domain,
+                        host_rt_mem_guard_domain_name(snap.error_domain),
+                        snap.error_domain,
+                        snap.error_detail))
+            end
+        end
+
+        if (expected_detail != 8'h00) begin
+            if ((snap.error_detail[7:0] != expected_detail) && (snap.queue_error_detail[7:0] != expected_detail)) begin
+                `uvm_fatal("P27_GUARD/DETAIL_MISMATCH",
+                    $sformatf("%s: expected detail %s(0x%02h), guard_detail=0x%08h queue_detail=0x%08h",
+                        label,
+                        host_rt_mem_guard_detail_name(expected_detail),
+                        expected_detail,
+                        snap.error_detail,
+                        snap.queue_error_detail))
+            end
+        end
+
+        if ((snap.queue_error_status & queue_guard_mask) == 32'h0000_0000) begin
+            `uvm_fatal("P27_GUARD/QUEUE_ERROR_MISSING",
+                $sformatf("%s: queue MEMORY_GUARD_ERROR bit missing: queue_error=0x%08h expected_mask=0x%08h",
+                    label,
+                    snap.queue_error_status,
+                    queue_guard_mask))
+        end
+
+        `uvm_info("P27_GUARD/EXPECTED_ERROR_PASS",
+            $sformatf("%s: expected guard error observed error=0x%08h domain=%s detail=%s queue_error=0x%08h",
+                label,
+                snap.error_status,
+                host_rt_mem_guard_domain_name(expected_domain),
+                host_rt_mem_guard_detail_name(expected_detail),
+                snap.queue_error_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_mem_guard_clear_for_reuse(
+        input bit    clear_queue_error = 1'b1,
+        input bit    clear_event_pending = 1'b1,
+        input string label = "host_rt_mem_guard_clear_for_reuse"
+    );
+    begin
+        check_ready(label);
+        host_rt_mem_guard_clear_all({label, " guard_clear"});
+
+        if (clear_queue_error) begin
+            host_rt_lifecycle_clear_queue_error_and_reject({label, " queue_error_clear"});
+        end
+
+        if (clear_event_pending) begin
+            host_rt_lifecycle_clear_all_events_and_counters({label, " event_clear"});
+        end
+
+        `uvm_info("P27_GUARD/REUSE_CLEAR_PASS",
+            $sformatf("%s: guard/queue/event state cleared for reuse", label),
             UVM_MEDIUM)
     end
     endtask

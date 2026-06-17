@@ -186,6 +186,37 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
     localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
 
+
+    // ------------------------------------------------------------
+    // P27 Memory access guard CSR window
+    // ------------------------------------------------------------
+    localparam logic [11:0] CSR_MEM_GUARD_VERSION              = 12'h640;
+    localparam logic [11:0] CSR_MEM_GUARD_COMMAND              = 12'h644;
+    localparam logic [11:0] CSR_MEM_GUARD_STATUS               = 12'h648;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_STATUS         = 12'h64C;
+    localparam logic [11:0] CSR_MEM_GUARD_CONTROL              = 12'h650;
+    localparam logic [11:0] CSR_MEM_GUARD_REJECT_STATUS        = 12'h654;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_DETAIL         = 12'h658;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_ADDR           = 12'h65C;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_SIZE_BYTES     = 12'h660;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_DOMAIN         = 12'h664;
+    localparam logic [11:0] CSR_MEM_GUARD_CHECK_COUNT          = 12'h668;
+    localparam logic [11:0] CSR_MEM_GUARD_ERROR_COUNT          = 12'h66C;
+    localparam logic [11:0] CSR_MEM_GUARD_LAST_CHECK_ADDR      = 12'h670;
+    localparam logic [11:0] CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES= 12'h674;
+    localparam logic [11:0] CSR_MEM_GUARD_LAST_CHECK_DOMAIN    = 12'h678;
+
+    localparam logic [11:0] CSR_MEM_GUARD_SQ_BASE              = 12'h680;
+    localparam logic [11:0] CSR_MEM_GUARD_SQ_LIMIT             = 12'h684;
+    localparam logic [11:0] CSR_MEM_GUARD_CQ_BASE              = 12'h688;
+    localparam logic [11:0] CSR_MEM_GUARD_CQ_LIMIT             = 12'h68C;
+    localparam logic [11:0] CSR_MEM_GUARD_DESC_BASE            = 12'h690;
+    localparam logic [11:0] CSR_MEM_GUARD_DESC_LIMIT           = 12'h694;
+    localparam logic [11:0] CSR_MEM_GUARD_SRC_BASE             = 12'h698;
+    localparam logic [11:0] CSR_MEM_GUARD_SRC_LIMIT            = 12'h69C;
+    localparam logic [11:0] CSR_MEM_GUARD_DST_BASE             = 12'h6A0;
+    localparam logic [11:0] CSR_MEM_GUARD_DST_LIMIT            = 12'h6A4;
+
     // P22 Event command bits
     localparam int EVENT_CMD_CLEAR_PENDING  = 0;
     localparam int EVENT_CMD_FORCE_TEST     = 1;
@@ -213,6 +244,80 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_07FF;
     localparam logic [31:0] EVENT_QUEUE_COMPLETED_MASK = 32'h0000_0001;
     localparam logic [31:0] EVENT_CQ_NOT_EMPTY_MASK    = 32'h0000_0010;
+
+
+    // ------------------------------------------------------------
+    // P27 Memory access guard constants
+    // ------------------------------------------------------------
+    localparam int MEM_GUARD_CMD_CLEAR_ERROR    = 8;
+    localparam int MEM_GUARD_CMD_CLEAR_REJECT   = 9;
+    localparam int MEM_GUARD_CMD_CLEAR_COUNTERS = 10;
+
+    localparam int MEM_GUARD_CONTROL_ENABLE              = 0;
+    localparam int MEM_GUARD_CONTROL_STRICT_REJECT       = 1;
+    localparam int MEM_GUARD_CONTROL_SQ_CHECK_ENABLE     = 4;
+    localparam int MEM_GUARD_CONTROL_CQ_CHECK_ENABLE     = 5;
+    localparam int MEM_GUARD_CONTROL_DESC_CHECK_ENABLE   = 6;
+    localparam int MEM_GUARD_CONTROL_SRC_CHECK_ENABLE    = 7;
+    localparam int MEM_GUARD_CONTROL_DST_CHECK_ENABLE    = 8;
+    localparam int MEM_GUARD_CONTROL_WRITE_CQ_ERROR_SAFE = 12;
+
+    localparam int MEM_GUARD_STATUS_GUARD_ENABLED      = 0;
+    localparam int MEM_GUARD_STATUS_STRICT_ENABLED     = 1;
+    localparam int MEM_GUARD_STATUS_ANY_ERROR          = 2;
+    localparam int MEM_GUARD_STATUS_ANY_REJECT         = 3;
+    localparam int MEM_GUARD_STATUS_SQ_CHECK_ENABLED   = 4;
+    localparam int MEM_GUARD_STATUS_CQ_CHECK_ENABLED   = 5;
+    localparam int MEM_GUARD_STATUS_DESC_CHECK_ENABLED = 6;
+    localparam int MEM_GUARD_STATUS_SRC_CHECK_ENABLED  = 7;
+    localparam int MEM_GUARD_STATUS_DST_CHECK_ENABLED  = 8;
+    localparam int MEM_GUARD_STATUS_ERROR_PENDING      = 9;
+    localparam int MEM_GUARD_STATUS_QUEUE_ERROR_MIRROR = 10;
+
+    localparam int MEM_GUARD_ERR_ANY              = 0;
+    localparam int MEM_GUARD_ERR_SQ_RANGE         = 1;
+    localparam int MEM_GUARD_ERR_CQ_RANGE         = 2;
+    localparam int MEM_GUARD_ERR_DESC_RANGE       = 3;
+    localparam int MEM_GUARD_ERR_SRC_RANGE        = 4;
+    localparam int MEM_GUARD_ERR_DST_RANGE        = 5;
+    localparam int MEM_GUARD_ERR_BASE_LIMIT       = 6;
+    localparam int MEM_GUARD_ERR_ADDR_OVERFLOW    = 7;
+    localparam int MEM_GUARD_ERR_ALIGNMENT        = 8;
+    localparam int MEM_GUARD_ERR_STRIDE           = 9;
+    localparam int MEM_GUARD_ERR_DEPTH            = 10;
+    localparam int MEM_GUARD_ERR_SIZE_ZERO        = 11;
+    localparam int MEM_GUARD_ERR_UNSAFE_CQ_SUPP   = 12;
+    localparam int MEM_GUARD_ERR_DOMAIN_MISMATCH  = 13;
+    localparam int MEM_GUARD_ERR_CONFIG_BUSY      = 14;
+    localparam int MEM_GUARD_ERR_INTERNAL         = 15;
+
+    localparam int MEM_GUARD_REJ_CONFIG_BUSY      = 0;
+    localparam int MEM_GUARD_REJ_INVALID_REGION   = 1;
+    localparam int MEM_GUARD_REJ_UNSUPPORTED_CMD  = 2;
+    localparam int MEM_GUARD_REJ_STRICT_START     = 3;
+
+    localparam int P27_QUEUE_MEMORY_GUARD_ERROR_BIT = 9;
+
+    localparam int P27_GUARD_DOMAIN_NONE   = 0;
+    localparam int P27_GUARD_DOMAIN_SQ     = 1;
+    localparam int P27_GUARD_DOMAIN_CQ     = 2;
+    localparam int P27_GUARD_DOMAIN_DESC   = 3;
+    localparam int P27_GUARD_DOMAIN_SRC    = 4;
+    localparam int P27_GUARD_DOMAIN_DST    = 5;
+    localparam int P27_GUARD_DOMAIN_CONFIG = 6;
+
+    localparam logic [7:0] P27_DETAIL_SQ_RANGE       = 8'h20;
+    localparam logic [7:0] P27_DETAIL_CQ_RANGE       = 8'h21;
+    localparam logic [7:0] P27_DETAIL_DESC_RANGE     = 8'h22;
+    localparam logic [7:0] P27_DETAIL_SRC_RANGE      = 8'h23;
+    localparam logic [7:0] P27_DETAIL_DST_RANGE      = 8'h24;
+    localparam logic [7:0] P27_DETAIL_ADDR_OVERFLOW  = 8'h25;
+    localparam logic [7:0] P27_DETAIL_ALIGNMENT      = 8'h26;
+    localparam logic [7:0] P27_DETAIL_SPAN_CONFIG    = 8'h27;
+    localparam logic [7:0] P27_DETAIL_DOMAIN_MISMATCH= 8'h28;
+
+    localparam logic [31:0] MEM_GUARD_ALL_ERROR_MASK = 32'h0000_FFFF;
+    localparam logic [31:0] MEM_GUARD_ALL_REJECT_MASK= 32'h0000_000F;
 
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;

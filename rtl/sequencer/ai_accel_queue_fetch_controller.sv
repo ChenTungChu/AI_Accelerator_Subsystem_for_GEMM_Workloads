@@ -63,6 +63,17 @@ module ai_accel_queue_fetch_controller #(
     input  logic [31:0]             cq_tail,
     input  logic [31:0]             cq_stride,
 
+    // --------------------------------------------------------
+    // P27 memory access guard configuration
+    // --------------------------------------------------------
+    input  logic [31:0]             mem_guard_control,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_sq_base,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_sq_limit,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_cq_base,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_cq_limit,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_desc_base,
+    input  logic [ADDR_WIDTH-1:0]   mem_guard_desc_limit,
+
     // Later P19D connects this to the combined P17/P18/P16/P15 idle policy.
     input  logic                    underlying_idle,
 
@@ -130,7 +141,22 @@ module ai_accel_queue_fetch_controller #(
     output logic [31:0]             queue_last_cmd_control,
     output logic [31:0]             queue_sq_occupancy,
     output logic [31:0]             queue_cq_occupancy,
-    output logic [31:0]             queue_cq_space
+    output logic [31:0]             queue_cq_space,
+
+    // --------------------------------------------------------
+    // P27 memory access guard diagnostics
+    // --------------------------------------------------------
+    output logic                    mem_guard_check_pulse,
+    output logic                    mem_guard_error_pulse,
+    output logic [31:0]             mem_guard_error_status,
+    output logic [31:0]             mem_guard_reject_status,
+    output logic [31:0]             mem_guard_error_detail,
+    output logic [ADDR_WIDTH-1:0]   mem_guard_error_addr,
+    output logic [31:0]             mem_guard_error_size_bytes,
+    output logic [31:0]             mem_guard_error_domain,
+    output logic [ADDR_WIDTH-1:0]   mem_guard_last_check_addr,
+    output logic [31:0]             mem_guard_last_check_size_bytes,
+    output logic [31:0]             mem_guard_last_check_domain
 );
 
     // --------------------------------------------------------
@@ -191,6 +217,35 @@ module ai_accel_queue_fetch_controller #(
     localparam logic [31:0] ERR_CMD_STRIDE_ZERO      = 32'h0000_0208;
     localparam logic [31:0] ERR_CMD_STRIDE_UNALIGNED = 32'h0000_0209;
 
+    // P27 memory guard control bits.  These mirror the frozen P27B CSR map.
+    localparam int MEM_GUARD_CONTROL_ENABLE            = 0;
+    localparam int MEM_GUARD_CONTROL_STRICT_REJECT     = 1;
+    localparam int MEM_GUARD_CONTROL_SQ_CHECK_ENABLE   = 4;
+    localparam int MEM_GUARD_CONTROL_CQ_CHECK_ENABLE   = 5;
+    localparam int MEM_GUARD_CONTROL_DESC_CHECK_ENABLE = 6;
+
+    localparam int Q_ERR_MEMORY_GUARD = 9;
+
+    localparam int MEM_GUARD_ERR_ANY        = 0;
+    localparam int MEM_GUARD_ERR_SQ_RANGE   = 1;
+    localparam int MEM_GUARD_ERR_CQ_RANGE   = 2;
+    localparam int MEM_GUARD_ERR_DESC_RANGE = 3;
+    localparam int MEM_GUARD_ERR_BASE_LIMIT = 6;
+    localparam int MEM_GUARD_ERR_OVERFLOW   = 7;
+
+    localparam logic [31:0] P27_DOMAIN_SQ   = 32'd1;
+    localparam logic [31:0] P27_DOMAIN_CQ   = 32'd2;
+    localparam logic [31:0] P27_DOMAIN_DESC = 32'd3;
+
+    localparam logic [7:0] P27_DETAIL_SQ_RANGE       = 8'h20;
+    localparam logic [7:0] P27_DETAIL_CQ_RANGE       = 8'h21;
+    localparam logic [7:0] P27_DETAIL_DESC_RANGE     = 8'h22;
+    localparam logic [7:0] P27_DETAIL_ADDR_OVERFLOW  = 8'h25;
+    localparam logic [7:0] P27_DETAIL_SPAN_CONFIG    = 8'h27;
+
+    localparam logic [31:0] P27_SQ_ENTRY_SIZE_BYTES   = SQ_ENTRY_BYTES;
+    localparam logic [31:0] P27_CQ_ENTRY_SIZE_BYTES   = CQ_ENTRY_BYTES;
+
     // --------------------------------------------------------
     // State machine
     // --------------------------------------------------------
@@ -233,6 +288,29 @@ module ai_accel_queue_fetch_controller #(
     logic [31:0] cq_occupancy_w;
     logic [31:0] cq_space_w;
 
+    logic [31:0] sq_index_calc_w;
+    logic [31:0] cq_index_calc_w;
+    logic [63:0] sq_offset_calc_w;
+    logic [63:0] cq_offset_calc_w;
+    logic [63:0] sq_entry_addr_calc_w;
+    logic [63:0] cq_entry_addr_calc_w;
+    logic [63:0] desc_span_calc_w;
+
+    logic        mem_guard_active_w;
+    logic        mem_guard_sq_check_w;
+    logic        mem_guard_cq_check_w;
+    logic        mem_guard_desc_check_w;
+
+    logic        sq_guard_ok_w;
+    logic        cq_guard_ok_w;
+    logic        desc_guard_ok_w;
+    logic [31:0] sq_guard_status_w;
+    logic [31:0] cq_guard_status_w;
+    logic [31:0] desc_guard_status_w;
+    logic [7:0]  sq_guard_detail_code_w;
+    logic [7:0]  cq_guard_detail_code_w;
+    logic [7:0]  desc_guard_detail_code_w;
+
     logic        cfg_valid_w;
     logic        ptr_valid_w;
     logic        sq_empty_w;
@@ -258,9 +336,139 @@ module ai_accel_queue_fetch_controller #(
     logic [31:0] cmd5_w;
     logic [31:0] cmd6_w;
 
+    function automatic logic [31:0] p27_make_detail(
+        input logic [7:0] detail_code,
+        input logic [7:0] domain,
+        input logic [7:0] index,
+        input logic [7:0] state_code
+    );
+    begin
+        p27_make_detail = {state_code, index, domain, detail_code};
+    end
+    endfunction
+
+    function automatic logic [31:0] p27_status_for_detail(
+        input logic [7:0] detail_code,
+        input logic [31:0] domain
+    );
+        logic [31:0] status;
+    begin
+        status = 32'h0000_0001;
+
+        if (domain == P27_DOMAIN_SQ) begin
+            status[MEM_GUARD_ERR_SQ_RANGE] = 1'b1;
+        end
+        else if (domain == P27_DOMAIN_CQ) begin
+            status[MEM_GUARD_ERR_CQ_RANGE] = 1'b1;
+        end
+        else if (domain == P27_DOMAIN_DESC) begin
+            status[MEM_GUARD_ERR_DESC_RANGE] = 1'b1;
+        end
+
+        if (detail_code == P27_DETAIL_ADDR_OVERFLOW) begin
+            status[MEM_GUARD_ERR_OVERFLOW] = 1'b1;
+        end
+        else if (detail_code == P27_DETAIL_SPAN_CONFIG) begin
+            status[MEM_GUARD_ERR_BASE_LIMIT] = 1'b1;
+        end
+
+        return status;
+    end
+    endfunction
+
+    function automatic bit p27_range_ok(
+        input logic [63:0] addr64,
+        input logic [31:0] size_bytes,
+        input logic [31:0] region_base,
+        input logic [31:0] region_limit,
+        output logic [7:0] detail_code
+    );
+        logic [64:0] end_addr_ext;
+    begin
+        detail_code = 8'h00;
+        end_addr_ext = {1'b0, addr64} + {33'd0, size_bytes};
+
+        if (size_bytes == 32'h0000_0000) begin
+            detail_code = P27_DETAIL_SPAN_CONFIG;
+            return 1'b0;
+        end
+        if (region_base >= region_limit) begin
+            detail_code = P27_DETAIL_SPAN_CONFIG;
+            return 1'b0;
+        end
+        if (addr64[63:32] != 32'h0000_0000 || end_addr_ext[64] || end_addr_ext[63:32] != 32'h0000_0000) begin
+            detail_code = P27_DETAIL_ADDR_OVERFLOW;
+            return 1'b0;
+        end
+        if (addr64[31:0] < region_base || end_addr_ext[31:0] > region_limit) begin
+            return 1'b0;
+        end
+
+        return 1'b1;
+    end
+    endfunction
+
     assign sq_occupancy_w = sq_tail - sq_head;
     assign cq_occupancy_w = cq_tail - cq_head;
     assign cq_space_w     = (cq_depth > cq_occupancy_w) ? (cq_depth - cq_occupancy_w) : 32'd0;
+
+    assign sq_index_calc_w      = (sq_depth != 32'd0) ? (sq_head % sq_depth) : 32'd0;
+    assign cq_index_calc_w      = (cq_depth != 32'd0) ? (cq_tail % cq_depth) : 32'd0;
+    assign sq_offset_calc_w     = {32'h0000_0000, sq_index_calc_w} * {32'h0000_0000, sq_stride};
+    assign cq_offset_calc_w     = {32'h0000_0000, cq_index_calc_w} * {32'h0000_0000, cq_stride};
+    assign sq_entry_addr_calc_w = {32'h0000_0000, sq_base_addr} + sq_offset_calc_w;
+    assign cq_entry_addr_calc_w = {32'h0000_0000, cq_base_addr} + cq_offset_calc_w;
+    assign desc_span_calc_w     = {32'h0000_0000, cmd3_w} * {32'h0000_0000, cmd4_w};
+
+    assign mem_guard_active_w     = mem_guard_control[MEM_GUARD_CONTROL_ENABLE] &&
+                                    mem_guard_control[MEM_GUARD_CONTROL_STRICT_REJECT];
+    assign mem_guard_sq_check_w   = mem_guard_active_w && mem_guard_control[MEM_GUARD_CONTROL_SQ_CHECK_ENABLE];
+    assign mem_guard_cq_check_w   = mem_guard_active_w && mem_guard_control[MEM_GUARD_CONTROL_CQ_CHECK_ENABLE];
+    assign mem_guard_desc_check_w = mem_guard_active_w && mem_guard_control[MEM_GUARD_CONTROL_DESC_CHECK_ENABLE];
+
+    always_comb begin
+        sq_guard_detail_code_w = P27_DETAIL_SQ_RANGE;
+        cq_guard_detail_code_w = P27_DETAIL_CQ_RANGE;
+        desc_guard_detail_code_w = P27_DETAIL_DESC_RANGE;
+
+        sq_guard_ok_w = !mem_guard_sq_check_w ||
+                        p27_range_ok(sq_entry_addr_calc_w,
+                                      P27_SQ_ENTRY_SIZE_BYTES,
+                                      mem_guard_sq_base,
+                                      mem_guard_sq_limit,
+                                      sq_guard_detail_code_w);
+        cq_guard_ok_w = !mem_guard_cq_check_w ||
+                        p27_range_ok(cq_entry_addr_calc_w,
+                                      P27_CQ_ENTRY_SIZE_BYTES,
+                                      mem_guard_cq_base,
+                                      mem_guard_cq_limit,
+                                      cq_guard_detail_code_w);
+        desc_guard_ok_w = !mem_guard_desc_check_w ||
+                          p27_range_ok({32'h0000_0000, cmd2_w},
+                                        desc_span_calc_w[31:0],
+                                        mem_guard_desc_base,
+                                        mem_guard_desc_limit,
+                                        desc_guard_detail_code_w);
+
+        if (desc_span_calc_w[63:32] != 32'h0000_0000) begin
+            desc_guard_ok_w = 1'b0;
+            desc_guard_detail_code_w = P27_DETAIL_ADDR_OVERFLOW;
+        end
+
+        if (sq_guard_detail_code_w == 8'h00) begin
+            sq_guard_detail_code_w = P27_DETAIL_SQ_RANGE;
+        end
+        if (cq_guard_detail_code_w == 8'h00) begin
+            cq_guard_detail_code_w = P27_DETAIL_CQ_RANGE;
+        end
+        if (desc_guard_detail_code_w == 8'h00) begin
+            desc_guard_detail_code_w = P27_DETAIL_DESC_RANGE;
+        end
+
+        sq_guard_status_w = p27_status_for_detail(sq_guard_detail_code_w, P27_DOMAIN_SQ);
+        cq_guard_status_w = p27_status_for_detail(cq_guard_detail_code_w, P27_DOMAIN_CQ);
+        desc_guard_status_w = p27_status_for_detail(desc_guard_detail_code_w, P27_DOMAIN_DESC);
+    end
 
     assign sq_empty_w = (sq_head == sq_tail);
     assign cq_full_w  = (cq_occupancy_w >= cq_depth);
@@ -354,6 +562,18 @@ module ai_accel_queue_fetch_controller #(
         queue_reject_pulse        = 1'b0;
         queue_cq_full_stall       = 1'b0;
 
+        mem_guard_check_pulse           = 1'b0;
+        mem_guard_error_pulse           = 1'b0;
+        mem_guard_error_status          = 32'h0000_0000;
+        mem_guard_reject_status         = 32'h0000_0000;
+        mem_guard_error_detail          = 32'h0000_0000;
+        mem_guard_error_addr            = '0;
+        mem_guard_error_size_bytes      = 32'h0000_0000;
+        mem_guard_error_domain          = 32'h0000_0000;
+        mem_guard_last_check_addr       = '0;
+        mem_guard_last_check_size_bytes = 32'h0000_0000;
+        mem_guard_last_check_domain     = 32'h0000_0000;
+
         cmd_axi_arvalid = 1'b0;
         cmd_axi_rready  = 1'b0;
 
@@ -426,13 +646,62 @@ module ai_accel_queue_fetch_controller #(
                     state_d = Q_CHECK_READY;
                 end else if (!underlying_idle) begin
                     state_d = Q_CHECK_READY;
+                end else if (!sq_guard_ok_w) begin
+                    error_status_d[Q_ERR_MEMORY_GUARD] = 1'b1;
+                    error_detail_d = p27_make_detail(sq_guard_detail_code_w,
+                                                      P27_DOMAIN_SQ[7:0],
+                                                      sq_index_calc_w[7:0],
+                                                      {4'h0, Q_CHECK_READY});
+                    error_index_d  = {16'd0, cq_index_calc_w[7:0], sq_index_calc_w[7:0]};
+                    queue_error_pulse = 1'b1;
+
+                    mem_guard_check_pulse           = 1'b1;
+                    mem_guard_error_pulse           = 1'b1;
+                    mem_guard_error_status          = sq_guard_status_w;
+                    mem_guard_error_detail          = error_detail_d;
+                    mem_guard_error_addr            = sq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                    mem_guard_error_size_bytes      = P27_SQ_ENTRY_SIZE_BYTES;
+                    mem_guard_error_domain          = P27_DOMAIN_SQ;
+                    mem_guard_last_check_addr       = sq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                    mem_guard_last_check_size_bytes = P27_SQ_ENTRY_SIZE_BYTES;
+                    mem_guard_last_check_domain     = P27_DOMAIN_SQ;
+
+                    state_d = Q_ERROR;
+                end else if (!cq_guard_ok_w) begin
+                    error_status_d[Q_ERR_MEMORY_GUARD] = 1'b1;
+                    error_detail_d = p27_make_detail(cq_guard_detail_code_w,
+                                                      P27_DOMAIN_CQ[7:0],
+                                                      cq_index_calc_w[7:0],
+                                                      {4'h0, Q_CHECK_READY});
+                    error_index_d  = {16'd0, cq_index_calc_w[7:0], sq_index_calc_w[7:0]};
+                    queue_error_pulse = 1'b1;
+
+                    mem_guard_check_pulse           = 1'b1;
+                    mem_guard_error_pulse           = 1'b1;
+                    mem_guard_error_status          = cq_guard_status_w;
+                    mem_guard_error_detail          = error_detail_d;
+                    mem_guard_error_addr            = cq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                    mem_guard_error_size_bytes      = P27_CQ_ENTRY_SIZE_BYTES;
+                    mem_guard_error_domain          = P27_DOMAIN_CQ;
+                    mem_guard_last_check_addr       = cq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                    mem_guard_last_check_size_bytes = P27_CQ_ENTRY_SIZE_BYTES;
+                    mem_guard_last_check_domain     = P27_DOMAIN_CQ;
+
+                    state_d = Q_ERROR;
                 end else begin
+                    if (mem_guard_sq_check_w) begin
+                        mem_guard_check_pulse           = 1'b1;
+                        mem_guard_last_check_addr       = sq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                        mem_guard_last_check_size_bytes = P27_SQ_ENTRY_SIZE_BYTES;
+                        mem_guard_last_check_domain     = P27_DOMAIN_SQ;
+                    end
+
                     sq_head_snapshot_d = sq_head;
                     cq_tail_snapshot_d = cq_tail;
-                    sq_index_d         = (sq_head % sq_depth);
-                    cq_index_d         = (cq_tail % cq_depth);
-                    sq_entry_addr_d    = sq_base_addr + ((sq_head % sq_depth) * sq_stride);
-                    cq_entry_addr_d    = cq_base_addr + ((cq_tail % cq_depth) * cq_stride);
+                    sq_index_d         = sq_index_calc_w[7:0];
+                    cq_index_d         = cq_index_calc_w[7:0];
+                    sq_entry_addr_d    = sq_entry_addr_calc_w[ADDR_WIDTH-1:0];
+                    cq_entry_addr_d    = cq_entry_addr_calc_w[ADDR_WIDTH-1:0];
                     rbeat_count_d      = 4'd0;
 
                     for (int i = 0; i < CMD_WORDS; i++) begin
@@ -497,11 +766,37 @@ module ai_accel_queue_fetch_controller #(
                 last_cmd_control_d = cmd_words_q[0];
                 error_index_d      = {16'd0, cq_index_q, sq_index_q};
 
-                if (validation_pass_w) begin
+                if (validation_pass_w && !desc_guard_ok_w) begin
+                    error_status_d[Q_ERR_MEMORY_GUARD] = 1'b1;
+                    fetched_cmd_reject_d = 1'b1;
+                    error_detail_d = p27_make_detail(desc_guard_detail_code_w,
+                                                      P27_DOMAIN_DESC[7:0],
+                                                      sq_index_q,
+                                                      {4'h0, Q_VALIDATE});
+                    queue_error_pulse = 1'b1;
+
+                    mem_guard_check_pulse           = 1'b1;
+                    mem_guard_error_pulse           = 1'b1;
+                    mem_guard_error_status          = desc_guard_status_w;
+                    mem_guard_error_detail          = error_detail_d;
+                    mem_guard_error_addr            = cmd2_w[ADDR_WIDTH-1:0];
+                    mem_guard_error_size_bytes      = desc_span_calc_w[31:0];
+                    mem_guard_error_domain          = P27_DOMAIN_DESC;
+                    mem_guard_last_check_addr       = cmd2_w[ADDR_WIDTH-1:0];
+                    mem_guard_last_check_size_bytes = desc_span_calc_w[31:0];
+                    mem_guard_last_check_domain     = P27_DOMAIN_DESC;
+                end else if (validation_pass_w) begin
                     done_status_d[Q_DONE_CMD_VALIDATED] = 1'b1;
                     fetched_cmd_reject_d = 1'b0;
                     error_detail_d = ERR_NONE;
                     queue_cmd_validated_pulse = 1'b1;
+
+                    if (mem_guard_desc_check_w) begin
+                        mem_guard_check_pulse           = 1'b1;
+                        mem_guard_last_check_addr       = cmd2_w[ADDR_WIDTH-1:0];
+                        mem_guard_last_check_size_bytes = desc_span_calc_w[31:0];
+                        mem_guard_last_check_domain     = P27_DOMAIN_DESC;
+                    end
                 end else begin
                     error_status_d[Q_ERR_CMD_VALIDATION] = 1'b1;
                     fetched_cmd_reject_d = 1'b1;

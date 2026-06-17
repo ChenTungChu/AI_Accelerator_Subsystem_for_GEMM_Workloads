@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25 validates runtime stress / robustness flows using the existing queue, event, and timeout CSR policy without adding new registers, and P26 validates queue lifecycle / soft-reset cleanup and session reinitialization using the existing queue, event, and lower-level clear commands without adding a new CSR window or new event bit.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, and P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window.
 
 ---
 
@@ -28,10 +28,8 @@ Packed B-cache / packed A-row preload options
 K / N / M tiling
 C read-modify-write accumulation for partial-K jobs
 Performance counters
-Full UVM regression baseline passing 138/138 after P26G queue lifecycle / soft-reset closure
+Full UVM regression baseline passing 132/132 after P24G queue timeout / watchdog closure
 P24B timeout / watchdog CSR policy clarification without new CSR addresses
-P25 runtime stress / robustness validation without new CSR addresses
-P26 queue lifecycle / soft-reset validation without new CSR addresses or event bits
 ```
 
 The pre-P14 external control model is sideband-based:
@@ -296,6 +294,7 @@ P17 descriptor fetch window    : 0x500 - 0x53C
 P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
 ```
 
 | Offset | Name | Access | Description |
@@ -402,6 +401,7 @@ P17 descriptor fetch window    : 0x500 - 0x53C
 P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
 ```
 
 P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the queue register map and bit definitions so P19C/P19D implementation can use stable constants.
@@ -534,6 +534,7 @@ P17 descriptor fetch window    : 0x500 - 0x53C
 P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
 ```
 
 P22B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the event register map and bit definitions so later P22 RTL and UVM milestones can use stable constants.
@@ -629,6 +630,139 @@ event_irq = CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE && |(CSR_EVENT_PENDING & CSR_EVE
 
 In the default level mode, `event_irq` remains asserted until software clears all enabled pending bits.  Pulse mode is reserved by `CSR_EVENT_CONTROL.IRQ_PULSE_MODE` for later validation and can remain tied off in the first RTL checkpoint.
 
+
+
+### 9.4 P27 Memory Access Guard CSR Register Window
+
+P27B freezes the software-visible memory access guard CSR window used by the P27 range-validation prototype.
+
+P22 uses the `0x600 - 0x63C` event notification CSR window.  P27 adds a guard CSR window after the event window.
+
+Frozen P27B CSR base:
+
+```text
+P27 memory guard CSR base = 0x640
+```
+
+Existing windows remain unchanged:
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
+```
+
+P27B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the guard register map and bit definitions so P27C/P27D/P27E/P27F implementation can use stable constants.
+
+#### 9.4.1 Register Map
+
+| Offset | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0x640 | `CSR_MEM_GUARD_VERSION` | RO | `0x0001_0027` | Memory guard version / feature ID. |
+| 0x644 | `CSR_MEM_GUARD_COMMAND` | W1P | 0 | Guard sticky-status and debug-counter clear commands. |
+| 0x648 | `CSR_MEM_GUARD_STATUS` | RO | implementation | Live guard enable / error / reject summary. |
+| 0x64C | `CSR_MEM_GUARD_ERROR_STATUS` | RO/W1C | 0 | Sticky guard error status. |
+| 0x650 | `CSR_MEM_GUARD_CONTROL` | RW | `0x0000_0000` | Guard enable, strict reject, and per-domain check enables. |
+| 0x654 | `CSR_MEM_GUARD_REJECT_STATUS` | RO/W1C | 0 | Sticky guard command/config reject reasons. |
+| 0x658 | `CSR_MEM_GUARD_ERROR_DETAIL` | RO | 0 | Last guard error detail code / domain / index / state. |
+| 0x65C | `CSR_MEM_GUARD_ERROR_ADDR` | RO | 0 | Address associated with the last guard error. |
+| 0x660 | `CSR_MEM_GUARD_ERROR_SIZE_BYTES` | RO | 0 | Access size in bytes associated with the last guard error. |
+| 0x664 | `CSR_MEM_GUARD_ERROR_DOMAIN` | RO | 0 | Domain associated with the last guard error. |
+| 0x668 | `CSR_MEM_GUARD_CHECK_COUNT` | RO | 0 | Number of guard checks performed while enabled. |
+| 0x66C | `CSR_MEM_GUARD_ERROR_COUNT` | RO | 0 | Number of guard failures observed while enabled. |
+| 0x670 | `CSR_MEM_GUARD_LAST_CHECK_ADDR` | RO | 0 | Address associated with the last guard check. |
+| 0x674 | `CSR_MEM_GUARD_LAST_CHECK_SIZE_BYTES` | RO | 0 | Access size in bytes associated with the last guard check. |
+| 0x678 | `CSR_MEM_GUARD_LAST_CHECK_DOMAIN` | RO | 0 | Domain associated with the last guard check. |
+| 0x67C | `CSR_MEM_GUARD_RESERVED_67C` | RO | 0 | Reserved. |
+| 0x680 | `CSR_MEM_GUARD_SQ_BASE` | RW | 0 | Allowed SQ command-memory region base address. |
+| 0x684 | `CSR_MEM_GUARD_SQ_LIMIT` | RW | 0 | Allowed SQ command-memory region exclusive limit address. |
+| 0x688 | `CSR_MEM_GUARD_CQ_BASE` | RW | 0 | Allowed CQ completion-memory region base address. |
+| 0x68C | `CSR_MEM_GUARD_CQ_LIMIT` | RW | 0 | Allowed CQ completion-memory region exclusive limit address. |
+| 0x690 | `CSR_MEM_GUARD_DESC_BASE` | RW | 0 | Allowed descriptor-memory region base address. |
+| 0x694 | `CSR_MEM_GUARD_DESC_LIMIT` | RW | 0 | Allowed descriptor-memory region exclusive limit address. |
+| 0x698 | `CSR_MEM_GUARD_SRC_BASE` | RW | 0 | Allowed source-memory region base address. |
+| 0x69C | `CSR_MEM_GUARD_SRC_LIMIT` | RW | 0 | Allowed source-memory region exclusive limit address. |
+| 0x6A0 | `CSR_MEM_GUARD_DST_BASE` | RW | 0 | Allowed destination-memory region base address. |
+| 0x6A4 | `CSR_MEM_GUARD_DST_LIMIT` | RW | 0 | Allowed destination-memory region exclusive limit address. |
+| 0x6A8 | `CSR_MEM_GUARD_RESERVED_6A8` | RO | 0 | Reserved. |
+| 0x6AC | `CSR_MEM_GUARD_RESERVED_6AC` | RO | 0 | Reserved. |
+| 0x6B0 | `CSR_MEM_GUARD_RESERVED_6B0` | RO | 0 | Reserved. |
+| 0x6B4 | `CSR_MEM_GUARD_RESERVED_6B4` | RO | 0 | Reserved. |
+| 0x6B8 | `CSR_MEM_GUARD_RESERVED_6B8` | RO | 0 | Reserved. |
+| 0x6BC | `CSR_MEM_GUARD_RESERVED_6BC` | RO | 0 | Reserved. |
+
+#### 9.4.2 Region Semantics
+
+All P27 guard regions use half-open address ranges:
+
+```text
+valid access if:
+  access_start >= region_base
+  access_end   <= region_limit
+  access_end   = access_start + size_bytes
+  access_end does not overflow 32-bit address space
+```
+
+The exclusive-limit policy avoids inclusive-end off-by-one ambiguity and makes a zero-sized region easy to identify:
+
+```text
+region_base == region_limit : empty / invalid region when that domain is enabled
+region_base  > region_limit : invalid region configuration
+```
+
+#### 9.4.3 Register Ownership Summary
+
+| Register | Owner | Write Policy |
+|---|---|---|
+| `CSR_MEM_GUARD_CONTROL` | Host | Program while queue is idle. Reset disables all guard checks. |
+| `CSR_MEM_GUARD_*_BASE/LIMIT` | Host | Program while queue is idle. Used only when the corresponding domain check is enabled. |
+| `CSR_MEM_GUARD_ERROR_STATUS` | Hardware set / host W1C clear | Sticky guard error summary. |
+| `CSR_MEM_GUARD_REJECT_STATUS` | Hardware set / host W1C clear | Sticky guard command/config reject summary. |
+| `CSR_MEM_GUARD_ERROR_*` | Hardware | Last guard failure diagnostics. |
+| `CSR_MEM_GUARD_LAST_CHECK_*` | Hardware | Last guard check diagnostics. |
+| `CSR_MEM_GUARD_CHECK_COUNT` | Hardware | Cleared by `CSR_MEM_GUARD_COMMAND.CLEAR_GUARD_COUNTERS`. |
+| `CSR_MEM_GUARD_ERROR_COUNT` | Hardware | Cleared by `CSR_MEM_GUARD_COMMAND.CLEAR_GUARD_COUNTERS`. |
+
+Region base/limit writes while `queue_busy` is high are rejected or ignored and set `CSR_MEM_GUARD_REJECT_STATUS.CONFIG_WRITE_BUSY_REJECT`.
+
+#### 9.4.4 Queue / Event Integration
+
+P27B adds one queue-level error summary bit:
+
+```text
+CSR_QUEUE_ERROR_STATUS[9] = MEMORY_GUARD_ERROR
+```
+
+P27B does not add a P22 event bit.  Guard failures that reach the queue error path use the existing event source:
+
+```text
+CSR_EVENT_PENDING.QUEUE_ERROR_EVENT
+```
+
+If the selected CQ slot is inside the enabled CQ range, hardware may produce a CQ error completion record.  If the CQ slot itself is unsafe, hardware must not issue the completion writeback.  In that case, queue CSR error/detail and guard CSR diagnostics are authoritative.
+
+#### 9.4.5 P27B Frozen Constants
+
+```text
+CSR_MEM_GUARD_BASE_ADDR      = 0x640
+CSR_MEM_GUARD_WINDOW_LAST    = 0x6BC
+CSR_MEM_GUARD_VERSION_RESET  = 0x0001_0027
+CSR_MEM_GUARD_CONTROL_RESET  = 0x0000_0000
+P27_QUEUE_MEMORY_GUARD_ERROR_BIT = 9
+P27_GUARD_DOMAIN_SQ          = 1
+P27_GUARD_DOMAIN_CQ          = 2
+P27_GUARD_DOMAIN_DESC        = 3
+P27_GUARD_DOMAIN_SRC         = 4
+P27_GUARD_DOMAIN_DST         = 5
+```
+
+---
 
 ## 10. Register Bit Definitions
 
@@ -866,6 +1000,7 @@ Sticky error bits are cleared by W1C writes or by `CSR_QUEUE_COMMAND.CLEAR_QUEUE
 | 6 | `COMMAND_TIMEOUT_ERROR` | RO/W1C | P24 per-command watchdog expired before the accepted SQ command reached terminal queue status. CQ-full pre-acceptance stall remains a stall, not this error. |
 | 7 | `CONFIG_WRITE_BUSY_ERROR` | RO/W1C | Queue base/depth/stride config write attempted while queue busy. |
 | 8 | `INTERNAL_SEQUENCE_ERROR` | RO/W1C | Queue FSM reached an illegal state or unexpected terminal condition. |
+| 9 | `MEMORY_GUARD_ERROR` | RO/W1C | P27 memory access guard rejected or suppressed an unsafe host-visible memory access. |
 
 P24B freezes bit 6 as the queue command timeout indication.  The bit is set only for an accepted SQ command whose snapshotted `CMD_TIMEOUT_CYCLES` value is non-zero and whose watchdog expires before terminal queue status.  It is not used for normal CQ-full stalls before command acceptance.  Timeout is a queue-level error subtype, so `CSR_QUEUE_STATUS.QUEUE_ERROR` is also asserted and P22 reports the condition through `QUEUE_ERROR_EVENT`.
 
@@ -1200,6 +1335,181 @@ P22_EVENT_RUNTIME_CONSUMED   = 9
 P22_EVENT_TEST               = 10
 ```
 
+
+
+### 10.11 P27 Memory Access Guard Registers
+
+The P27 memory guard registers use the same AXI-Lite access policy and the same W1P/W1C definitions as the earlier CSR windows.
+
+#### 10.11.1 `CSR_MEM_GUARD_VERSION` at 0x640
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| [31:16] | `MAJOR` | RO | 16'h0001 | Memory guard major version. |
+| [15:8] | `MINOR` | RO | 8'h00 | Memory guard minor version. |
+| [7:0] | `FEATURE_ID` | RO | 8'h27 | P27 memory guard feature ID. |
+
+Reset value:
+
+```text
+0x0001_0027
+```
+
+#### 10.11.2 `CSR_MEM_GUARD_COMMAND` at 0x644
+
+This is a write-one-pulse register.  Reads return zero.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 8 | `CLEAR_GUARD_ERROR` | W1P | Clear sticky guard error status. |
+| 9 | `CLEAR_GUARD_REJECT` | W1P | Clear sticky guard reject status. |
+| 10 | `CLEAR_GUARD_COUNTERS` | W1P | Clear guard check/error counters and last-check snapshots. |
+| 31:11, 7:0 | `RSVD` | — | Reserved. |
+
+Unsupported command bits are ignored in the first P27 prototype and may set `CSR_MEM_GUARD_REJECT_STATUS.UNSUPPORTED_COMMAND_COMBO` in stricter implementations.
+
+#### 10.11.3 `CSR_MEM_GUARD_STATUS` at 0x648
+
+| Bit | Name | Access | Description |
+|---:|---|---|
+| 0 | `GUARD_ENABLED` | RO | Mirror of `CSR_MEM_GUARD_CONTROL.GUARD_ENABLE`. |
+| 1 | `STRICT_REJECT_ENABLED` | RO | Mirror of `CSR_MEM_GUARD_CONTROL.STRICT_REJECT_ENABLE`. |
+| 2 | `ANY_GUARD_ERROR` | RO | Any sticky guard error bit is set. |
+| 3 | `ANY_GUARD_REJECT` | RO | Any sticky guard reject bit is set. |
+| 4 | `SQ_CHECK_ENABLED` | RO | SQ command-memory range checking enabled. |
+| 5 | `CQ_CHECK_ENABLED` | RO | CQ completion-memory range checking enabled. |
+| 6 | `DESC_CHECK_ENABLED` | RO | Descriptor-memory range checking enabled. |
+| 7 | `SRC_CHECK_ENABLED` | RO | Source-memory range checking enabled. |
+| 8 | `DST_CHECK_ENABLED` | RO | Destination-memory range checking enabled. |
+| 9 | `GUARD_ERROR_PENDING` | RO | Guard error is pending and may block strict launches. |
+| 10 | `QUEUE_GUARD_ERROR_MIRROR` | RO | Queue-level memory guard error summary is set. |
+| 16 | `CSR_READY` | RO | CSR block ready for transactions. |
+| 31:17, 15:11 | `RSVD` | RO | Reserved. |
+
+#### 10.11.4 `CSR_MEM_GUARD_ERROR_STATUS` at 0x64C
+
+Sticky error bits are set by guard failures and cleared by W1C writes or by `CSR_MEM_GUARD_COMMAND.CLEAR_GUARD_ERROR`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `ANY_GUARD_ERROR` | RO/W1C | At least one guard failure has been observed. |
+| 1 | `SQ_RANGE_ERROR` | RO/W1C | SQ command-memory access was outside the enabled SQ region. |
+| 2 | `CQ_RANGE_ERROR` | RO/W1C | CQ completion-memory access was outside the enabled CQ region. |
+| 3 | `DESC_RANGE_ERROR` | RO/W1C | Descriptor-memory access was outside the enabled descriptor region. |
+| 4 | `SRC_RANGE_ERROR` | RO/W1C | Source-memory access was outside the enabled source region. |
+| 5 | `DST_RANGE_ERROR` | RO/W1C | Destination-memory access was outside the enabled destination region. |
+| 6 | `BASE_LIMIT_CONFIG_ERROR` | RO/W1C | Enabled region has invalid base/limit configuration. |
+| 7 | `ADDRESS_OVERFLOW_ERROR` | RO/W1C | Address plus size overflowed or failed monotonic end calculation. |
+| 8 | `ALIGNMENT_ERROR` | RO/W1C | Address violates the required alignment for the checked domain. |
+| 9 | `STRIDE_ERROR` | RO/W1C | SQ/CQ/descriptor stride is unsupported for the checked span. |
+| 10 | `DEPTH_ERROR` | RO/W1C | SQ/CQ depth is zero, unsupported, or creates an invalid span. |
+| 11 | `SIZE_ZERO_ERROR` | RO/W1C | Access size is zero when a non-zero memory access is required. |
+| 12 | `UNSAFE_CQ_WRITE_SUPPRESSED` | RO/W1C | CQ error completion was suppressed because the target CQ slot was unsafe. |
+| 13 | `DOMAIN_MISMATCH_ERROR` | RO/W1C | Access was checked against an unexpected or disabled memory domain. |
+| 14 | `CONFIG_WRITE_BUSY_ERROR` | RO/W1C | Guard region/control write attempted while queue busy. |
+| 15 | `INTERNAL_GUARD_ERROR` | RO/W1C | Guard checker detected an unexpected internal condition. |
+| 31:16 | `RSVD` | RO/W1C | Reserved. |
+
+#### 10.11.5 `CSR_MEM_GUARD_CONTROL` at 0x650
+
+| Bit | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `GUARD_ENABLE` | RW | 0 | Enable memory guard checks globally. |
+| 1 | `STRICT_REJECT_ENABLE` | RW | 0 | Reject unsafe launches instead of observe-only diagnostic capture. |
+| 4 | `SQ_CHECK_ENABLE` | RW | 0 | Enable SQ command-memory range checking. |
+| 5 | `CQ_CHECK_ENABLE` | RW | 0 | Enable CQ completion-memory range checking. |
+| 6 | `DESC_CHECK_ENABLE` | RW | 0 | Enable descriptor-memory range checking. |
+| 7 | `SRC_CHECK_ENABLE` | RW | 0 | Enable source-memory range checking. |
+| 8 | `DST_CHECK_ENABLE` | RW | 0 | Enable destination-memory range checking. |
+| 12 | `WRITE_CQ_ERROR_RECORD_IF_SAFE` | RW | 0 | Permit a CQ error record when the selected CQ slot is valid and inside the CQ guard range. |
+| 31:13, 11:9, 3:2 | `RSVD` | RO | 0 | Reserved. |
+
+Reset value:
+
+```text
+0x0000_0000
+```
+
+The reset value preserves all existing pre-P27 regression behavior.  P27-specific tests must explicitly program regions and enable the desired check domains.
+
+#### 10.11.6 `CSR_MEM_GUARD_REJECT_STATUS` at 0x654
+
+Sticky reject bits are cleared by W1C writes or by `CSR_MEM_GUARD_COMMAND.CLEAR_GUARD_REJECT`.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 0 | `CONFIG_WRITE_BUSY_REJECT` | RO/W1C | Guard control or region write attempted while queue busy. |
+| 1 | `INVALID_REGION_CONFIG_REJECT` | RO/W1C | Enabled guard region has invalid base/limit configuration. |
+| 2 | `UNSUPPORTED_COMMAND_COMBO` | RO/W1C | Unsupported guard command-bit combination was written. |
+| 3 | `STRICT_START_REJECT` | RO/W1C | A strict guard failure rejected a queue start or command launch. |
+| 31:4 | `RSVD` | RO/W1C | Reserved. |
+
+#### 10.11.7 `CSR_MEM_GUARD_ERROR_DETAIL` at 0x658
+
+Recommended encoding:
+
+```text
+[7:0]   detail code
+[15:8]  guard domain
+[23:16] SQ/CQ/descriptor physical index when applicable
+[31:24] queue FSM state or guard check source
+```
+
+Recommended guard domain values:
+
+| Value | Name |
+|---:|---|
+| 0x00 | `GUARD_DOMAIN_NONE` |
+| 0x01 | `GUARD_DOMAIN_SQ` |
+| 0x02 | `GUARD_DOMAIN_CQ` |
+| 0x03 | `GUARD_DOMAIN_DESC` |
+| 0x04 | `GUARD_DOMAIN_SRC` |
+| 0x05 | `GUARD_DOMAIN_DST` |
+| 0x06 | `GUARD_DOMAIN_CONFIG` |
+
+Recommended P27 detail code values:
+
+| Value | Name |
+|---:|---|
+| 0x20 | `DETAIL_MEM_GUARD_SQ_RANGE` |
+| 0x21 | `DETAIL_MEM_GUARD_CQ_RANGE` |
+| 0x22 | `DETAIL_MEM_GUARD_DESC_RANGE` |
+| 0x23 | `DETAIL_MEM_GUARD_SRC_RANGE` |
+| 0x24 | `DETAIL_MEM_GUARD_DST_RANGE` |
+| 0x25 | `DETAIL_MEM_GUARD_ADDR_OVERFLOW` |
+| 0x26 | `DETAIL_MEM_GUARD_ALIGNMENT` |
+| 0x27 | `DETAIL_MEM_GUARD_SPAN_CONFIG` |
+| 0x28 | `DETAIL_MEM_GUARD_DOMAIN_MISMATCH` |
+
+The queue-level `CSR_QUEUE_ERROR_DETAIL[7:0]` may use the same P27 detail code values when `CSR_QUEUE_ERROR_STATUS.MEMORY_GUARD_ERROR` is set.
+
+#### 10.11.8 Region Base / Limit Registers
+
+The base and limit registers define half-open ranges:
+
+```text
+[base, limit)
+```
+
+A memory access is valid only when:
+
+```text
+addr >= base
+addr + size_bytes <= limit
+addr + size_bytes does not overflow
+```
+
+This policy applies to:
+
+```text
+CSR_MEM_GUARD_SQ_BASE   / CSR_MEM_GUARD_SQ_LIMIT
+CSR_MEM_GUARD_CQ_BASE   / CSR_MEM_GUARD_CQ_LIMIT
+CSR_MEM_GUARD_DESC_BASE / CSR_MEM_GUARD_DESC_LIMIT
+CSR_MEM_GUARD_SRC_BASE  / CSR_MEM_GUARD_SRC_LIMIT
+CSR_MEM_GUARD_DST_BASE  / CSR_MEM_GUARD_DST_LIMIT
+```
+
+---
 
 ## 11. Configuration Register Defaults
 
@@ -2046,6 +2356,7 @@ P23 reuses the existing CSR windows:
 ```text
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
 ```
 
 Validated P23 CSR usage:
@@ -2240,3 +2551,73 @@ RESET_QUEUE_POINTERS remains an idle-only session-discard operation, not an abor
 ```
 
 P26 keeps the P19 queue CSR window at `0x580 - 0x5FC` and the P22 event CSR window at `0x600 - 0x63C` unchanged.
+
+---
+
+## 28. P27B Memory Access Guard CSR Policy / Range Register Map Freeze
+
+P27B freezes the memory access guard CSR policy for the first implementation checkpoint.
+
+Unlike P25 and P26, P27 intentionally allocates a new CSR window because the guard requires software-programmable region ranges and guard-specific diagnostics.
+
+Frozen P27 CSR policy:
+
+```text
+New P27 memory guard CSR window: 0x640 - 0x6BC
+Guard disabled by reset to preserve existing regression behavior
+Strict reject disabled by reset
+Per-domain checking disabled by reset
+Region ranges use half-open [base, limit) semantics
+One new queue error summary bit: CSR_QUEUE_ERROR_STATUS[9] MEMORY_GUARD_ERROR
+No new P22 event bit; reuse QUEUE_ERROR_EVENT
+No SQ entry format change
+No CQ completion record format change
+No descriptor format change
+No BRAM / GEMM / DMA / frontend datapath semantic change
+```
+
+Frozen P27 guard domains:
+
+```text
+SQ command memory
+CQ completion memory
+descriptor memory
+source memory
+destination memory
+```
+
+Guard checking is intended to happen before unsafe lower-level traffic is issued:
+
+```text
+SQ range checked before SQ command fetch
+CQ range checked before reserving / writing completion slots
+descriptor range checked before descriptor-fetch AXI read launch
+source range checked before DMA / AXI-Stream / Direct Stream source reads
+destination range checked before DMA store destination writes
+```
+
+P27B queue/event integration policy:
+
+```text
+Guard failure sets guard-specific sticky diagnostics.
+Guard failure in the queue command path sets CSR_QUEUE_ERROR_STATUS[9].
+The host is notified through the existing P22 QUEUE_ERROR_EVENT.
+If the CQ slot is safe, a CQ error record may be written.
+If the CQ slot is unsafe, no completion writeback is issued and CSR diagnostics are authoritative.
+```
+
+P27B validation status:
+
+```text
+P27A: Memory access guard prototype spec PASS
+P27B: Memory guard CSR policy / range register map freeze PASS
+```
+
+P27B does not add UVM regression items.  Full regression remains:
+
+```text
+TOTAL : 138
+PASS  : 138
+FAIL  : 0
+```
+
