@@ -248,6 +248,7 @@ package ai_accel_subsys_uvm_pkg;
     // P27 memory access guard tests
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_mem_guard_dma_range_smoke_test.sv"
 
 endpackage
 

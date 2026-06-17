@@ -596,6 +596,30 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               mem_guard_last_check_size_bytes_i;
     logic [31:0]               mem_guard_last_check_domain_i;
 
+    logic                      queue_mem_guard_check_pulse_i;
+    logic                      queue_mem_guard_error_pulse_i;
+    logic [31:0]               queue_mem_guard_error_status_i;
+    logic [31:0]               queue_mem_guard_reject_status_i;
+    logic [31:0]               queue_mem_guard_error_detail_i;
+    logic [ADDR_WIDTH-1:0]     queue_mem_guard_error_addr_i;
+    logic [31:0]               queue_mem_guard_error_size_bytes_i;
+    logic [31:0]               queue_mem_guard_error_domain_i;
+    logic [ADDR_WIDTH-1:0]     queue_mem_guard_last_check_addr_i;
+    logic [31:0]               queue_mem_guard_last_check_size_bytes_i;
+    logic [31:0]               queue_mem_guard_last_check_domain_i;
+
+    logic                      payload_mem_guard_check_pulse_i;
+    logic                      payload_mem_guard_error_pulse_i;
+    logic [31:0]               payload_mem_guard_error_status_i;
+    logic [31:0]               payload_mem_guard_reject_status_i;
+    logic [31:0]               payload_mem_guard_error_detail_i;
+    logic [ADDR_WIDTH-1:0]     payload_mem_guard_error_addr_i;
+    logic [31:0]               payload_mem_guard_error_size_bytes_i;
+    logic [31:0]               payload_mem_guard_error_domain_i;
+    logic [ADDR_WIDTH-1:0]     payload_mem_guard_last_check_addr_i;
+    logic [31:0]               payload_mem_guard_last_check_size_bytes_i;
+    logic [31:0]               payload_mem_guard_last_check_domain_i;
+
     logic                      queue_cmd_valid_i;
     logic                      queue_cmd_ready_i;
     logic                      queue_cmd_reject_i;
@@ -723,6 +747,33 @@ module ai_accel_subsys_csr_top #(
     localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_COMPLETION_WB = 8'h0F;
     localparam logic [7:0] P24_DETAIL_TIMEOUT_IN_QUEUE_ADVANCE = 8'h10;
 
+    // P27 memory guard constants used by wrapper-level source/destination
+    // descriptor-payload checks.  CSR register fields remain canonical in
+    // axi_lite_csr_control_plane_spec.md and are mirrored here only as RTL
+    // decode constants.
+    localparam int P27_MEM_GUARD_CONTROL_ENABLE              = 0;
+    localparam int P27_MEM_GUARD_CONTROL_STRICT_REJECT       = 1;
+    localparam int P27_MEM_GUARD_CONTROL_SRC_CHECK_ENABLE    = 7;
+    localparam int P27_MEM_GUARD_CONTROL_DST_CHECK_ENABLE    = 8;
+    localparam int P27_QUEUE_MEMORY_GUARD_ERROR_BIT          = 9;
+
+    localparam int P27_MEM_GUARD_ERR_ANY        = 0;
+    localparam int P27_MEM_GUARD_ERR_SRC_RANGE  = 4;
+    localparam int P27_MEM_GUARD_ERR_DST_RANGE  = 5;
+    localparam int P27_MEM_GUARD_ERR_BASE_LIMIT = 6;
+    localparam int P27_MEM_GUARD_ERR_OVERFLOW   = 7;
+
+    localparam logic [31:0] P27_GUARD_DOMAIN_SRC = 32'd4;
+    localparam logic [31:0] P27_GUARD_DOMAIN_DST = 32'd5;
+
+    localparam logic [7:0] P27_DETAIL_SRC_RANGE      = 8'h23;
+    localparam logic [7:0] P27_DETAIL_DST_RANGE      = 8'h24;
+    localparam logic [7:0] P27_DETAIL_ADDR_OVERFLOW  = 8'h25;
+    localparam logic [7:0] P27_DETAIL_SPAN_CONFIG    = 8'h27;
+    localparam logic [7:0] P27_DETAIL_PAYLOAD_GUARD_STATE = 8'h04;
+
+    localparam logic [63:0] P27_DMA_BEAT_BYTES_U64 = DATA_WIDTH / 8;
+
     logic                      queue_timeout_watchdog_active_q;
     logic [31:0]               queue_timeout_budget_q;
     logic [31:0]               queue_timeout_count_q;
@@ -732,6 +783,20 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               queue_timeout_error_status_q;
     logic [31:0]               queue_timeout_error_detail_q;
     logic                      queue_timeout_pulse_i;
+
+    // P27E payload-range guard terminal status.  These sticky mirrors
+    // cover descriptor-payload source/destination range failures detected
+    // after P17 descriptor fetch but before P16/P15 lower-level launch.
+    logic                      desc_fetch_recipe_start_raw_i;
+    logic                      payload_guard_error_w;
+    logic [31:0]               payload_guard_error_status_w;
+    logic [31:0]               payload_guard_error_detail_w;
+    logic [ADDR_WIDTH-1:0]     payload_guard_error_addr_w;
+    logic [31:0]               payload_guard_error_size_bytes_w;
+    logic [31:0]               payload_guard_error_domain_w;
+    logic [7:0]                payload_guard_error_slot_w;
+    logic [31:0]               payload_guard_queue_error_status_q;
+    logic [31:0]               payload_guard_queue_error_detail_q;
 
     logic                      queue_completion_commit_raw_i;
     logic                      queue_completion_error_raw_i;
@@ -955,6 +1020,76 @@ module ai_accel_subsys_csr_top #(
         end
     endfunction
 
+    function automatic logic [31:0] p27_build_guard_detail(
+        input logic [7:0] detail_code,
+        input logic [7:0] domain,
+        input logic [7:0] index,
+        input logic [7:0] state_code
+    );
+        begin
+            p27_build_guard_detail = {state_code, index, domain, detail_code};
+        end
+    endfunction
+
+    function automatic logic [31:0] p27_payload_status_for_detail(
+        input logic [7:0] detail_code,
+        input logic [31:0] domain
+    );
+        logic [31:0] status;
+        begin
+            status = 32'h0000_0001;
+
+            if (domain == P27_GUARD_DOMAIN_SRC) begin
+                status[P27_MEM_GUARD_ERR_SRC_RANGE] = 1'b1;
+            end else if (domain == P27_GUARD_DOMAIN_DST) begin
+                status[P27_MEM_GUARD_ERR_DST_RANGE] = 1'b1;
+            end
+
+            if (detail_code == P27_DETAIL_ADDR_OVERFLOW) begin
+                status[P27_MEM_GUARD_ERR_OVERFLOW] = 1'b1;
+            end else if (detail_code == P27_DETAIL_SPAN_CONFIG) begin
+                status[P27_MEM_GUARD_ERR_BASE_LIMIT] = 1'b1;
+            end
+
+            return status;
+        end
+    endfunction
+
+    function automatic bit p27_payload_range_ok64(
+        input logic [63:0] addr64,
+        input logic [63:0] size_bytes64,
+        input logic [31:0] region_base,
+        input logic [31:0] region_limit,
+        output logic [7:0] detail_code
+    );
+        logic [64:0] end_addr_ext;
+        begin
+            detail_code = 8'h00;
+            end_addr_ext = {1'b0, addr64} + {1'b0, size_bytes64};
+
+            if (size_bytes64 == 64'h0000_0000_0000_0000) begin
+                detail_code = P27_DETAIL_SPAN_CONFIG;
+                return 1'b0;
+            end
+            if (region_base >= region_limit) begin
+                detail_code = P27_DETAIL_SPAN_CONFIG;
+                return 1'b0;
+            end
+            if (addr64[63:32] != 32'h0000_0000 ||
+                size_bytes64[63:32] != 32'h0000_0000 ||
+                end_addr_ext[64] ||
+                end_addr_ext[63:32] != 32'h0000_0000) begin
+                detail_code = P27_DETAIL_ADDR_OVERFLOW;
+                return 1'b0;
+            end
+            if (addr64[31:0] < region_base || end_addr_ext[31:0] > region_limit) begin
+                return 1'b0;
+            end
+
+            return 1'b1;
+        end
+    endfunction
+
     assign queue_underlying_idle_i = !desc_fetch_start_blocked_i &&
                                      !completion_wb_busy_i &&
                                      (queue_timeout_error_status_q == 32'h0000_0000);
@@ -1038,7 +1173,8 @@ module ai_accel_subsys_csr_top #(
 
             if (queue_completion_commit_raw_i ||
                 queue_completion_error_raw_i ||
-                queue_timeout_pulse_i) begin
+                queue_timeout_pulse_i ||
+                payload_mem_guard_error_pulse_i) begin
                 queue_completion_active_q        <= 1'b0;
                 queue_completion_context_valid_q <= 1'b0;
             end
@@ -1053,6 +1189,7 @@ module ai_accel_subsys_csr_top #(
             end else if (queue_auto_continue_start_pulse_i ||
                          queue_completion_error_pulse_i ||
                          queue_timeout_pulse_i ||
+                         payload_mem_guard_error_pulse_i ||
                          csr_queue_clear_error_pulse ||
                          csr_queue_clear_done_pulse ||
                          csr_queue_stop_pulse ||
@@ -1077,7 +1214,7 @@ module ai_accel_subsys_csr_top #(
                 queue_timeout_count_q           <= 32'h0000_0000;
                 queue_timeout_error_status_q    <= 32'h0000_0000;
                 queue_timeout_error_detail_q    <= 32'h0000_0000;
-            end else if (queue_completion_commit_raw_i || queue_completion_error_raw_i) begin
+            end else if (queue_completion_commit_raw_i || queue_completion_error_raw_i || payload_mem_guard_error_pulse_i) begin
                 queue_timeout_watchdog_active_q <= 1'b0;
                 queue_timeout_count_q           <= 32'h0000_0000;
             end else if (queue_timeout_pulse_i) begin
@@ -1113,13 +1250,19 @@ module ai_accel_subsys_csr_top #(
                                              (queue_timeout_error_status_q == 32'h0000_0000)) ||
                                             queue_timeout_pulse_i;
 
-    assign queue_error_status_to_csr = queue_error_status_i | queue_timeout_error_status_q;
+    assign queue_error_status_to_csr = queue_error_status_i |
+                                       queue_timeout_error_status_q |
+                                       payload_guard_queue_error_status_q;
 
-    assign queue_error_pulse_to_csr = queue_error_pulse_i | queue_timeout_pulse_i;
+    assign queue_error_pulse_to_csr = queue_error_pulse_i |
+                                      queue_timeout_pulse_i |
+                                      payload_mem_guard_error_pulse_i;
 
     assign queue_error_detail_to_csr = (queue_timeout_error_status_q != 32'h0000_0000) ?
                                        queue_timeout_error_detail_q :
-                                       queue_error_detail_i;
+                                       ((payload_guard_queue_error_status_q != 32'h0000_0000) ?
+                                        payload_guard_queue_error_detail_q :
+                                        queue_error_detail_i);
 
     assign queue_auto_continue_start_pulse_i = queue_auto_continue_pending_q &&
                                                csr_queue_enable &&
@@ -1560,17 +1703,17 @@ module ai_accel_subsys_csr_top #(
         .queue_cq_occupancy     (queue_cq_occupancy_i),
         .queue_cq_space         (queue_cq_space_i),
 
-        .mem_guard_check_pulse          (mem_guard_check_pulse_i),
-        .mem_guard_error_pulse          (mem_guard_error_pulse_i),
-        .mem_guard_error_status         (mem_guard_error_status_i),
-        .mem_guard_reject_status        (mem_guard_reject_status_i),
-        .mem_guard_error_detail         (mem_guard_error_detail_i),
-        .mem_guard_error_addr           (mem_guard_error_addr_i),
-        .mem_guard_error_size_bytes     (mem_guard_error_size_bytes_i),
-        .mem_guard_error_domain         (mem_guard_error_domain_i),
-        .mem_guard_last_check_addr      (mem_guard_last_check_addr_i),
-        .mem_guard_last_check_size_bytes(mem_guard_last_check_size_bytes_i),
-        .mem_guard_last_check_domain    (mem_guard_last_check_domain_i)
+        .mem_guard_check_pulse          (queue_mem_guard_check_pulse_i),
+        .mem_guard_error_pulse          (queue_mem_guard_error_pulse_i),
+        .mem_guard_error_status         (queue_mem_guard_error_status_i),
+        .mem_guard_reject_status        (queue_mem_guard_reject_status_i),
+        .mem_guard_error_detail         (queue_mem_guard_error_detail_i),
+        .mem_guard_error_addr           (queue_mem_guard_error_addr_i),
+        .mem_guard_error_size_bytes     (queue_mem_guard_error_size_bytes_i),
+        .mem_guard_error_domain         (queue_mem_guard_error_domain_i),
+        .mem_guard_last_check_addr      (queue_mem_guard_last_check_addr_i),
+        .mem_guard_last_check_size_bytes(queue_mem_guard_last_check_size_bytes_i),
+        .mem_guard_last_check_domain    (queue_mem_guard_last_check_domain_i)
     );
 
     // ============================================================
@@ -1939,6 +2082,182 @@ module ai_accel_subsys_csr_top #(
     );
 
     // ------------------------------------------------------------
+    // P27E descriptor-payload source/destination guard
+    //
+    // P27D checks SQ and descriptor-table spans before SQ fetch / P17
+    // launch.  P27E adds the next launch-boundary check: once P17 has
+    // fetched descriptor payloads, validate external source and
+    // destination ranges before the P16 recipe sequencer can launch any
+    // P15 lower-level preload/store work.
+    // ------------------------------------------------------------
+    always_comb begin
+        payload_guard_error_w                 = 1'b0;
+        payload_guard_error_status_w          = 32'h0000_0000;
+        payload_guard_error_detail_w          = 32'h0000_0000;
+        payload_guard_error_addr_w            = '0;
+        payload_guard_error_size_bytes_w      = 32'h0000_0000;
+        payload_guard_error_domain_w          = 32'h0000_0000;
+        payload_guard_error_slot_w            = 8'h00;
+
+        payload_mem_guard_check_pulse_i           = 1'b0;
+        payload_mem_guard_error_pulse_i           = 1'b0;
+        payload_mem_guard_error_status_i          = 32'h0000_0000;
+        payload_mem_guard_reject_status_i         = 32'h0000_0000;
+        payload_mem_guard_error_detail_i          = 32'h0000_0000;
+        payload_mem_guard_error_addr_i            = '0;
+        payload_mem_guard_error_size_bytes_i      = 32'h0000_0000;
+        payload_mem_guard_error_domain_i          = 32'h0000_0000;
+        payload_mem_guard_last_check_addr_i       = '0;
+        payload_mem_guard_last_check_size_bytes_i = 32'h0000_0000;
+        payload_mem_guard_last_check_domain_i     = 32'h0000_0000;
+
+        if (desc_fetch_recipe_start_raw_i &&
+            csr_mem_guard_control[P27_MEM_GUARD_CONTROL_ENABLE] &&
+            csr_mem_guard_control[P27_MEM_GUARD_CONTROL_STRICT_REJECT]) begin
+            for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
+                logic [7:0]  detail_code;
+                logic [63:0] access_size64;
+
+                if (!payload_guard_error_w && (slot_i < desc_fetch_recipe_count_i)) begin
+                    if (csr_mem_guard_control[P27_MEM_GUARD_CONTROL_SRC_CHECK_ENABLE] &&
+                        (desc_fetch_slot_a_load_beats[slot_i] != 32'h0000_0000)) begin
+                        access_size64 = {32'h0000_0000, desc_fetch_slot_a_load_beats[slot_i]} * P27_DMA_BEAT_BYTES_U64;
+                        if (!p27_payload_range_ok64({32'h0000_0000, desc_fetch_slot_a_src_base[slot_i]},
+                                                    access_size64,
+                                                    csr_mem_guard_src_base,
+                                                    csr_mem_guard_src_limit,
+                                                    detail_code)) begin
+                            if (detail_code == 8'h00) detail_code = P27_DETAIL_SRC_RANGE;
+                            payload_guard_error_w            = 1'b1;
+                            payload_guard_error_status_w     = p27_payload_status_for_detail(detail_code, P27_GUARD_DOMAIN_SRC);
+                            payload_guard_error_detail_w     = p27_build_guard_detail(detail_code,
+                                                                                       P27_GUARD_DOMAIN_SRC[7:0],
+                                                                                       slot_i[7:0],
+                                                                                       P27_DETAIL_PAYLOAD_GUARD_STATE);
+                            payload_guard_error_addr_w       = desc_fetch_slot_a_src_base[slot_i];
+                            payload_guard_error_size_bytes_w = access_size64[31:0];
+                            payload_guard_error_domain_w     = P27_GUARD_DOMAIN_SRC;
+                            payload_guard_error_slot_w       = slot_i[7:0];
+                        end
+
+                        if (!payload_guard_error_w &&
+                            (desc_fetch_slot_b_load_beats[slot_i] != 32'h0000_0000)) begin
+                            access_size64 = {32'h0000_0000, desc_fetch_slot_b_load_beats[slot_i]} * P27_DMA_BEAT_BYTES_U64;
+                            if (!p27_payload_range_ok64({32'h0000_0000, desc_fetch_slot_b_src_base[slot_i]},
+                                                        access_size64,
+                                                        csr_mem_guard_src_base,
+                                                        csr_mem_guard_src_limit,
+                                                        detail_code)) begin
+                                if (detail_code == 8'h00) detail_code = P27_DETAIL_SRC_RANGE;
+                                payload_guard_error_w            = 1'b1;
+                                payload_guard_error_status_w     = p27_payload_status_for_detail(detail_code, P27_GUARD_DOMAIN_SRC);
+                                payload_guard_error_detail_w     = p27_build_guard_detail(detail_code,
+                                                                                           P27_GUARD_DOMAIN_SRC[7:0],
+                                                                                           slot_i[7:0],
+                                                                                           P27_DETAIL_PAYLOAD_GUARD_STATE);
+                                payload_guard_error_addr_w       = desc_fetch_slot_b_src_base[slot_i];
+                                payload_guard_error_size_bytes_w = access_size64[31:0];
+                                payload_guard_error_domain_w     = P27_GUARD_DOMAIN_SRC;
+                                payload_guard_error_slot_w       = slot_i[7:0];
+                            end
+                        end
+                    end
+
+                    if (!payload_guard_error_w &&
+                        csr_mem_guard_control[P27_MEM_GUARD_CONTROL_DST_CHECK_ENABLE] &&
+                        (desc_fetch_slot_store_byte_count[slot_i] != 32'h0000_0000)) begin
+                        access_size64 = {32'h0000_0000, desc_fetch_slot_store_byte_count[slot_i]};
+                        if (!p27_payload_range_ok64({32'h0000_0000, desc_fetch_slot_store_dst_base[slot_i]},
+                                                    access_size64,
+                                                    csr_mem_guard_dst_base,
+                                                    csr_mem_guard_dst_limit,
+                                                    detail_code)) begin
+                            if (detail_code == 8'h00) detail_code = P27_DETAIL_DST_RANGE;
+                            payload_guard_error_w            = 1'b1;
+                            payload_guard_error_status_w     = p27_payload_status_for_detail(detail_code, P27_GUARD_DOMAIN_DST);
+                            payload_guard_error_detail_w     = p27_build_guard_detail(detail_code,
+                                                                                       P27_GUARD_DOMAIN_DST[7:0],
+                                                                                       slot_i[7:0],
+                                                                                       P27_DETAIL_PAYLOAD_GUARD_STATE);
+                            payload_guard_error_addr_w       = desc_fetch_slot_store_dst_base[slot_i];
+                            payload_guard_error_size_bytes_w = access_size64[31:0];
+                            payload_guard_error_domain_w     = P27_GUARD_DOMAIN_DST;
+                            payload_guard_error_slot_w       = slot_i[7:0];
+                        end
+                    end
+                end
+            end
+
+            payload_mem_guard_check_pulse_i = 1'b1;
+
+            if (payload_guard_error_w) begin
+                payload_mem_guard_error_pulse_i      = 1'b1;
+                payload_mem_guard_error_status_i     = payload_guard_error_status_w;
+                payload_mem_guard_error_detail_i     = payload_guard_error_detail_w;
+                payload_mem_guard_error_addr_i       = payload_guard_error_addr_w;
+                payload_mem_guard_error_size_bytes_i = payload_guard_error_size_bytes_w;
+                payload_mem_guard_error_domain_i     = payload_guard_error_domain_w;
+
+                payload_mem_guard_last_check_addr_i       = payload_guard_error_addr_w;
+                payload_mem_guard_last_check_size_bytes_i = payload_guard_error_size_bytes_w;
+                payload_mem_guard_last_check_domain_i     = payload_guard_error_domain_w;
+            end else if (csr_mem_guard_control[P27_MEM_GUARD_CONTROL_DST_CHECK_ENABLE]) begin
+                payload_mem_guard_last_check_addr_i       = desc_fetch_slot_store_dst_base[0];
+                payload_mem_guard_last_check_size_bytes_i = desc_fetch_slot_store_byte_count[0];
+                payload_mem_guard_last_check_domain_i     = P27_GUARD_DOMAIN_DST;
+            end else if (csr_mem_guard_control[P27_MEM_GUARD_CONTROL_SRC_CHECK_ENABLE]) begin
+                payload_mem_guard_last_check_addr_i       = desc_fetch_slot_a_src_base[0];
+                payload_mem_guard_last_check_size_bytes_i = (desc_fetch_slot_a_load_beats[0] * (DATA_WIDTH / 8));
+                payload_mem_guard_last_check_domain_i     = P27_GUARD_DOMAIN_SRC;
+            end
+        end
+    end
+
+    always_comb begin
+        mem_guard_check_pulse_i           = queue_mem_guard_check_pulse_i | payload_mem_guard_check_pulse_i;
+        mem_guard_error_pulse_i           = queue_mem_guard_error_pulse_i | payload_mem_guard_error_pulse_i;
+        mem_guard_error_status_i          = queue_mem_guard_error_status_i;
+        mem_guard_reject_status_i         = queue_mem_guard_reject_status_i;
+        mem_guard_error_detail_i          = queue_mem_guard_error_detail_i;
+        mem_guard_error_addr_i            = queue_mem_guard_error_addr_i;
+        mem_guard_error_size_bytes_i      = queue_mem_guard_error_size_bytes_i;
+        mem_guard_error_domain_i          = queue_mem_guard_error_domain_i;
+        mem_guard_last_check_addr_i       = queue_mem_guard_last_check_addr_i;
+        mem_guard_last_check_size_bytes_i = queue_mem_guard_last_check_size_bytes_i;
+        mem_guard_last_check_domain_i     = queue_mem_guard_last_check_domain_i;
+
+        if (payload_mem_guard_check_pulse_i || payload_mem_guard_error_pulse_i) begin
+            mem_guard_last_check_addr_i       = payload_mem_guard_last_check_addr_i;
+            mem_guard_last_check_size_bytes_i = payload_mem_guard_last_check_size_bytes_i;
+            mem_guard_last_check_domain_i     = payload_mem_guard_last_check_domain_i;
+        end
+
+        if (payload_mem_guard_error_pulse_i) begin
+            mem_guard_error_status_i          = payload_mem_guard_error_status_i;
+            mem_guard_reject_status_i         = payload_mem_guard_reject_status_i;
+            mem_guard_error_detail_i          = payload_mem_guard_error_detail_i;
+            mem_guard_error_addr_i            = payload_mem_guard_error_addr_i;
+            mem_guard_error_size_bytes_i      = payload_mem_guard_error_size_bytes_i;
+            mem_guard_error_domain_i          = payload_mem_guard_error_domain_i;
+        end
+    end
+
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            payload_guard_queue_error_status_q <= 32'h0000_0000;
+            payload_guard_queue_error_detail_q <= 32'h0000_0000;
+        end else begin
+            if (csr_queue_clear_error_pulse || !csr_queue_enable) begin
+                payload_guard_queue_error_status_q <= 32'h0000_0000;
+                payload_guard_queue_error_detail_q <= 32'h0000_0000;
+            end else if (payload_mem_guard_error_pulse_i) begin
+                payload_guard_queue_error_status_q[P27_QUEUE_MEMORY_GUARD_ERROR_BIT] <= 1'b1;
+                payload_guard_queue_error_detail_q <= payload_mem_guard_error_detail_i;
+            end
+        end
+    end
+
+    // ------------------------------------------------------------
     // P17D bridge policy
     //
     // A successful descriptor fetch creates a stable P16-compatible
@@ -1955,11 +2274,14 @@ module ai_accel_subsys_csr_top #(
         end
     end
 
-    assign desc_fetch_recipe_start_pulse = desc_fetch_done_i &&
-                                           !desc_fetch_done_q &&
-                                           desc_fetch_snapshot_valid_i &&
-                                           !desc_fetch_error_i &&
-                                           !desc_fetch_reject_i;
+    assign desc_fetch_recipe_start_raw_i = desc_fetch_done_i &&
+                                          !desc_fetch_done_q &&
+                                          desc_fetch_snapshot_valid_i &&
+                                          !desc_fetch_error_i &&
+                                          !desc_fetch_reject_i;
+
+    assign desc_fetch_recipe_start_pulse = desc_fetch_recipe_start_raw_i &&
+                                           !payload_guard_error_w;
 
     assign eff_recipe_start_pulse = csr_recipe_start_pulse |
                                     desc_fetch_recipe_start_pulse;

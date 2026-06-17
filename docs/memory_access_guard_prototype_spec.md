@@ -901,6 +901,16 @@ Expected PASS markers:
 [P27E_GUARD/PASS]
 ```
 
+P27E implementation checkpoint:
+
+```text
+Test file: tb/uvm/test/ai_accel_subsys_csr_mem_guard_dma_range_smoke_test.sv
+Package include: ai_accel_subsys_uvm_pkg.sv P27 memory access guard test block
+RTL checkpoint: wrapper-level descriptor-payload SRC/DST guard before P16/P15 launch
+Regression integration: deferred to P27G
+Full regression count remains 138 until P27G
+```
+
 ### 14.5 P27F CQ / Completion Writeback Guard + Lifecycle Recovery Smoke
 
 Purpose:
@@ -1126,7 +1136,9 @@ guard check points are identified
 safe reject / no unsafe access behavior is defined
 relationship to P19 queue, P22 event, P24 timeout, and P26 lifecycle is documented
 P27B CSR policy freeze is documented and canonical CSR fields are allocated only in the CSR spec
-P27D/P27E/P27F validation direction and PASS markers are documented
+P27D SQ / descriptor range validation is implemented and passing
+P27E DMA source / destination range validation smoke is implemented / run pending
+P27F validation direction and PASS markers are documented
 no RTL / CSR / Tcl / regression-list changes are required for P27A
 ```
 
