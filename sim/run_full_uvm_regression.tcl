@@ -2618,6 +2618,53 @@ run_reg_item "csr_queue_lifecycle_timeout_error_reinit_case102" {
     set CORE_CLK_PERIOD_NS 14
 }
 
+
+# ============================================================
+# P27G: Memory access guard regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P27 targeted validation into the full regression by
+# covering SQ / descriptor range validation, DMA source / destination
+# range validation, and CQ / completion writeback guard plus lifecycle
+# recovery.
+# Expected total after P27G: 141.
+# ============================================================
+run_reg_item "csr_mem_guard_sq_desc_case102" {
+    set UVM_TEST ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_mem_guard_dma_range_case102" {
+    set UVM_TEST ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_mem_guard_cq_recovery_case102" {
+    set UVM_TEST ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
 # ============================================================
 # Final summary
 # ============================================================

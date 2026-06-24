@@ -41,6 +41,10 @@ class ai_accel_subsys_event_csr_smoke_test extends uvm_test;
     localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
     localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
 
+    // P27 memory guard CSRs occupy 0x640-0x6BC, so the
+    // event-window invalid-address probe must stay beyond that window.
+    localparam logic [11:0] CSR_EVENT_INVALID_ADDR = 12'h6C0;
+
     localparam int EVENT_CMD_CLEAR_PENDING  = 0;
     localparam int EVENT_CMD_FORCE_TEST     = 1;
     localparam int EVENT_CMD_CLEAR_COUNTERS = 8;
@@ -153,13 +157,13 @@ class ai_accel_subsys_event_csr_smoke_test extends uvm_test;
         expect_read32(CSR_EVENT_COUNT,     32'h0000_0000, "EVENT_COUNT reset");
         expect_read32(CSR_EVENT_IRQ_COUNT, 32'h0000_0000, "EVENT_IRQ_COUNT reset");
 
-        csr.read32(12'h640, data, resp);
+        csr.read32(CSR_EVENT_INVALID_ADDR, data, resp);
         if (resp != AXI_RESP_SLVERR) begin
             `uvm_fatal("P22C_EVENT_CSR/BAD_READ_RESP",
                 $sformatf("Expected SLVERR for invalid event read, got resp=%0b data=0x%08h", resp, data))
         end
 
-        csr.write32(12'h640, 32'hCAFE_0022, 4'hF, resp);
+        csr.write32(CSR_EVENT_INVALID_ADDR, 32'hCAFE_0022, 4'hF, resp);
         if (resp != AXI_RESP_SLVERR) begin
             `uvm_fatal("P22C_EVENT_CSR/BAD_WRITE_RESP",
                 $sformatf("Expected SLVERR for invalid event write, got resp=%0b", resp))
@@ -223,7 +227,7 @@ class ai_accel_subsys_event_csr_smoke_test extends uvm_test;
         end
 
         `uvm_info("P22C_EVENT_CSR/PASS",
-            "P22C integrated Event CSR smoke completed: event window reset/readback, TEST_EVENT, mask/global IRQ summary, W1C/CLEAR_PENDING, counters, threshold RW, and invalid-address SLVERR all passed",
+            "P22C integrated Event CSR smoke completed: event window reset/readback, TEST_EVENT, mask/global IRQ summary, W1C/CLEAR_PENDING, counters, threshold RW, and P27-aware invalid-address SLVERR all passed",
             UVM_LOW)
 
         phase.drop_objection(this);

@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, and P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25/P26 reuse the existing queue/event CSR policy for runtime stress and lifecycle recovery, and P27 adds a memory guard CSR window for host-visible address range validation.
 
 ---
 
@@ -2621,3 +2621,51 @@ PASS  : 138
 FAIL  : 0
 ```
 
+
+
+---
+
+## 29. P27H Memory Access Guard Documentation Closure Addendum
+
+P27H closes the memory access guard validation using the CSR policy frozen in P27B.
+
+The canonical P27 CSR map remains unchanged from P27B:
+
+```text
+P27 memory guard window : 0x640 - 0x6BC
+CSR_QUEUE_ERROR_STATUS[9] = MEMORY_GUARD_ERROR
+P22 event notification    = reuse QUEUE_ERROR_EVENT, no new event bit
+```
+
+Validated P27 CSR usage policy:
+
+```text
+Guard remains disabled by reset.
+P27 tests program guard regions explicitly before enabling checks.
+Region base/limit registers use half-open [base, limit) semantics.
+SQ, CQ, descriptor, source, and destination checks are individually enabled through CSR_MEM_GUARD_CONTROL.
+Guard failures set CSR_MEM_GUARD_ERROR_STATUS and CSR_QUEUE_ERROR_STATUS[9].
+Guard failures notify the host through the existing P22 QUEUE_ERROR_EVENT.
+If the selected CQ slot is safe, a CQ error record may be written.
+If the selected CQ slot is unsafe, completion writeback is suppressed and guard/queue CSR diagnostics are authoritative.
+```
+
+Validated P27 full-regression representatives:
+
+```text
+csr_mem_guard_sq_desc_case102
+csr_mem_guard_dma_range_case102
+csr_mem_guard_cq_recovery_case102
+```
+
+Full regression after P27G:
+
+```text
+TOTAL : 141
+PASS  : 141
+FAIL  : 0
+```
+
+P27G also updates the P22 event CSR smoke invalid-address probe to stay beyond the P27 memory guard window.  Address `0x640` is now a valid P27 register (`CSR_MEM_GUARD_VERSION`), so the invalid-address probe uses the first word after the P27 window instead.
+
+P27H does not change the canonical CSR map, register access types, reset values, SQ entry format, CQ completion record format, descriptor format, or P22 event bit allocation.

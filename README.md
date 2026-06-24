@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, and queue lifecycle / soft-reset session reinitialization validation.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, and memory access guard / address range validation.
 
 Current milestone:
 
 ```text
-Queue Lifecycle / Soft Reset / Session Reinitialization P26H: Documentation Closure Completed
+Memory Access Guard / Address Range Validation P27H: Documentation Closure Completed
 
 Regression:
-  TOTAL : 138
-  PASS  : 138
+  TOTAL : 141
+  PASS  : 141
   FAIL  : 0
 ```
 
@@ -57,6 +57,7 @@ CSR event-driven host runtime regression across SQ submit, event wait, CQ consum
 CSR queue timeout / watchdog regression across descriptor-fetch timeout, completion-writeback blocked timeout, and event-driven host timeout recovery
 CSR runtime stress / robustness regression across multi-session host runtime reuse, append/CQ-consume timing variation, STOP_QUEUE, timeout, and recovery mixed stress
 CSR queue lifecycle / soft-reset regression across drained cleanup/reinit, STOP_QUEUE preserve/restart, and timeout/error discard/reinit
+CSR memory access guard regression across SQ / descriptor / DMA source / destination / CQ completion safety
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -282,6 +283,23 @@ Timeout/error discard cleanup plus lower-level quiesce and reinit validation
 Pointer-preserving monotonic epoch reuse for drained and stopped lifecycle paths
 Existing queue/event/lower-level sticky clear sequencing for error lifecycle recovery
 Full regression after P26G: 138/138 PASS
+```
+
+P27 extends the P19 through P26 host-runtime stack with a software-programmable memory access guard.  Host-provided SQ, CQ, descriptor, source, and destination address ranges are checked before unsafe external-memory traffic is launched.
+
+P27 scope:
+
+```text
+P27 memory guard CSR window at 0x640 - 0x6BC
+Guard control, region base/limit, sticky error/reject, and diagnostic registers
+SQ command-memory range validation before SQ fetch
+Descriptor-memory range validation before descriptor-fetch launch
+Descriptor-payload source and destination range validation before lower-level preload/store launch
+CQ completion-memory range validation before completion writeback launch
+Unsafe CQ writeback suppression when the selected CQ slot is outside the allowed range
+P22 QUEUE_ERROR_EVENT reuse for memory-guard failures
+P26 lifecycle cleanup and known-good recovery after guard rejects
+Full regression after P27G: 141/141 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -944,6 +962,7 @@ Current UVM regression covers:
 - CSR queue timeout / watchdog descriptor-fetch timeout, completion-writeback timeout, and host recovery regression
 - CSR runtime stress / robustness multi-session, append/consume timing, STOP_QUEUE, timeout, and recovery stress regression
 - CSR queue lifecycle / soft-reset drained cleanup, stopped preserve/restart, and timeout/error reinit regression
+- CSR memory access guard SQ / descriptor / DMA source / destination / CQ recovery regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -954,11 +973,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 138 items and is passing:
+The current full UVM regression contains 141 items and is passing:
 
 ```text
-TOTAL : 138
-PASS  : 138
+TOTAL : 141
+PASS  : 141
 FAIL  : 0
 ```
 
@@ -1124,8 +1143,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 138
-PASS  : 138
+TOTAL : 141
+PASS  : 141
 FAIL  : 0
 ```
 
@@ -1734,6 +1753,16 @@ csr_queue_lifecycle_timeout_error_reinit_case102
 
 These validate drained-session cleanup and reinit, STOP_QUEUE stopped-session work-preserving restart, and timeout/error session-discard cleanup followed by lower-level quiescence and known-good command restart.
 
+P27G added these memory access guard representative items:
+
+```text
+csr_mem_guard_sq_desc_case102
+csr_mem_guard_dma_range_case102
+csr_mem_guard_cq_recovery_case102
+```
+
+These validate SQ / descriptor range rejects, DMA source / destination range rejects, CQ range reject with unsafe completion writeback suppression, P22 QUEUE_ERROR_EVENT reporting, and P26 lifecycle recovery to a known-good command.
+
 The P23/P24/P25/P26 queue-runtime items use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, reuse the P19 SQ/CQ queue, P21 runtime doorbell behavior, P22 event CSR window, and P24 timeout policy, and validate a driver-style host runtime loop: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C ack/re-arm events, recover CQ-full, handle STOP_QUEUE, observe queue errors, recover from timeout, and reinitialize queue lifecycle state.
 
 ---
@@ -1755,7 +1784,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Queue Lifecycle / Soft Reset / Session Reinitialization P26H: Documentation Closure Completed
+Memory Access Guard / Address Range Validation P27H: Documentation Closure Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1792,9 +1821,17 @@ Completed:
   P26F: timeout/error lifecycle cleanup + reinit smoke       PASS
   P26G: full regression integration                          PASS
   P26H: documentation closure                                PASS
+  P27A: memory access guard prototype spec                   PASS
+  P27B: memory guard CSR policy / range map freeze           PASS
+  P27C: guard helper / checker utility integration           PASS
+  P27D: SQ / descriptor range validation smoke               PASS
+  P27E: DMA source / destination range validation smoke      PASS
+  P27F: CQ / completion writeback guard + recovery smoke     PASS
+  P27G: full regression integration                          PASS
+  P27H: documentation closure                                PASS
 
 Regression:
-  138/138 PASS
+  141/141 PASS
 ```
 
 
@@ -1802,7 +1839,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, and event notification / interrupt-lite behavior.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, and memory access guard / address range validation.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1829,6 +1866,8 @@ P24G proves that accepted queue commands can use bounded-progress watchdogs.  Ti
 P25F proves that the event-driven runtime remains reusable under representative stress: multiple sessions, runtime append with delayed CQ consumption, CQ-space recovery, STOP_QUEUE with pending SQ restart, timeout recovery, and final event/queue cleanup.  Full regression closes at 135/135 PASS.
 
 P26G proves that the queue runtime has a documented lifecycle contract around drained, stopped, and timeout/error terminal states.  The host can clean up a drained session and reinit, preserve pending SQ work across STOP_QUEUE and restart it, and discard a timeout/error session after lower-level quiescence before launching a known-good command.  Full regression closes at 138/138 PASS.
+
+P27G proves that host-visible memory addresses are now validated before unsafe external-memory traffic is launched.  The guard covers SQ command memory, CQ completion memory, descriptor memory, source memory, and destination memory; failures are reported through guard diagnostics, queue `MEMORY_GUARD_ERROR`, and the existing P22 `QUEUE_ERROR_EVENT`.  P27F also proves that an unsafe CQ slot suppresses completion writeback instead of writing outside the allowed CQ region.  Full regression closes at 141/141 PASS.
 
 
 ---
@@ -2131,3 +2170,56 @@ STOP_QUEUE stopped session:
 timeout/error session:
   capture diagnostics, clear queue/event/lower sticky state, recycle SQ/CQ memory, wait for lower-level quiescence, clear late sticky state, re-arm events, and complete a known-good timeout-disabled command
 ```
+
+
+---
+
+## P27H Memory Access Guard Documentation Closure
+
+P27H records the validated memory access guard / address range validation behavior after full-regression closure.
+
+Validated P27 milestones:
+
+```text
+P27A: Memory access guard prototype spec                         PASS
+P27B: Memory guard CSR policy / range register map freeze        PASS
+P27C: Guard helper / checker utility integration                 PASS
+P27D: SQ / descriptor range validation smoke                     PASS
+P27E: DMA source / destination range validation smoke            PASS
+P27F: CQ / completion writeback guard + lifecycle recovery smoke PASS
+P27G: Full regression integration                                PASS
+P27H: Documentation closure                                      PASS
+```
+
+Validated P27 full-regression representatives:
+
+```text
+csr_mem_guard_sq_desc_case102
+csr_mem_guard_dma_range_case102
+csr_mem_guard_cq_recovery_case102
+```
+
+Full regression after P27G:
+
+```text
+TOTAL : 141
+PASS  : 141
+FAIL  : 0
+```
+
+P27 adds one CSR window, the memory guard window at `0x640 - 0x6BC`.  It does not change the SQ entry format, CQ completion record format, descriptor format, P22 event bit allocation, P26 lifecycle model, BRAM behavior, GEMM datapath behavior, DMA datapath behavior, AXI-Stream frontend behavior, or Direct Stream frontend behavior.
+
+Validated P27 guard behavior:
+
+```text
+SQ / descriptor guard:
+  valid SQ/CQ/DESC baseline command completes, SQ range reject is reported before unsafe SQ fetch, descriptor range reject is reported before descriptor-fetch launch, and a known-good command completes after cleanup
+
+DMA source / destination guard:
+  descriptor-payload source range reject blocks unsafe preload launch, destination range reject blocks unsafe DMA store launch, and a known-good command completes after cleanup
+
+CQ / completion writeback guard:
+  CQ range reject reports MEMORY_GUARD_ERROR through queue/event diagnostics, suppresses unsafe CQ completion writeback, leaves the rejected CQ slot uncommitted, and completes a known-good command after lifecycle recovery
+```
+
+P27 reuses the existing P22 `QUEUE_ERROR_EVENT` notification path and P26 cleanup/reinit policy.  The CQ completion record remains authoritative when the selected CQ slot is valid; if the CQ slot itself is unsafe, guard CSR diagnostics and queue CSR error/detail are authoritative.

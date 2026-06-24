@@ -2,13 +2,13 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Queue Lifecycle / Soft Reset / Session Reinitialization P26G: Full Regression Completed
+#   Memory Access Guard / Address Range Validation P27G: Full Regression Completed
 #
 # Current baseline:
-#   TOTAL : 138
-#   PASS  : 138
+#   TOTAL : 141
+#   PASS  : 141
 #   FAIL  : 0
-#   138/138 PASS
+#   141/141 PASS
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -50,6 +50,7 @@
 #   - CSR queue timeout / watchdog descriptor-fetch timeout, completion-writeback timeout, and host recovery behavior
 #   - CSR runtime stress / robustness multi-session, append/consume timing, STOP_QUEUE, timeout, and recovery behavior
 #   - CSR queue lifecycle / soft-reset drained cleanup, STOP_QUEUE preserve/restart, and timeout/error reinit behavior
+#   - CSR memory access guard SQ / descriptor / DMA source / destination / CQ recovery behavior
 #
 # P13D focused DUT additions:
 #   - p13d_c_rmw_accum_case208
@@ -418,6 +419,11 @@ ai_accel_subsys_csr_queue_timeout_recovery_smoke_test CASE_ID 102 UVM_TOP ai_acc
 #   - csr_queue_lifecycle_drained_reinit_case102
 #   - csr_queue_lifecycle_stopped_preserve_restart_case102
 #   - csr_queue_lifecycle_timeout_error_reinit_case102
+#
+# P27G memory access guard representative additions:
+#   - csr_mem_guard_sq_desc_case102
+#   - csr_mem_guard_dma_range_case102
+#   - csr_mem_guard_cq_recovery_case102
 
 # 133: csr_event_driven_multi_session_stress_case102
 ai_accel_subsys_csr_event_driven_multi_session_stress_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
@@ -432,3 +438,11 @@ ai_accel_subsys_csr_queue_lifecycle_drained_reinit_smoke_test CASE_ID 102 UVM_TO
 ai_accel_subsys_csr_queue_lifecycle_stopped_preserve_restart_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 138: csr_queue_lifecycle_timeout_error_reinit_case102
 ai_accel_subsys_csr_queue_lifecycle_timeout_error_reinit_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# 139: csr_mem_guard_sq_desc_case102
+ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 140: csr_mem_guard_dma_range_case102
+ai_accel_subsys_csr_mem_guard_dma_range_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 141: csr_mem_guard_cq_recovery_case102
+ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

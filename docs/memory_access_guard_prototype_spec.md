@@ -690,9 +690,9 @@ P27B: Memory guard CSR policy / range register map freeze        PASS
 P27C: Guard helper / checker utility integration                 PASS
 P27D: SQ / descriptor range validation smoke                     PASS
 P27E: DMA source / destination range validation smoke            PASS
-P27F: CQ / completion writeback guard + lifecycle recovery smoke IMPLEMENTED / RUN PENDING
-P27G: Full regression integration                                TODO
-P27H: Documentation closure                                      TODO
+P27F: CQ / completion writeback guard + lifecycle recovery smoke PASS
+P27G: Full regression integration                                PASS
+P27H: Documentation closure                                      PASS
 ```
 
 ### 14.1 P27B CSR Policy / Range Register Map Freeze
@@ -839,7 +839,7 @@ recover through P26 cleanup and run a known-good command
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_mem_guard_sq_desc_smoke_test
+ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
 ```
 
 Expected PASS markers:
@@ -870,8 +870,16 @@ Guard coverage:
   descriptor table range reject before P17 descriptor-fetch launch
   P26 lifecycle cleanup and known-good recovery command
 
-Regression integration: deferred to P27G
-Full regression count remains 138 until P27G
+Validation status:
+  P27D_GUARD/VALID_BASELINE_PASS observed
+  P27D_GUARD/SQ_RANGE_REJECT_PASS observed
+  P27D_GUARD/DESC_RANGE_REJECT_PASS observed
+  P27D_GUARD/RECOVERY_PASS observed
+  P27D_GUARD/PASS observed
+  UVM_WARNING/UVM_ERROR/UVM_FATAL all zero
+
+Regression integration: completed in P27G
+Full regression count after P27G is 141
 ```
 
 ### 14.4 P27E DMA Source / Destination Range Validation Smoke
@@ -926,8 +934,8 @@ Validation status:
   P27E_GUARD/PASS observed
   UVM_WARNING/UVM_ERROR/UVM_FATAL all zero
 
-Regression integration: deferred to P27G
-Full regression count remains 138 until P27G
+Regression integration: completed in P27G
+Full regression count after P27G is 141
 ```
 
 ### 14.5 P27F CQ / Completion Writeback Guard + Lifecycle Recovery Smoke
@@ -973,15 +981,23 @@ Guard coverage:
   CQ memory remains uncommitted for the rejected slot
   P26 lifecycle cleanup and known-good recovery command
 
-Regression integration: deferred to P27G
-Full regression count remains 138 until P27G
+Validation status:
+  P27F_GUARD/VALID_BASELINE_PASS observed
+  P27F_GUARD/CQ_RANGE_REJECT_PASS observed
+  P27F_GUARD/NO_CQ_WRITE_PASS observed
+  P27F_GUARD/RECOVERY_PASS observed
+  P27F_GUARD/PASS observed
+  UVM_WARNING/UVM_ERROR/UVM_FATAL all zero
+
+Regression integration: completed in P27G
+Full regression count after P27G is 141
 ```
 
 ### 14.6 P27G Full Regression Integration
 
-P27G should add a small representative subset to the full regression.
+P27G adds a small representative subset to the full regression.
 
-Recommended full-regression items:
+Validated full-regression items:
 
 ```text
 csr_mem_guard_sq_desc_case102
@@ -989,16 +1005,19 @@ csr_mem_guard_dma_range_case102
 csr_mem_guard_cq_recovery_case102
 ```
 
-Expected full-regression count if three items are added:
+Validated full-regression result after P27G:
 
 ```text
-Before P27G : 138
-After P27G  : 141
+TOTAL : 141
+PASS  : 141
+FAIL  : 0
 ```
+
+P27G also fixed the P22 event CSR smoke invalid-address probe so it no longer targets `0x640`, which is now the valid `CSR_MEM_GUARD_VERSION` address.  The probe now stays beyond the P27 memory guard window.
 
 ### 14.7 P27H Documentation Closure
 
-P27H should update:
+P27H updates:
 
 ```text
 README.md
@@ -1009,6 +1028,24 @@ run_full_uvm_regression.tcl
 ```
 
 The CSR map remains canonical only in `axi_lite_csr_control_plane_spec.md`.
+
+P27H closure status:
+
+```text
+P27A: Memory access guard prototype spec                         PASS
+P27B: Memory guard CSR policy / range register map freeze        PASS
+P27C: Guard helper / checker utility integration                 PASS
+P27D: SQ / descriptor range validation smoke                     PASS
+P27E: DMA source / destination range validation smoke            PASS
+P27F: CQ / completion writeback guard + lifecycle recovery smoke PASS
+P27G: Full regression integration                                PASS
+P27H: Documentation closure                                      PASS
+
+Full regression after P27G:
+  TOTAL : 141
+  PASS  : 141
+  FAIL  : 0
+```
 
 ---
 
@@ -1193,7 +1230,45 @@ Full regression remains:
 
 ---
 
-## 17. Interview Notes
+## 17. P27H Documentation Closure
+
+P27H records the validated memory access guard behavior after P27G full-regression closure.
+
+Validated P27 behavior:
+
+```text
+SQ command memory range validation before SQ fetch
+Descriptor-memory range validation before descriptor-fetch launch
+Descriptor-payload source range validation before lower-level preload launch
+Descriptor-payload destination range validation before lower-level DMA store launch
+CQ completion-memory range validation before completion writeback launch
+Unsafe CQ completion writeback suppression when the selected CQ slot is outside the allowed CQ range
+P22 QUEUE_ERROR_EVENT reuse for guard failures
+P26 lifecycle cleanup / reinit reuse after guard errors
+Known-good command recovery after SQ/DESC/SRC/DST/CQ guard rejects
+```
+
+Validated P27 full-regression representatives:
+
+```text
+csr_mem_guard_sq_desc_case102
+csr_mem_guard_dma_range_case102
+csr_mem_guard_cq_recovery_case102
+```
+
+Full regression after P27G:
+
+```text
+TOTAL : 141
+PASS  : 141
+FAIL  : 0
+```
+
+P27 does not change the SQ entry format, CQ completion record format, descriptor format, P22 event bit allocation, P26 lifecycle policy, BRAM behavior, GEMM datapath behavior, DMA datapath behavior, AXI-Stream frontend behavior, or Direct Stream frontend behavior.
+
+---
+
+## 18. Interview Notes
 
 P27 is useful because it shows the accelerator has moved beyond datapath correctness into host-facing device robustness.
 
