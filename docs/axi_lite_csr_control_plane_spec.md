@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25/P26 reuse the existing queue/event CSR policy for runtime stress and lifecycle recovery, and P27 adds a memory guard CSR window for host-visible address range validation.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25/P26 reuse the existing queue/event CSR policy for runtime stress and lifecycle recovery, P27 adds a memory guard CSR window for host-visible address range validation, and P28 reuses reserved P22 event CSR addresses for event coalescing / interrupt moderation policy.
 
 ---
 
@@ -555,10 +555,10 @@ P22B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-lis
 | 0x624 | `CSR_EVENT_QUEUE_SNAPSHOT1` | RO | 0 | Queue status / done / error snapshot for the last event. |
 | 0x628 | `CSR_EVENT_CQ_THRESHOLD` | RW | 0 | Optional CQ occupancy threshold for threshold event generation. 0 disables threshold events. |
 | 0x62C | `CSR_EVENT_IRQ_COUNT` | RO | 0 | Number of interrupt-eligible event assertions. |
-| 0x630 | `CSR_EVENT_RESERVED_630` | RO | 0 | Reserved. |
-| 0x634 | `CSR_EVENT_RESERVED_634` | RO | 0 | Reserved. |
-| 0x638 | `CSR_EVENT_RESERVED_638` | RO | 0 | Reserved. |
-| 0x63C | `CSR_EVENT_RESERVED_63C` | RO | 0 | Reserved. |
+| 0x630 | `CSR_EVENT_MOD_CONTROL` | RW | `0x0000_0000` | P28 event coalescing / interrupt moderation control. |
+| 0x634 | `CSR_EVENT_MOD_STATUS` | RO | implementation | Live moderation status, CQ occupancy snapshot, and unnotified CQ snapshot. |
+| 0x638 | `CSR_EVENT_MOD_TIMER_LIMIT` | RW | 0 | Moderation timer limit in dma_clk cycles. 0 disables timer fallback. |
+| 0x63C | `CSR_EVENT_MOD_DEBUG` | RO | 0 | Moderation release cause and debug counters. |
 
 #### 9.3.2 Event Register Ownership Summary
 
@@ -574,6 +574,10 @@ P22B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-lis
 | `CSR_EVENT_QUEUE_SNAPSHOT0/1` | Hardware | Debug snapshot when an event is captured. |
 | `CSR_EVENT_CQ_THRESHOLD` | Host | Optional threshold value. 0 disables threshold events. |
 | `CSR_EVENT_IRQ_COUNT` | Hardware | Incremented when a new event is interrupt-eligible. |
+| `CSR_EVENT_MOD_CONTROL` | Host | Program while event moderation is idle or before enabling queue service. Reset disables moderation. |
+| `CSR_EVENT_MOD_STATUS` | Hardware | Read-only live moderation state and snapshots. |
+| `CSR_EVENT_MOD_TIMER_LIMIT` | Host | Program the moderation timer limit in dma_clk cycles. 0 disables timer fallback. |
+| `CSR_EVENT_MOD_DEBUG` | Hardware | Read-only moderation release/debug snapshot. Cleared by `CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS`. |
 
 P22 event pending capture is independent of interrupt enable.  Events are captured in `CSR_EVENT_PENDING` even when `CSR_EVENT_ENABLE` is zero or `CSR_EVENT_CONTROL.GLOBAL_IRQ_ENABLE` is zero.
 
@@ -593,6 +597,7 @@ CQ_SPACE_RECOVERED_EVENT
 RUNTIME_DOORBELL_EVENT
 RUNTIME_APPEND_CONSUMED_EVENT
 TEST_EVENT
+CQ_MODERATION_TIMER_EVENT
 ```
 
 The event layer is summary-only.  The CQ completion record remains the authoritative per-command completion detail.
@@ -1199,7 +1204,8 @@ Sticky pending bits are set by hardware event sources and cleared by W1C writes 
 | 8 | `RUNTIME_DOORBELL_EVENT` | RO/W1C | Host updated SQ_TAIL while queue_busy was high. |
 | 9 | `RUNTIME_APPEND_CONSUMED_EVENT` | RO/W1C | A runtime-appended SQ command was accepted at a command boundary. |
 | 10 | `TEST_EVENT` | RO/W1C | Software-generated test event. |
-| 31:11 | `RSVD` | RO/W1C | Reserved. |
+| 11 | `CQ_MODERATION_TIMER_EVENT` | RO/W1C | P28 moderation timer fallback released a coalesced CQ notification. |
+| 31:12 | `RSVD` | RO/W1C | Reserved. |
 
 Reserved pending bits should read zero.  W1C writes to reserved bits are ignored.
 
@@ -1220,7 +1226,8 @@ Reserved pending bits should read zero.  W1C writes to reserved bits are ignored
 | 8 | `RUNTIME_DOORBELL_EVENT_EN` | RW | 0 | Enable runtime-doorbell event interrupt contribution. |
 | 9 | `RUNTIME_APPEND_CONSUMED_EVENT_EN` | RW | 0 | Enable runtime-append-consumed event interrupt contribution. |
 | 10 | `TEST_EVENT_EN` | RW | 0 | Enable test-event interrupt contribution. |
-| 31:11 | `RSVD` | RO | 0 | Reserved. |
+| 11 | `CQ_MODERATION_TIMER_EVENT_EN` | RW | 0 | Enable moderation-timer event interrupt contribution. |
+| 31:12 | `RSVD` | RO | 0 | Reserved. |
 
 Pending bits are captured even when their enable bits are zero.
 
@@ -1315,7 +1322,88 @@ and at least one newly captured event bit is enabled in CSR_EVENT_ENABLE
 
 It is cleared by `CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS`.
 
-#### 10.10.13 P22B Frozen Constants
+#### 10.10.13 `CSR_EVENT_MOD_CONTROL` at 0x630
+
+P28B reuses reserved addresses inside the existing P22 event CSR window for event coalescing / interrupt moderation.  Moderation is disabled by reset so existing P22/P23/P24/P25/P26/P27 behavior is preserved unless software explicitly opts in.
+
+| Bit | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `MODERATION_ENABLE` | RW | 0 | Enable P28 coalesced completion notification policy. 0 preserves immediate P22 behavior. |
+| 1 | `CQ_THRESHOLD_ENABLE` | RW | 0 | Enable threshold-based moderation release using `CSR_EVENT_CQ_THRESHOLD`. |
+| 2 | `MODERATION_TIMER_ENABLE` | RW | 0 | Enable timer fallback release using `CSR_EVENT_MOD_TIMER_LIMIT`. |
+| 3 | `RETRIGGER_ON_STILL_NONEMPTY` | RW | 0 | After W1C / re-arm, resample CQ occupancy and reassert or restart moderation if CQ remains non-empty. |
+| 31:4 | `RSVD` | RO | 0 | Reserved. |
+
+Reset value:
+
+```text
+0x0000_0000
+```
+
+When `MODERATION_ENABLE=0`, the event layer preserves the existing P22 behavior: completion-related pending bits may be set immediately after CQ commit.
+
+When `MODERATION_ENABLE=1`, completion-style sources may be held until a release condition is met:
+
+```text
+threshold release : CQ_THRESHOLD_ENABLE=1 and CQ occupancy >= CSR_EVENT_CQ_THRESHOLD
+timer release     : MODERATION_TIMER_ENABLE=1 and timer reaches CSR_EVENT_MOD_TIMER_LIMIT
+urgent bypass     : queue error / stopped / drained / CQ-full recovery / runtime debug / TEST_EVENT sources set pending immediately
+```
+
+On a moderation release, hardware sets the relevant coalesced CQ notification pending bits.  The first implementation should set `CQ_NOT_EMPTY_EVENT` for any coalesced CQ release, set `CQ_THRESHOLD_EVENT` when the threshold caused the release, and set `CQ_MODERATION_TIMER_EVENT` when the timer caused the release.  `QUEUE_COMMAND_COMPLETED_EVENT` may be set as a summary completion indication when at least one unnotified completion contributed to the release.
+
+#### 10.10.14 `CSR_EVENT_MOD_STATUS` at 0x634
+
+| Bits | Name | Access | Description |
+|---:|---|---|---|
+| 0 | `MODERATION_ACTIVE` | RO | Mirror of `CSR_EVENT_MOD_CONTROL.MODERATION_ENABLE`. |
+| 1 | `THRESHOLD_ACTIVE` | RO | Threshold moderation is enabled and the threshold value is non-zero. |
+| 2 | `TIMER_ACTIVE` | RO | Timer moderation is enabled and timer limit is non-zero. |
+| 3 | `TIMER_RUNNING` | RO | Moderation timer is currently running for unnotified CQ work. |
+| 4 | `THRESHOLD_MET` | RO | Current CQ occupancy meets or exceeds the programmed threshold. |
+| 5 | `TIMER_EXPIRED` | RO | Timer expiry release is pending or was the most recent release cause. |
+| 6 | `RELEASE_PENDING` | RO | A coalesced CQ notification release is pending capture into `CSR_EVENT_PENDING`. |
+| 7 | `URGENT_BYPASS_ACTIVE` | RO | An urgent event bypassed moderation at the last event sample. |
+| 15:8 | `RSVD` | RO | Reserved. |
+| 23:16 | `CQ_OCCUPANCY_LOW8` | RO | Low byte of the current CQ occupancy snapshot used by moderation. |
+| 31:24 | `UNNOTIFIED_CQ_LOW8` | RO | Low byte of unnotified CQ completion count tracked by moderation. |
+
+#### 10.10.15 `CSR_EVENT_MOD_TIMER_LIMIT` at 0x638
+
+`CSR_EVENT_MOD_TIMER_LIMIT` is a 32-bit RW timer limit in dma_clk cycles.
+
+```text
+0x0000_0000 : timer fallback disabled
+non-zero    : timer fallback releases coalesced CQ notification after this many dma_clk cycles
+```
+
+The moderation timer is a notification-latency timer only.  It is not a queue progress watchdog and must not set `CSR_QUEUE_ERROR_STATUS.COMMAND_TIMEOUT_ERROR`.
+
+#### 10.10.16 `CSR_EVENT_MOD_DEBUG` at 0x63C
+
+Recommended first implementation encoding:
+
+| Bits | Name | Access | Description |
+|---:|---|---|---|
+| 7:0 | `LAST_RELEASE_CAUSE` | RO | Most recent moderation release cause. |
+| 15:8 | `MOD_RELEASE_COUNT_LOW8` | RO | Low byte of total moderation releases. |
+| 23:16 | `THRESHOLD_RELEASE_COUNT_LOW8` | RO | Low byte of threshold-caused releases. |
+| 31:24 | `TIMER_RELEASE_COUNT_LOW8` | RO | Low byte of timer-caused releases. |
+
+Recommended `LAST_RELEASE_CAUSE` values:
+
+| Value | Name |
+|---:|---|
+| 0x00 | `EVENT_MOD_RELEASE_NONE` |
+| 0x01 | `EVENT_MOD_RELEASE_THRESHOLD` |
+| 0x02 | `EVENT_MOD_RELEASE_TIMER` |
+| 0x03 | `EVENT_MOD_RELEASE_IMMEDIATE_COMPAT` |
+| 0x04 | `EVENT_MOD_RELEASE_URGENT_BYPASS` |
+| 0x05 | `EVENT_MOD_RELEASE_REARM_NONEMPTY` |
+
+Moderation debug counters are cleared by `CSR_EVENT_COMMAND.CLEAR_EVENT_COUNTERS`.
+
+#### 10.10.17 P22/P28 Frozen Event Constants
 
 ```text
 CSR_EVENT_BASE_ADDR          = 0x600
@@ -1333,6 +1421,20 @@ P22_EVENT_CQ_SPACE_RECOVERED = 7
 P22_EVENT_RUNTIME_DOORBELL   = 8
 P22_EVENT_RUNTIME_CONSUMED   = 9
 P22_EVENT_TEST               = 10
+P28_EVENT_CQ_MOD_TIMER       = 11
+
+CSR_EVENT_MOD_CONTROL        = 0x630
+CSR_EVENT_MOD_STATUS         = 0x634
+CSR_EVENT_MOD_TIMER_LIMIT    = 0x638
+CSR_EVENT_MOD_DEBUG          = 0x63C
+CSR_EVENT_MOD_CONTROL_RESET  = 0x0000_0000
+
+P28_MOD_RELEASE_NONE         = 0x00
+P28_MOD_RELEASE_THRESHOLD    = 0x01
+P28_MOD_RELEASE_TIMER        = 0x02
+P28_MOD_RELEASE_IMMEDIATE    = 0x03
+P28_MOD_RELEASE_URGENT       = 0x04
+P28_MOD_RELEASE_REARM        = 0x05
 ```
 
 
@@ -2669,3 +2771,73 @@ FAIL  : 0
 P27G also updates the P22 event CSR smoke invalid-address probe to stay beyond the P27 memory guard window.  Address `0x640` is now a valid P27 register (`CSR_MEM_GUARD_VERSION`), so the invalid-address probe uses the first word after the P27 window instead.
 
 P27H does not change the canonical CSR map, register access types, reset values, SQ entry format, CQ completion record format, descriptor format, or P22 event bit allocation.
+
+
+---
+
+## 30. P28B Event CSR Moderation Policy Freeze
+
+P28B freezes the first event coalescing / interrupt moderation CSR policy.
+
+Unlike P27, P28 does not allocate a new CSR window.  P28 reuses reserved fields inside the existing P22 event notification window:
+
+```text
+P22/P28 event notification window : 0x600 - 0x63C
+P28 moderation registers          : 0x630 - 0x63C
+```
+
+Frozen P28 CSR policy:
+
+```text
+CSR_EVENT_CQ_THRESHOLD at 0x628 is reused as the CQ occupancy threshold.
+CSR_EVENT_MOD_CONTROL at 0x630 enables moderation policy.
+CSR_EVENT_MOD_STATUS at 0x634 reports live moderation state.
+CSR_EVENT_MOD_TIMER_LIMIT at 0x638 programs bounded-latency timer fallback.
+CSR_EVENT_MOD_DEBUG at 0x63C reports release cause and debug counters.
+CSR_EVENT_MOD_CONTROL reset is 0x0000_0000, so existing regression behavior is preserved.
+```
+
+Frozen P28 event source policy:
+
+```text
+Completion-style sources may be coalesced when moderation is enabled:
+  QUEUE_COMMAND_COMPLETED_EVENT
+  CQ_NOT_EMPTY_EVENT
+  CQ_THRESHOLD_EVENT
+  CQ_MODERATION_TIMER_EVENT
+
+Urgent sources bypass moderation:
+  QUEUE_ERROR_EVENT
+  QUEUE_STOPPED_EVENT
+  QUEUE_DRAINED_EVENT
+  CQ_FULL_STALL_EVENT
+  CQ_SPACE_RECOVERED_EVENT
+  RUNTIME_DOORBELL_EVENT
+  RUNTIME_APPEND_CONSUMED_EVENT
+  TEST_EVENT
+```
+
+Frozen release policy:
+
+```text
+Threshold release occurs when CQ occupancy reaches CSR_EVENT_CQ_THRESHOLD.
+Timer release occurs when unnotified CQ work remains until CSR_EVENT_MOD_TIMER_LIMIT expires.
+Timer expiry is not a queue error and does not set COMMAND_TIMEOUT_ERROR.
+Queue error / stopped / drained / CQ-full recovery sources remain prompt and bypass coalescing.
+W1C / re-arm while CQ remains non-empty must resample CQ occupancy and either reassert or restart moderation timing.
+```
+
+Validation status after P28B:
+
+```text
+P28A: Event coalescing / interrupt moderation prototype spec PASS
+P28B: Event CSR moderation policy freeze PASS
+```
+
+P28B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  Full regression remains:
+
+```text
+TOTAL : 141
+PASS  : 141
+FAIL  : 0
+```

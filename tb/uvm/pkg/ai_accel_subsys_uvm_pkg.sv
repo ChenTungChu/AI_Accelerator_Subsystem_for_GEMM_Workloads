@@ -251,6 +251,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_mem_guard_dma_range_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P28 event coalescing / interrupt moderation tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test.sv"
+
 endpackage
 
 `endif

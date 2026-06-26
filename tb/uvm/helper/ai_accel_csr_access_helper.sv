@@ -186,6 +186,13 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
     localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
 
+    // P28 event coalescing / interrupt moderation registers.
+    // These reuse the P22 event window reserved offsets.
+    localparam logic [11:0] CSR_EVENT_MOD_CONTROL     = 12'h630;
+    localparam logic [11:0] CSR_EVENT_MOD_STATUS      = 12'h634;
+    localparam logic [11:0] CSR_EVENT_MOD_TIMER_LIMIT = 12'h638;
+    localparam logic [11:0] CSR_EVENT_MOD_DEBUG       = 12'h63C;
+
 
     // ------------------------------------------------------------
     // P27 Memory access guard CSR window
@@ -228,6 +235,15 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int EVENT_CONTROL_CAPTURE_SNAPSHOT  = 2;
     localparam int EVENT_CONTROL_COUNT_TEST_EVENTS = 3;
 
+    // P22 Event status bits
+    localparam int EVENT_STATUS_PENDING_NONZERO = 0;
+    localparam int EVENT_STATUS_IRQ_ELIGIBLE    = 1;
+    localparam int EVENT_STATUS_EVENT_IRQ_OUT   = 2;
+    localparam int EVENT_STATUS_GLOBAL_IRQ_EN   = 3;
+    localparam int EVENT_STATUS_QUEUE_PENDING   = 4;
+    localparam int EVENT_STATUS_RUNTIME_PENDING = 5;
+    localparam int EVENT_STATUS_TEST_PENDING    = 6;
+
     // P22 Event source bits
     localparam int P22_EVENT_QUEUE_COMPLETED    = 0;
     localparam int P22_EVENT_QUEUE_DRAINED      = 1;
@@ -241,9 +257,52 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int P22_EVENT_RUNTIME_CONSUMED   = 9;
     localparam int P22_EVENT_TEST               = 10;
 
-    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_07FF;
+    // P28 optional event source bit.
+    localparam int P28_EVENT_CQ_MOD_TIMER       = 11;
+
+    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_0FFF;
     localparam logic [31:0] EVENT_QUEUE_COMPLETED_MASK = 32'h0000_0001;
     localparam logic [31:0] EVENT_CQ_NOT_EMPTY_MASK    = 32'h0000_0010;
+    localparam logic [31:0] EVENT_CQ_THRESHOLD_MASK    = 32'h0000_0020;
+    localparam logic [31:0] EVENT_CQ_MOD_TIMER_MASK    = 32'h0000_0800;
+
+    // ------------------------------------------------------------
+    // P28 Event coalescing / interrupt moderation constants
+    // ------------------------------------------------------------
+    localparam int EVENT_MOD_CONTROL_ENABLE             = 0;
+    localparam int EVENT_MOD_CONTROL_THRESHOLD_ENABLE   = 1;
+    localparam int EVENT_MOD_CONTROL_TIMER_ENABLE       = 2;
+    localparam int EVENT_MOD_CONTROL_RETRIGGER_NONEMPTY = 3;
+
+    localparam int EVENT_MOD_STATUS_ACTIVE              = 0;
+    localparam int EVENT_MOD_STATUS_THRESHOLD_ACTIVE    = 1;
+    localparam int EVENT_MOD_STATUS_TIMER_ACTIVE        = 2;
+    localparam int EVENT_MOD_STATUS_TIMER_RUNNING       = 3;
+    localparam int EVENT_MOD_STATUS_THRESHOLD_MET       = 4;
+    localparam int EVENT_MOD_STATUS_TIMER_EXPIRED       = 5;
+    localparam int EVENT_MOD_STATUS_RELEASE_PENDING     = 6;
+    localparam int EVENT_MOD_STATUS_URGENT_BYPASS       = 7;
+
+    localparam int EVENT_MOD_STATUS_CQ_OCC_LSB          = 16;
+    localparam int EVENT_MOD_STATUS_CQ_OCC_MSB          = 23;
+    localparam int EVENT_MOD_STATUS_UNNOTIFIED_LSB      = 24;
+    localparam int EVENT_MOD_STATUS_UNNOTIFIED_MSB      = 31;
+
+    localparam int EVENT_MOD_DEBUG_CAUSE_LSB            = 0;
+    localparam int EVENT_MOD_DEBUG_CAUSE_MSB            = 7;
+    localparam int EVENT_MOD_DEBUG_RELEASE_COUNT_LSB    = 8;
+    localparam int EVENT_MOD_DEBUG_RELEASE_COUNT_MSB    = 15;
+    localparam int EVENT_MOD_DEBUG_THRESHOLD_COUNT_LSB  = 16;
+    localparam int EVENT_MOD_DEBUG_THRESHOLD_COUNT_MSB  = 23;
+    localparam int EVENT_MOD_DEBUG_TIMER_COUNT_LSB      = 24;
+    localparam int EVENT_MOD_DEBUG_TIMER_COUNT_MSB      = 31;
+
+    localparam logic [7:0] P28_MOD_RELEASE_NONE      = 8'h00;
+    localparam logic [7:0] P28_MOD_RELEASE_THRESHOLD = 8'h01;
+    localparam logic [7:0] P28_MOD_RELEASE_TIMER     = 8'h02;
+    localparam logic [7:0] P28_MOD_RELEASE_IMMEDIATE = 8'h03;
+    localparam logic [7:0] P28_MOD_RELEASE_URGENT    = 8'h04;
+    localparam logic [7:0] P28_MOD_RELEASE_REARM     = 8'h05;
 
 
     // ------------------------------------------------------------

@@ -578,11 +578,11 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_SNAPSHOT0_ADDR    = 12'h620;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_SNAPSHOT1_ADDR    = 12'h624;
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_CQ_THRESHOLD_ADDR = 12'h628;
-    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_IRQ_COUNT_ADDR    = 12'h62C;
-    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_630_ADDR = 12'h630;
-    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_634_ADDR = 12'h634;
-    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_638_ADDR = 12'h638;
-    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_RESERVED_63C_ADDR = 12'h63C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_IRQ_COUNT_ADDR       = 12'h62C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_MOD_CONTROL_ADDR     = 12'h630;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_MOD_STATUS_ADDR      = 12'h634;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_MOD_TIMER_LIMIT_ADDR = 12'h638;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_EVENT_MOD_DEBUG_ADDR       = 12'h63C;
 
     // ------------------------------------------------------------
     // P27 memory access guard CSR window
@@ -670,9 +670,9 @@ module ai_accel_csr_regs #(
     localparam logic [31:0] MEM_GUARD_ALL_REJECT_MASK = 32'h0000_000F;
 
     // ------------------------------------------------------------
-    // P22 event notification constants
+    // P22 event notification / P28 moderation constants
     // ------------------------------------------------------------
-    localparam int EVENT_WIDTH = 11;
+    localparam int EVENT_WIDTH = 12;
 
     // CSR_EVENT_COMMAND bits
     localparam int EVENT_CMD_CLEAR_PENDING  = 0;
@@ -685,7 +685,7 @@ module ai_accel_csr_regs #(
     localparam int EVENT_CONTROL_CAPTURE_SNAPSHOT  = 2;
     localparam int EVENT_CONTROL_COUNT_TEST_EVENTS = 3;
 
-    // Event source bits frozen by P22B
+    // Event source bits frozen by P22B / P28B
     localparam int P22_EVENT_QUEUE_COMPLETED    = 0;
     localparam int P22_EVENT_QUEUE_DRAINED      = 1;
     localparam int P22_EVENT_QUEUE_STOPPED      = 2;
@@ -697,9 +697,35 @@ module ai_accel_csr_regs #(
     localparam int P22_EVENT_RUNTIME_DOORBELL   = 8;
     localparam int P22_EVENT_RUNTIME_CONSUMED   = 9;
     localparam int P22_EVENT_TEST               = 10;
+    localparam int P28_EVENT_CQ_MOD_TIMER       = 11;
 
-    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_07FF;
+    localparam logic [31:0] EVENT_VALID_MASK      = 32'h0000_0FFF;
     localparam logic [31:0] EVENT_CONTROL_WR_MASK = 32'h0000_000F;
+
+    // P28 CSR_EVENT_MOD_CONTROL bits
+    localparam int EVENT_MOD_CONTROL_ENABLE             = 0;
+    localparam int EVENT_MOD_CONTROL_THRESHOLD_ENABLE   = 1;
+    localparam int EVENT_MOD_CONTROL_TIMER_ENABLE       = 2;
+    localparam int EVENT_MOD_CONTROL_RETRIGGER_NONEMPTY = 3;
+
+    // P28 CSR_EVENT_MOD_STATUS bits
+    localparam int EVENT_MOD_STATUS_ACTIVE              = 0;
+    localparam int EVENT_MOD_STATUS_THRESHOLD_ACTIVE    = 1;
+    localparam int EVENT_MOD_STATUS_TIMER_ACTIVE        = 2;
+    localparam int EVENT_MOD_STATUS_TIMER_RUNNING       = 3;
+    localparam int EVENT_MOD_STATUS_THRESHOLD_MET       = 4;
+    localparam int EVENT_MOD_STATUS_TIMER_EXPIRED       = 5;
+    localparam int EVENT_MOD_STATUS_RELEASE_PENDING     = 6;
+    localparam int EVENT_MOD_STATUS_URGENT_BYPASS       = 7;
+
+    localparam logic [31:0] EVENT_MOD_CONTROL_WR_MASK = 32'h0000_000F;
+
+    localparam logic [7:0] P28_MOD_RELEASE_NONE      = 8'h00;
+    localparam logic [7:0] P28_MOD_RELEASE_THRESHOLD = 8'h01;
+    localparam logic [7:0] P28_MOD_RELEASE_TIMER     = 8'h02;
+    localparam logic [7:0] P28_MOD_RELEASE_IMMEDIATE = 8'h03;
+    localparam logic [7:0] P28_MOD_RELEASE_URGENT    = 8'h04;
+    localparam logic [7:0] P28_MOD_RELEASE_REARM     = 8'h05;
 
     // Source-class values used in CSR_EVENT_LAST_CAUSE[15:8]
     localparam logic [7:0] EVENT_SRC_NONE             = 8'h00;
@@ -1063,15 +1089,39 @@ module ai_accel_csr_regs #(
     logic [31:0] event_snapshot1_q;
     logic [31:0] event_cq_threshold_q;
     logic [31:0] event_irq_count_q;
+    logic [31:0] event_mod_control_q;
+    logic [31:0] event_mod_timer_limit_q;
+    logic [31:0] event_mod_timer_count_q;
+    logic [31:0] event_mod_unnotified_count_q;
+    logic [31:0] event_mod_release_count_q;
+    logic [31:0] event_mod_threshold_release_count_q;
+    logic [31:0] event_mod_timer_release_count_q;
+    logic [7:0]  event_mod_last_release_cause_q;
+    logic        event_mod_timer_expired_q;
 
     logic [31:0] event_status_read_data;
+    logic [31:0] event_mod_status_read_data;
+    logic [31:0] event_mod_debug_read_data;
     logic [31:0] event_command_masked;
+    logic [31:0] event_raw_source_mask;
     logic [31:0] event_source_mask;
     logic [31:0] event_clear_mask;
     logic        event_clear_pending_cmd;
     logic        event_clear_counters_cmd;
     logic        event_force_test_cmd;
-    logic        event_threshold_hit;
+    logic        event_completion_source;
+    logic        event_mod_enabled;
+    logic        event_mod_threshold_active;
+    logic        event_mod_timer_active;
+    logic        event_mod_completion_pending;
+    logic        event_mod_threshold_hit;
+    logic        event_mod_timer_hit;
+    logic        event_mod_release_pulse;
+    logic        event_mod_rearm_release;
+    logic        event_mod_urgent_bypass;
+    logic [31:0] event_mod_effective_cq_occupancy;
+    logic [31:0] event_mod_effective_unnotified;
+    logic [7:0]  event_mod_release_cause_comb;
     logic        event_countable;
     logic        event_irq_eligible_new;
     logic [31:0] event_snapshot0_comb;
@@ -1566,10 +1616,10 @@ CSR_QUEUE_VERSION_ADDR,
             CSR_EVENT_SNAPSHOT1_ADDR,
             CSR_EVENT_CQ_THRESHOLD_ADDR,
             CSR_EVENT_IRQ_COUNT_ADDR,
-            CSR_EVENT_RESERVED_630_ADDR,
-            CSR_EVENT_RESERVED_634_ADDR,
-            CSR_EVENT_RESERVED_638_ADDR,
-            CSR_EVENT_RESERVED_63C_ADDR,
+            CSR_EVENT_MOD_CONTROL_ADDR,
+            CSR_EVENT_MOD_STATUS_ADDR,
+            CSR_EVENT_MOD_TIMER_LIMIT_ADDR,
+            CSR_EVENT_MOD_DEBUG_ADDR,
 
             CSR_MEM_GUARD_VERSION_ADDR,
             CSR_MEM_GUARD_COMMAND_ADDR,
@@ -2162,6 +2212,22 @@ CSR_QUEUE_VERSION_ADDR,
                 return event_irq_count_q;
             end
 
+            CSR_EVENT_MOD_CONTROL_ADDR: begin
+                return event_mod_control_q & EVENT_MOD_CONTROL_WR_MASK;
+            end
+
+            CSR_EVENT_MOD_STATUS_ADDR: begin
+                return event_mod_status_read_data;
+            end
+
+            CSR_EVENT_MOD_TIMER_LIMIT_ADDR: begin
+                return event_mod_timer_limit_q;
+            end
+
+            CSR_EVENT_MOD_DEBUG_ADDR: begin
+                return event_mod_debug_read_data;
+            end
+
             CSR_MEM_GUARD_VERSION_ADDR: begin
                 return CSR_MEM_GUARD_VERSION_VALUE;
             end
@@ -2308,7 +2374,8 @@ CSR_QUEUE_VERSION_ADDR,
             P22_EVENT_CQ_NOT_EMPTY,
             P22_EVENT_CQ_THRESHOLD,
             P22_EVENT_CQ_FULL_STALL,
-            P22_EVENT_CQ_SPACE_RECOVERED: begin
+            P22_EVENT_CQ_SPACE_RECOVERED,
+            P28_EVENT_CQ_MOD_TIMER: begin
                 event_source_class = EVENT_SRC_CQ_BACKPRESSURE;
             end
 
@@ -2499,27 +2566,18 @@ CSR_QUEUE_VERSION_ADDR,
                                 queue_cq_space[7:0],
                                 queue_cq_occupancy[7:0]};
 
-        event_source_mask = 32'h0000_0000;
-        event_source_mask[P22_EVENT_QUEUE_COMPLETED]    = queue_completion_commit_pulse;
-        event_source_mask[P22_EVENT_QUEUE_DRAINED]      = queue_drained_pulse;
-        event_source_mask[P22_EVENT_QUEUE_STOPPED]      = queue_done_status[3] & ~queue_done_stopped_d_q;
-        event_source_mask[P22_EVENT_QUEUE_ERROR]        = queue_error_pulse | queue_completion_error_pulse;
-        event_source_mask[P22_EVENT_CQ_NOT_EMPTY]       = queue_completion_commit_pulse;
-        event_source_mask[P22_EVENT_CQ_FULL_STALL]      = queue_cq_full_stall & ~queue_cq_full_stall_d_q;
-        event_source_mask[P22_EVENT_CQ_SPACE_RECOVERED] = queue_busy & (queue_cq_space != 32'h0000_0000) &
-                                                          ~queue_cq_space_nonzero_d_q;
-        event_source_mask[P22_EVENT_RUNTIME_DOORBELL]   = 1'b0;
-        event_source_mask[P22_EVENT_RUNTIME_CONSUMED]   = 1'b0;
-        event_source_mask[P22_EVENT_TEST]               = event_force_test_cmd;
-
-        event_threshold_hit = (event_cq_threshold_q != 32'h0000_0000) &&
-                              (queue_cq_occupancy >= event_cq_threshold_q) &&
-                              (|(event_source_mask & ~(32'h1 << P22_EVENT_CQ_THRESHOLD)));
-        if (event_threshold_hit) begin
-            event_source_mask[P22_EVENT_CQ_THRESHOLD] = 1'b1;
-        end
-
-        event_source_mask = event_source_mask & EVENT_VALID_MASK;
+        event_raw_source_mask = 32'h0000_0000;
+        event_raw_source_mask[P22_EVENT_QUEUE_COMPLETED]    = queue_completion_commit_pulse;
+        event_raw_source_mask[P22_EVENT_QUEUE_DRAINED]      = queue_drained_pulse;
+        event_raw_source_mask[P22_EVENT_QUEUE_STOPPED]      = queue_done_status[3] & ~queue_done_stopped_d_q;
+        event_raw_source_mask[P22_EVENT_QUEUE_ERROR]        = queue_error_pulse | queue_completion_error_pulse;
+        event_raw_source_mask[P22_EVENT_CQ_NOT_EMPTY]       = queue_completion_commit_pulse;
+        event_raw_source_mask[P22_EVENT_CQ_FULL_STALL]      = queue_cq_full_stall & ~queue_cq_full_stall_d_q;
+        event_raw_source_mask[P22_EVENT_CQ_SPACE_RECOVERED] = queue_busy & (queue_cq_space != 32'h0000_0000) &
+                                                              ~queue_cq_space_nonzero_d_q;
+        event_raw_source_mask[P22_EVENT_RUNTIME_DOORBELL]   = 1'b0;
+        event_raw_source_mask[P22_EVENT_RUNTIME_CONSUMED]   = 1'b0;
+        event_raw_source_mask[P22_EVENT_TEST]               = event_force_test_cmd;
 
         event_clear_mask = 32'h0000_0000;
         if (event_clear_pending_cmd) begin
@@ -2529,6 +2587,97 @@ CSR_QUEUE_VERSION_ADDR,
             (write_addr == CSR_EVENT_PENDING_ADDR) && (|write_strb)) begin
             event_clear_mask = event_clear_mask | (event_command_masked & EVENT_VALID_MASK);
         end
+
+        // The queue/CQ occupancy inputs are derived from the CSR pointer
+        // registers before this cycle's completion-commit pointer update.
+        // Include the same-cycle commit so P28 threshold moderation observes
+        // the post-commit CQ occupancy that software will read next cycle.
+        event_mod_effective_cq_occupancy = queue_cq_occupancy +
+                                           (queue_completion_commit_pulse ? 32'h0000_0001 : 32'h0000_0000);
+        event_mod_effective_unnotified   = event_mod_unnotified_count_q +
+                                           (queue_completion_commit_pulse ? 32'h0000_0001 : 32'h0000_0000);
+
+        event_mod_enabled          = event_mod_control_q[EVENT_MOD_CONTROL_ENABLE];
+        event_mod_threshold_active = event_mod_enabled &&
+                                     event_mod_control_q[EVENT_MOD_CONTROL_THRESHOLD_ENABLE] &&
+                                     (event_cq_threshold_q != 32'h0000_0000);
+        event_mod_timer_active     = event_mod_enabled &&
+                                     event_mod_control_q[EVENT_MOD_CONTROL_TIMER_ENABLE] &&
+                                     (event_mod_timer_limit_q != 32'h0000_0000);
+        event_completion_source    = |(event_raw_source_mask &
+                                       ((32'h1 << P22_EVENT_QUEUE_COMPLETED) |
+                                        (32'h1 << P22_EVENT_CQ_NOT_EMPTY)));
+        event_mod_completion_pending = (event_mod_effective_unnotified != 32'h0000_0000);
+        event_mod_threshold_hit    = event_mod_threshold_active &&
+                                     event_mod_completion_pending &&
+                                     (event_mod_effective_cq_occupancy >= event_cq_threshold_q);
+        event_mod_timer_hit        = event_mod_timer_active &&
+                                     (event_mod_unnotified_count_q != 32'h0000_0000) &&
+                                     (event_mod_timer_count_q >= event_mod_timer_limit_q);
+        event_mod_rearm_release    = event_mod_enabled &&
+                                     event_mod_control_q[EVENT_MOD_CONTROL_RETRIGGER_NONEMPTY] &&
+                                     (event_clear_mask != 32'h0000_0000) &&
+                                     ((event_pending_q & event_clear_mask &
+                                       ((32'h1 << P22_EVENT_QUEUE_COMPLETED) |
+                                        (32'h1 << P22_EVENT_CQ_NOT_EMPTY) |
+                                        (32'h1 << P22_EVENT_CQ_THRESHOLD) |
+                                        (32'h1 << P28_EVENT_CQ_MOD_TIMER))) != 32'h0000_0000) &&
+                                     (queue_cq_occupancy != 32'h0000_0000);
+        event_mod_urgent_bypass    = event_mod_enabled &&
+                                     |(event_raw_source_mask &
+                                       ~((32'h1 << P22_EVENT_QUEUE_COMPLETED) |
+                                         (32'h1 << P22_EVENT_CQ_NOT_EMPTY)));
+        event_mod_release_pulse    = event_mod_enabled &&
+                                     (event_mod_threshold_hit ||
+                                      event_mod_timer_hit ||
+                                      event_mod_rearm_release);
+
+        event_mod_release_cause_comb = P28_MOD_RELEASE_NONE;
+        if (event_mod_threshold_hit) begin
+            event_mod_release_cause_comb = P28_MOD_RELEASE_THRESHOLD;
+        end else if (event_mod_timer_hit) begin
+            event_mod_release_cause_comb = P28_MOD_RELEASE_TIMER;
+        end else if (event_mod_rearm_release) begin
+            event_mod_release_cause_comb = P28_MOD_RELEASE_REARM;
+        end else if (event_mod_urgent_bypass) begin
+            event_mod_release_cause_comb = P28_MOD_RELEASE_URGENT;
+        end else if (!event_mod_enabled && event_completion_source) begin
+            event_mod_release_cause_comb = P28_MOD_RELEASE_IMMEDIATE;
+        end
+
+        event_source_mask = 32'h0000_0000;
+        if (event_mod_enabled) begin
+            // Urgent/terminal/debug events bypass moderation. Completion-style
+            // CQ notification bits are held until threshold/timer/re-arm release.
+            event_source_mask = event_raw_source_mask &
+                                ~((32'h1 << P22_EVENT_QUEUE_COMPLETED) |
+                                  (32'h1 << P22_EVENT_CQ_NOT_EMPTY) |
+                                  (32'h1 << P22_EVENT_CQ_THRESHOLD) |
+                                  (32'h1 << P28_EVENT_CQ_MOD_TIMER));
+
+            if (event_mod_release_pulse) begin
+                event_source_mask[P22_EVENT_QUEUE_COMPLETED] = 1'b1;
+                event_source_mask[P22_EVENT_CQ_NOT_EMPTY]    = 1'b1;
+                if (event_mod_threshold_hit) begin
+                    event_source_mask[P22_EVENT_CQ_THRESHOLD] = 1'b1;
+                end
+                if (event_mod_timer_hit) begin
+                    event_source_mask[P28_EVENT_CQ_MOD_TIMER] = 1'b1;
+                end
+            end
+        end else begin
+            // P22 compatibility mode: completion and CQ-not-empty events fire
+            // immediately, and the existing threshold event is generated when
+            // the post-commit CQ occupancy reaches CSR_EVENT_CQ_THRESHOLD.
+            event_source_mask = event_raw_source_mask;
+            if ((event_cq_threshold_q != 32'h0000_0000) &&
+                (event_mod_effective_cq_occupancy >= event_cq_threshold_q) &&
+                (|(event_raw_source_mask & ~(32'h1 << P22_EVENT_CQ_THRESHOLD)))) begin
+                event_source_mask[P22_EVENT_CQ_THRESHOLD] = 1'b1;
+            end
+        end
+
+        event_source_mask = event_source_mask & EVENT_VALID_MASK;
 
         event_countable = |(event_source_mask &
                             ~(event_control_q[EVENT_CONTROL_COUNT_TEST_EVENTS] ?
@@ -2545,6 +2694,24 @@ CSR_QUEUE_VERSION_ADDR,
         event_status_read_data[4] = |(event_pending_q[7:0]);
         event_status_read_data[5] = |(event_pending_q[P22_EVENT_RUNTIME_CONSUMED:P22_EVENT_RUNTIME_DOORBELL]);
         event_status_read_data[6] = event_pending_q[P22_EVENT_TEST];
+
+        event_mod_status_read_data = 32'h0000_0000;
+        event_mod_status_read_data[EVENT_MOD_STATUS_ACTIVE]           = event_mod_enabled;
+        event_mod_status_read_data[EVENT_MOD_STATUS_THRESHOLD_ACTIVE] = event_mod_threshold_active;
+        event_mod_status_read_data[EVENT_MOD_STATUS_TIMER_ACTIVE]     = event_mod_timer_active;
+        event_mod_status_read_data[EVENT_MOD_STATUS_TIMER_RUNNING]    = event_mod_timer_active &&
+                                                                        (event_mod_unnotified_count_q != 32'h0000_0000);
+        event_mod_status_read_data[EVENT_MOD_STATUS_THRESHOLD_MET]    = event_mod_threshold_hit;
+        event_mod_status_read_data[EVENT_MOD_STATUS_TIMER_EXPIRED]    = event_mod_timer_expired_q || event_mod_timer_hit;
+        event_mod_status_read_data[EVENT_MOD_STATUS_RELEASE_PENDING]  = event_mod_release_pulse;
+        event_mod_status_read_data[EVENT_MOD_STATUS_URGENT_BYPASS]    = event_mod_urgent_bypass;
+        event_mod_status_read_data[23:16] = event_mod_effective_cq_occupancy[7:0];
+        event_mod_status_read_data[31:24] = event_mod_effective_unnotified[7:0];
+
+        event_mod_debug_read_data = {event_mod_timer_release_count_q[7:0],
+                                     event_mod_threshold_release_count_q[7:0],
+                                     event_mod_release_count_q[7:0],
+                                     event_mod_last_release_cause_q};
 
         mem_guard_status_read_data = 32'h0000_0000;
         mem_guard_status_read_data[MEM_GUARD_STATUS_GUARD_ENABLED]      = mem_guard_control_q[MEM_GUARD_CONTROL_ENABLE];
@@ -2810,6 +2977,15 @@ CSR_QUEUE_VERSION_ADDR,
             event_snapshot1_q    <= 32'h0000_0000;
             event_cq_threshold_q <= 32'h0000_0000;
             event_irq_count_q    <= 32'h0000_0000;
+            event_mod_control_q                 <= 32'h0000_0000;
+            event_mod_timer_limit_q             <= 32'h0000_0000;
+            event_mod_timer_count_q             <= 32'h0000_0000;
+            event_mod_unnotified_count_q        <= 32'h0000_0000;
+            event_mod_release_count_q           <= 32'h0000_0000;
+            event_mod_threshold_release_count_q <= 32'h0000_0000;
+            event_mod_timer_release_count_q     <= 32'h0000_0000;
+            event_mod_last_release_cause_q      <= P28_MOD_RELEASE_NONE;
+            event_mod_timer_expired_q           <= 1'b0;
             queue_done_stopped_d_q      <= 1'b0;
             queue_cq_full_stall_d_q     <= 1'b0;
             queue_cq_space_nonzero_d_q  <= 1'b0;
@@ -2925,6 +3101,49 @@ CSR_QUEUE_VERSION_ADDR,
                 if (event_irq_eligible_new) begin
                     event_irq_count_q <= event_irq_count_q + 32'd1;
                 end
+            end
+
+            if (event_clear_counters_cmd) begin
+                event_mod_timer_count_q             <= 32'h0000_0000;
+                event_mod_unnotified_count_q        <= 32'h0000_0000;
+                event_mod_release_count_q           <= 32'h0000_0000;
+                event_mod_threshold_release_count_q <= 32'h0000_0000;
+                event_mod_timer_release_count_q     <= 32'h0000_0000;
+                event_mod_last_release_cause_q      <= P28_MOD_RELEASE_NONE;
+                event_mod_timer_expired_q           <= 1'b0;
+            end else begin
+                if (!event_mod_enabled || (event_mod_unnotified_count_q == 32'h0000_0000)) begin
+                    event_mod_timer_count_q   <= 32'h0000_0000;
+                    event_mod_timer_expired_q <= 1'b0;
+                end else if (event_mod_release_pulse) begin
+                    event_mod_timer_count_q   <= 32'h0000_0000;
+                    event_mod_timer_expired_q <= event_mod_timer_hit;
+                end else if (event_mod_timer_active) begin
+                    event_mod_timer_count_q <= event_mod_timer_count_q + 32'd1;
+                end
+
+                if (event_mod_release_pulse || event_mod_urgent_bypass ||
+                    (!event_mod_enabled && event_completion_source)) begin
+                    event_mod_last_release_cause_q <= event_mod_release_cause_comb;
+                end
+
+                if (event_mod_release_pulse) begin
+                    event_mod_release_count_q <= event_mod_release_count_q + 32'd1;
+                    if (event_mod_threshold_hit) begin
+                        event_mod_threshold_release_count_q <= event_mod_threshold_release_count_q + 32'd1;
+                    end
+                    if (event_mod_timer_hit) begin
+                        event_mod_timer_release_count_q <= event_mod_timer_release_count_q + 32'd1;
+                    end
+                end
+            end
+
+            if (!event_mod_enabled) begin
+                event_mod_unnotified_count_q <= 32'h0000_0000;
+            end else if (event_mod_release_pulse) begin
+                event_mod_unnotified_count_q <= 32'h0000_0000;
+            end else if (queue_completion_commit_pulse) begin
+                event_mod_unnotified_count_q <= event_mod_unnotified_count_q + 32'd1;
             end
 
             if (queue_completion_commit_pulse) begin
@@ -3704,6 +3923,15 @@ CSR_QUEUE_VERSION_ADDR,
 
                         CSR_EVENT_CQ_THRESHOLD_ADDR: begin
                             event_cq_threshold_q <= apply_wstrb32(event_cq_threshold_q, write_data, write_strb);
+                        end
+
+                        CSR_EVENT_MOD_CONTROL_ADDR: begin
+                            event_mod_control_q <= apply_wstrb32(event_mod_control_q, write_data, write_strb) &
+                                                   EVENT_MOD_CONTROL_WR_MASK;
+                        end
+
+                        CSR_EVENT_MOD_TIMER_LIMIT_ADDR: begin
+                            event_mod_timer_limit_q <= apply_wstrb32(event_mod_timer_limit_q, write_data, write_strb);
                         end
 
                         CSR_DONE_STATUS_ADDR: begin
