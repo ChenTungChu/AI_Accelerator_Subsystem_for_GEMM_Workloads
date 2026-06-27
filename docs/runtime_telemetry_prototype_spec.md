@@ -624,9 +624,9 @@ Recommended P29 split:
 ```text
 P29A: Runtime telemetry prototype spec                           PASS
 P29B: Telemetry CSR policy / counter map freeze                  PASS
-P29C: Queue/event telemetry counter RTL integration              TODO
-P29D: Basic telemetry counter smoke                              TODO
-P29E: Interrupt efficiency / coalescing telemetry smoke          TODO
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          IMPLEMENTED / RUN PENDING
 P29F: Stall / recovery telemetry smoke                           TODO
 P29G: full regression integration                                TODO
 P29H: documentation closure                                      TODO
@@ -747,9 +747,10 @@ Purpose:
 
 ```text
 validate P28 threshold batching is visible through telemetry
-validate CQ commits can exceed IRQ count
+validate CQ commits can exceed IRQ-eligible notification count
+validate coalesced release counter increments
 validate threshold release counter increments
-validate timer release counter increments in sparse mode
+validate timer release counter remains zero in the threshold-only case
 validate max host CQ consume batch size is captured
 validate software-side completions-per-IRQ ratio is greater than one for threshold batching
 ```
@@ -757,17 +758,20 @@ validate software-side completions-per-IRQ ratio is greater than one for thresho
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_runtime_telemetry_irq_efficiency_smoke_test
+ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
 ```
 
 Expected PASS markers:
 
 ```text
-[P29_TEL/IRQ_EFFICIENCY_PASS]
-[P29_TEL/THRESHOLD_RELEASE_COUNTER_PASS]
-[P29_TEL/TIMER_RELEASE_COUNTER_PASS]
-[P29_TEL/BATCH_SIZE_PASS]
-[P29_TEL/PASS]
+[P29E_TELEM/CLEAR_PASS]
+[P29E_TELEM/ZERO_PASS]
+[P29E_TELEM/ENABLE_PASS]
+[P29E_TELEM/THRESHOLD_RELEASE_PASS]
+[P29E_TELEM/BATCH_COUNTERS_PASS]
+[P29E_TELEM/COALESCING_COUNTERS_PASS]
+[P29E_TELEM/IRQ_REDUCTION_PASS]
+[P29E_TELEM/PASS]
 ```
 
 ### 12.5 P29F Stall / Recovery Telemetry Smoke
@@ -1055,10 +1059,92 @@ P28H: Documentation closure                                      PASS
 P29A: Runtime telemetry prototype spec                           PASS
 P29B: Telemetry CSR policy / counter map freeze                  PASS
 P29C: Queue/event telemetry counter RTL integration              PASS
-P29D: Basic telemetry counter smoke                              IMPLEMENTED / RUN PENDING
+P29D: Basic telemetry counter smoke                              PASS
 
 Full regression remains:
   TOTAL : 144
   PASS  : 144
   FAIL  : 0
 ```
+
+---
+
+## P29E Interrupt Efficiency / Coalescing Telemetry Smoke Implementation Checkpoint
+
+P29E adds a targeted UVM validation for the P29 telemetry counters that quantify the P28 event coalescing / interrupt moderation path.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test.sv
+```
+
+P29E reuses the validated P28D CQ-threshold moderation policy.  Telemetry is enabled before a two-command queue session.  The two CQ records are allowed to accumulate until `CSR_EVENT_CQ_THRESHOLD=2` releases one coalesced notification, then the host consumes both CQ records as one batch and writes `CSR_CQ_HEAD` once.
+
+P29E validation flow:
+
+```text
+read CSR_TELEM_VERSION and check 0x0001_0029
+clear selected telemetry counters before the run
+enable telemetry, cycle counters, host-CQ-consume counters, and event-efficiency counters
+program P28 moderation with threshold=2 and timer disabled
+submit two SQ commands through the existing queue/runtime path
+wait for CQ_NOT_EMPTY + CQ_THRESHOLD notification
+confirm the P28 threshold release counter advanced
+consume two CQ records as one batch through the P28 batch consume helper
+W1C-ack and re-arm the event path
+check CQ commit count, command completion count, coalesced release count, threshold release count, IRQ-eligible count, and max CQ batch size
+check timer-release count remains zero in the threshold-only case
+check clean-session error/stall/recovery counters remain zero
+check GEMM / DMA result compare still passes
+clear telemetry counters after the run and verify selected counters return to zero
+```
+
+Expected P29E PASS markers:
+
+```text
+[P29E_TELEM/CLEAR_PASS]
+[P29E_TELEM/ZERO_PASS]
+[P29E_TELEM/ENABLE_PASS]
+[P29E_TELEM/THRESHOLD_RELEASE_PASS]
+[P29E_TELEM/BATCH_COUNTERS_PASS]
+[P29E_TELEM/COALESCING_COUNTERS_PASS]
+[P29E_TELEM/IRQ_REDUCTION_PASS]
+[P29E_TELEM/PASS]
+```
+
+P29E checks these interrupt-efficiency telemetry behaviors:
+
+```text
+CQ commit count records the two completed queue commands
+IRQ-eligible count is lower than CQ commit count in the threshold coalescing case
+coalesced release count increments
+threshold release count increments
+timer release count remains zero when timer moderation is disabled
+host CQ_HEAD positive update count is one for one batched CQ_HEAD write
+host CQ consumed delta is two
+max CQ batch size is at least two
+completion-style event counter is non-zero
+queue enabled / busy / idle cycle counters remain live
+error / CQ-full / timeout / memory guard / STOP_QUEUE request counters remain zero for the clean threshold run
+```
+
+P29E does not add RTL, a standalone UVM top, a standalone sim flow, a new CSR window, new event bits, SQ/CQ format changes, descriptor format changes, completion record format changes, or BRAM/GEMM/DMA/frontend datapath changes.
+
+Current expected status after P29E implementation:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          IMPLEMENTED / RUN PENDING
+
+Full regression remains:
+  TOTAL : 144
+  PASS  : 144
+  FAIL  : 0
+```
+
