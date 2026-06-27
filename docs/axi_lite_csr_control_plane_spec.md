@@ -6,7 +6,7 @@ This document defines the AXI-Lite control-plane specification for the AI Accele
 
 The subsystem already has a stable GEMM datapath and multiple validated data movement frontends.  P14 adds a lightweight software-visible control plane so a host can program, launch, poll, and observe the accelerator through control/status registers instead of driving top-level sideband control wires directly.
 
-P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25/P26 reuse the existing queue/event CSR policy for runtime stress and lifecycle recovery, P27 adds a memory guard CSR window for host-visible address range validation, and P28 reuses reserved P22 event CSR addresses for event coalescing / interrupt moderation policy.
+P14 is intentionally scoped as a minimal CSR shell.  It is not a descriptor engine, interrupt controller, software driver, or UVM RAL model.  P15 builds on the same CSR shell by adding a CSR-resident single-job descriptor and hardware job sequencer above the P14 micro-operation command model.  P16 adds CSR-resident recipes, P17 adds memory-backed descriptor fetch, P18 adds completion writeback, P19 adds a host-visible command / completion queue CSR window, P20 validates multi-entry in-order queue drain behavior using that same P19 queue window, P21 validates runtime doorbell / live queue service behavior without adding new CSR addresses, P22 adds a lightweight event notification / interrupt-lite CSR window above the queue status model, P23 validates a driver-style event-driven host runtime by reusing the existing P19 queue and P22 event CSR windows without adding new CSR addresses, P24 clarifies the existing queue timeout / watchdog reporting policy without adding a new CSR window, P25/P26 reuse the existing queue/event CSR policy for runtime stress and lifecycle recovery, P27 adds a memory guard CSR window for host-visible address range validation, P28 reuses reserved P22 event CSR addresses for event coalescing / interrupt moderation policy, and P29 adds a runtime telemetry CSR window for queue/event/cycle observability.
 
 ---
 
@@ -295,6 +295,7 @@ P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
 P27 memory guard window        : 0x640 - 0x6BC
+P29 runtime telemetry window   : 0x6C0 - 0x73C
 ```
 
 | Offset | Name | Access | Description |
@@ -402,6 +403,7 @@ P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
 P27 memory guard window        : 0x640 - 0x6BC
+P29 runtime telemetry window   : 0x6C0 - 0x73C
 ```
 
 P19B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the queue register map and bit definitions so P19C/P19D implementation can use stable constants.
@@ -535,6 +537,7 @@ P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
 P27 memory guard window        : 0x640 - 0x6BC
+P29 runtime telemetry window   : 0x6C0 - 0x73C
 ```
 
 P22B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the event register map and bit definitions so later P22 RTL and UVM milestones can use stable constants.
@@ -661,6 +664,7 @@ P18 completion writeback window: 0x540 - 0x57C
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
 P27 memory guard window        : 0x640 - 0x6BC
+P29 runtime telemetry window   : 0x6C0 - 0x73C
 ```
 
 P27B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the guard register map and bit definitions so P27C/P27D/P27E/P27F implementation can use stable constants.
@@ -768,6 +772,141 @@ P27_GUARD_DOMAIN_DST         = 5
 ```
 
 ---
+
+### 9.5 P29 Runtime Telemetry CSR Register Window
+
+P29B freezes the software-visible runtime telemetry CSR window used by the P29 counter prototype.
+
+P27 uses the `0x640 - 0x6BC` memory guard CSR window.  P29 adds a telemetry CSR window after the guard window.
+
+Frozen P29B CSR base:
+
+```text
+P29 runtime telemetry CSR base = 0x6C0
+```
+
+Existing windows remain unchanged:
+
+```text
+P14 micro-operation CSR window : 0x000 - 0x08C
+P15 job CSR window             : 0x100 - 0x18C
+P16 recipe CSR window          : 0x200 - 0x28C
+P16 slot CSR window            : 0x300 - 0x4FC
+P17 descriptor fetch window    : 0x500 - 0x53C
+P18 completion writeback window: 0x540 - 0x57C
+P19 queue window               : 0x580 - 0x5FC
+P22 event notification window  : 0x600 - 0x63C
+P27 memory guard window        : 0x640 - 0x6BC
+P29 runtime telemetry window   : 0x6C0 - 0x73C
+```
+
+P29B does not add RTL, UVM tests, Tcl scripts, README updates, or regression-list items.  It freezes the telemetry register map and bit definitions so P29C/P29D/P29E/P29F implementation can use stable constants.
+
+#### 9.5.1 Register Map
+
+| Offset | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0x6C0 | `CSR_TELEM_VERSION` | RO | `0x0001_0029` | Runtime telemetry version / feature ID. |
+| 0x6C4 | `CSR_TELEM_COMMAND` | W1P | 0 | Telemetry clear command. |
+| 0x6C8 | `CSR_TELEM_STATUS` | RO | implementation | Live telemetry enable / status summary. |
+| 0x6CC | `CSR_TELEM_CONTROL` | RW | `0x0000_0000` | Telemetry enable and counter-category enables. |
+| 0x6D0 | `CSR_TELEM_QUEUE_START_COUNT` | RO | 0 | Number of accepted queue starts. |
+| 0x6D4 | `CSR_TELEM_SQ_ACCEPT_COUNT` | RO | 0 | Number of validated SQ commands accepted for execution. |
+| 0x6D8 | `CSR_TELEM_CMD_COMPLETE_COUNT` | RO | 0 | Number of queue commands that reached normal completion. |
+| 0x6DC | `CSR_TELEM_CQ_COMMIT_COUNT` | RO | 0 | Number of CQ records committed and made visible. |
+| 0x6E0 | `CSR_TELEM_QUEUE_DRAINED_COUNT` | RO | 0 | Number of queue drained terminal observations. |
+| 0x6E4 | `CSR_TELEM_QUEUE_STOPPED_COUNT` | RO | 0 | Number of queue stopped terminal observations. |
+| 0x6E8 | `CSR_TELEM_QUEUE_ERROR_COUNT` | RO | 0 | Number of queue error terminal observations. |
+| 0x6EC | `CSR_TELEM_CQ_HEAD_UPDATE_COUNT` | RO | 0 | Number of positive host CQ_HEAD advancements observed. |
+| 0x6F0 | `CSR_TELEM_CQ_CONSUMED_COUNT` | RO | 0 | Accumulated positive CQ_HEAD delta observed from host consumption. |
+| 0x6F4 | `CSR_TELEM_MAX_CQ_BATCH_SIZE` | RO | 0 | Maximum positive CQ_HEAD delta observed in one host update. |
+| 0x6F8 | `CSR_TELEM_EVENT_CAPTURE_COUNT` | RO | 0 | Number of event source captures observed by telemetry. |
+| 0x6FC | `CSR_TELEM_IRQ_ELIGIBLE_COUNT` | RO | 0 | Number of interrupt-eligible event captures observed by telemetry. |
+| 0x700 | `CSR_TELEM_COMPLETION_EVENT_COUNT` | RO | 0 | Number of completion-style event releases observed. |
+| 0x704 | `CSR_TELEM_COALESCED_RELEASE_COUNT` | RO | 0 | Number of P28 coalesced CQ notification releases. |
+| 0x708 | `CSR_TELEM_THRESHOLD_RELEASE_COUNT` | RO | 0 | Number of P28 threshold-caused releases. |
+| 0x70C | `CSR_TELEM_TIMER_RELEASE_COUNT` | RO | 0 | Number of P28 timer-caused releases. |
+| 0x710 | `CSR_TELEM_URGENT_BYPASS_COUNT` | RO | 0 | Number of urgent event bypass observations while moderation is enabled. |
+| 0x714 | `CSR_TELEM_CQ_FULL_STALL_COUNT` | RO | 0 | Number of CQ-full stall observations. |
+| 0x718 | `CSR_TELEM_CQ_SPACE_RECOVERED_COUNT` | RO | 0 | Number of CQ-space recovered observations. |
+| 0x71C | `CSR_TELEM_TIMEOUT_ERROR_COUNT` | RO | 0 | Number of command-timeout queue error observations. |
+| 0x720 | `CSR_TELEM_MEM_GUARD_ERROR_COUNT` | RO | 0 | Number of memory-guard queue error observations. |
+| 0x724 | `CSR_TELEM_STOP_QUEUE_REQUEST_COUNT` | RO | 0 | Number of accepted STOP_QUEUE requests observed. |
+| 0x728 | `CSR_TELEM_QUEUE_ENABLED_CYCLES` | RO | 0 | dma_clk cycles with queue processing enabled and telemetry cycle count enabled. |
+| 0x72C | `CSR_TELEM_QUEUE_BUSY_CYCLES` | RO | 0 | dma_clk cycles with queue_busy high and telemetry cycle count enabled. |
+| 0x730 | `CSR_TELEM_QUEUE_IDLE_CYCLES` | RO | 0 | dma_clk cycles with queue enabled, not busy, and not stalled. |
+| 0x734 | `CSR_TELEM_QUEUE_STALLED_CYCLES` | RO | 0 | dma_clk cycles with queue stalled. |
+| 0x738 | `CSR_TELEM_CQ_FULL_STALL_CYCLES` | RO | 0 | dma_clk cycles with CQ-full stall active. |
+| 0x73C | `CSR_TELEM_LOWER_WAIT_CYCLES` | RO | 0 | dma_clk cycles waiting for lower-level P17/P18/P16/P15/P14 quiescence or terminal progress. |
+
+#### 9.5.2 Register Ownership Summary
+
+| Register | Owner | Write Policy |
+|---|---|---|
+| `CSR_TELEM_COMMAND` | Host | Write-one-pulse commands. Reads return zero. |
+| `CSR_TELEM_STATUS` | Hardware | Read-only live telemetry summary. |
+| `CSR_TELEM_CONTROL` | Host | Program while queue is idle or active. Telemetry is observational only. |
+| `CSR_TELEM_*_COUNT` | Hardware | Read-only counters. Cleared by `CSR_TELEM_COMMAND.CLEAR_TELEMETRY_COUNTERS`. |
+| `CSR_TELEM_MAX_CQ_BATCH_SIZE` | Hardware | Read-only max tracker. Cleared by `CSR_TELEM_COMMAND.CLEAR_TELEMETRY_COUNTERS`. |
+
+Telemetry clear is observational only.  It must not clear functional queue state, event pending bits, memory guard diagnostics, timeout status, SQ/CQ pointers, CQ records, or lower-level sticky status.
+
+#### 9.5.3 Counter Source Summary
+
+P29B freezes these first source policies:
+
+```text
+CSR_TELEM_QUEUE_START_COUNT increments when START_QUEUE is accepted.
+CSR_TELEM_SQ_ACCEPT_COUNT increments when an SQ command is fetched, validated, and accepted for execution.
+CSR_TELEM_CMD_COMPLETE_COUNT increments when a command reaches normal queue completion.
+CSR_TELEM_CQ_COMMIT_COUNT increments only after a valid CQ record commit and CQ_TAIL advancement.
+CSR_TELEM_CQ_HEAD_UPDATE_COUNT increments only for positive host CQ_HEAD advancement.
+CSR_TELEM_CQ_CONSUMED_COUNT increments by positive CQ_HEAD delta.
+CSR_TELEM_MAX_CQ_BATCH_SIZE tracks the maximum positive CQ_HEAD delta.
+CSR_TELEM_EVENT_CAPTURE_COUNT observes existing P22 event capture source firings.
+CSR_TELEM_IRQ_ELIGIBLE_COUNT observes existing P22 interrupt-eligible event captures.
+CSR_TELEM_COMPLETION_EVENT_COUNT observes completion-style CQ notification releases.
+CSR_TELEM_COALESCED_RELEASE_COUNT observes P28 coalesced CQ release events.
+CSR_TELEM_THRESHOLD_RELEASE_COUNT observes P28 threshold release events.
+CSR_TELEM_TIMER_RELEASE_COUNT observes P28 timer release events.
+CSR_TELEM_URGENT_BYPASS_COUNT observes urgent bypass release events while moderation is enabled.
+CSR_TELEM_CQ_FULL_STALL_COUNT observes CQ-full stall entries.
+CSR_TELEM_CQ_SPACE_RECOVERED_COUNT observes CQ-space recovered event points.
+CSR_TELEM_TIMEOUT_ERROR_COUNT observes CSR_QUEUE_ERROR_STATUS[6] timeout error source points.
+CSR_TELEM_MEM_GUARD_ERROR_COUNT observes CSR_QUEUE_ERROR_STATUS[9] memory guard error source points.
+CSR_TELEM_STOP_QUEUE_REQUEST_COUNT increments when STOP_QUEUE is accepted.
+```
+
+Cycle counters increment at most once per `dma_clk` cycle when `CSR_TELEM_CONTROL.TELEMETRY_ENABLE=1` and `CSR_TELEM_CONTROL.CYCLE_COUNT_ENABLE=1`.
+
+#### 9.5.4 Counter Width and Overflow Policy
+
+P29B freezes the first implementation as 32-bit wrapping counters:
+
+```text
+counter width      : 32 bits
+reset value        : 0
+clear value        : 0
+overflow behavior  : wrap modulo 2^32
+sticky overflow    : not implemented in first prototype
+hardware division  : not implemented in first prototype
+ratio calculation  : software / UVM derived from raw counters
+```
+
+This keeps the first telemetry block simple and deterministic.  UVM tests are expected to run short enough that overflow is not part of P29D/P29E/P29F validation.
+
+#### 9.5.5 P29B Frozen Constants
+
+```text
+CSR_TELEM_BASE_ADDR              = 0x6C0
+CSR_TELEM_WINDOW_LAST            = 0x73C
+CSR_TELEM_VERSION_RESET          = 0x0001_0029
+CSR_TELEM_CONTROL_RESET          = 0x0000_0000
+P29_COUNTER_WIDTH                = 32
+P29_COUNTER_OVERFLOW_POLICY      = wrap modulo 2^32
+```
+
+
 
 ## 10. Register Bit Definitions
 
@@ -1612,6 +1751,162 @@ CSR_MEM_GUARD_DST_BASE  / CSR_MEM_GUARD_DST_LIMIT
 ```
 
 ---
+
+### 10.12 P29 Runtime Telemetry Registers
+
+The P29 telemetry registers use the same AXI-Lite access policy and the same W1P definitions as the earlier CSR windows.
+
+#### 10.12.1 `CSR_TELEM_VERSION` at 0x6C0
+
+| Bits | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| [31:16] | `MAJOR` | RO | 16'h0001 | Telemetry block major version. |
+| [15:8] | `MINOR` | RO | 8'h00 | Telemetry block minor version. |
+| [7:0] | `FEATURE_ID` | RO | 8'h29 | P29 runtime telemetry feature ID. |
+
+Reset value:
+
+```text
+0x0001_0029
+```
+
+#### 10.12.2 `CSR_TELEM_COMMAND` at 0x6C4
+
+This is a write-one-pulse register.  Reads return zero.
+
+| Bit | Name | Type | Description |
+|---:|---|---|---|
+| 8 | `CLEAR_TELEMETRY_COUNTERS` | W1P | Clear all telemetry counters and max trackers. |
+| 31:9, 7:0 | `RSVD` | — | Reserved. |
+
+Unsupported command bits are ignored in the first P29 prototype.  Telemetry commands are observational and must not set queue-level errors.
+
+#### 10.12.3 `CSR_TELEM_STATUS` at 0x6C8
+
+| Bit | Name | Access | Description |
+|---:|---|---|
+| 0 | `TELEMETRY_ENABLED` | RO | Mirror of `CSR_TELEM_CONTROL.TELEMETRY_ENABLE`. |
+| 1 | `CYCLE_COUNT_ENABLED` | RO | Mirror of `CSR_TELEM_CONTROL.CYCLE_COUNT_ENABLE`. |
+| 2 | `HOST_CQ_CONSUME_ENABLED` | RO | Mirror of `CSR_TELEM_CONTROL.HOST_CQ_CONSUME_ENABLE`. |
+| 3 | `EVENT_EFFICIENCY_ENABLED` | RO | Mirror of `CSR_TELEM_CONTROL.EVENT_EFFICIENCY_ENABLE`. |
+| 4 | `ANY_COUNTER_NONZERO` | RO | At least one telemetry counter is non-zero. |
+| 5 | `QUEUE_COUNTERS_ACTIVE` | RO | Queue service telemetry is enabled. |
+| 6 | `CYCLE_COUNTERS_ACTIVE` | RO | Cycle telemetry is enabled and counting may occur. |
+| 16 | `CSR_READY` | RO | CSR block ready for transactions. |
+| 31:17, 15:7 | `RSVD` | RO | Reserved. |
+
+#### 10.12.4 `CSR_TELEM_CONTROL` at 0x6CC
+
+| Bit | Name | Access | Reset | Description |
+|---:|---|---|---:|---|
+| 0 | `TELEMETRY_ENABLE` | RW | 0 | Enable P29 telemetry counters globally. |
+| 1 | `CYCLE_COUNT_ENABLE` | RW | 0 | Enable cycle counters when telemetry is globally enabled. |
+| 2 | `HOST_CQ_CONSUME_ENABLE` | RW | 0 | Enable host CQ_HEAD delta consumption counters. |
+| 3 | `EVENT_EFFICIENCY_ENABLE` | RW | 0 | Enable event / IRQ / moderation efficiency counters. |
+| 31:4 | `RSVD` | RO | 0 | Reserved. |
+
+Reset value:
+
+```text
+0x0000_0000
+```
+
+Telemetry is disabled by reset to preserve existing pre-P29 regression behavior.  Enabling telemetry changes only counter visibility and must not change queue execution, event behavior, moderation behavior, guard behavior, or lower-level datapath behavior.
+
+#### 10.12.5 Queue Service Counters
+
+| Register | Offset | Access | Reset | Description |
+|---|---:|---|---:|---|
+| `CSR_TELEM_QUEUE_START_COUNT` | 0x6D0 | RO | 0 | Accepted START_QUEUE count. |
+| `CSR_TELEM_SQ_ACCEPT_COUNT` | 0x6D4 | RO | 0 | Fetched / validated / accepted SQ command count. |
+| `CSR_TELEM_CMD_COMPLETE_COUNT` | 0x6D8 | RO | 0 | Normal queue command completion count. |
+| `CSR_TELEM_CQ_COMMIT_COUNT` | 0x6DC | RO | 0 | CQ record commit and CQ_TAIL advancement count. |
+| `CSR_TELEM_QUEUE_DRAINED_COUNT` | 0x6E0 | RO | 0 | Queue drained terminal observation count. |
+| `CSR_TELEM_QUEUE_STOPPED_COUNT` | 0x6E4 | RO | 0 | Queue stopped terminal observation count. |
+| `CSR_TELEM_QUEUE_ERROR_COUNT` | 0x6E8 | RO | 0 | Queue error terminal observation count. |
+
+Queue service counters increment only when `CSR_TELEM_CONTROL.TELEMETRY_ENABLE=1`.
+
+#### 10.12.6 Host CQ Consumption Counters
+
+| Register | Offset | Access | Reset | Description |
+|---|---:|---|---:|---|
+| `CSR_TELEM_CQ_HEAD_UPDATE_COUNT` | 0x6EC | RO | 0 | Number of positive CQ_HEAD advancements accepted from host writes. |
+| `CSR_TELEM_CQ_CONSUMED_COUNT` | 0x6F0 | RO | 0 | Sum of positive CQ_HEAD deltas accepted from host writes. |
+| `CSR_TELEM_MAX_CQ_BATCH_SIZE` | 0x6F4 | RO | 0 | Maximum positive CQ_HEAD delta observed in one host update. |
+
+Host CQ consumption counters increment only when both `TELEMETRY_ENABLE=1` and `HOST_CQ_CONSUME_ENABLE=1`.
+
+Positive CQ_HEAD delta policy:
+
+```text
+if new_cq_head > old_cq_head:
+  cq_head_update_count += 1
+  cq_consumed_count    += new_cq_head - old_cq_head
+  max_cq_batch_size     = max(max_cq_batch_size, new_cq_head - old_cq_head)
+else:
+  no host-consumption telemetry counter update
+```
+
+P29B does not redefine the existing queue policy for invalid CQ_HEAD writes.
+
+#### 10.12.7 Event / IRQ Efficiency and P28 Moderation Counters
+
+| Register | Offset | Access | Reset | Description |
+|---|---:|---|---:|---|
+| `CSR_TELEM_EVENT_CAPTURE_COUNT` | 0x6F8 | RO | 0 | Event source capture count observed by telemetry. |
+| `CSR_TELEM_IRQ_ELIGIBLE_COUNT` | 0x6FC | RO | 0 | Interrupt-eligible event capture count observed by telemetry. |
+| `CSR_TELEM_COMPLETION_EVENT_COUNT` | 0x700 | RO | 0 | Completion-style event release count. |
+| `CSR_TELEM_COALESCED_RELEASE_COUNT` | 0x704 | RO | 0 | P28 coalesced CQ notification release count. |
+| `CSR_TELEM_THRESHOLD_RELEASE_COUNT` | 0x708 | RO | 0 | P28 threshold release count. |
+| `CSR_TELEM_TIMER_RELEASE_COUNT` | 0x70C | RO | 0 | P28 timer fallback release count. |
+| `CSR_TELEM_URGENT_BYPASS_COUNT` | 0x710 | RO | 0 | Urgent bypass observation count while moderation is enabled. |
+
+Event / IRQ efficiency counters increment only when both `TELEMETRY_ENABLE=1` and `EVENT_EFFICIENCY_ENABLE=1`.
+
+These counters are raw counters.  Derived metrics such as completions per IRQ and IRQ reduction estimate are computed by software or UVM.
+
+#### 10.12.8 Stall / Recovery Counters
+
+| Register | Offset | Access | Reset | Description |
+|---|---:|---|---:|---|
+| `CSR_TELEM_CQ_FULL_STALL_COUNT` | 0x714 | RO | 0 | CQ-full stall observation count. |
+| `CSR_TELEM_CQ_SPACE_RECOVERED_COUNT` | 0x718 | RO | 0 | CQ-space recovered observation count. |
+| `CSR_TELEM_TIMEOUT_ERROR_COUNT` | 0x71C | RO | 0 | Command timeout queue error observation count. |
+| `CSR_TELEM_MEM_GUARD_ERROR_COUNT` | 0x720 | RO | 0 | Memory guard queue error observation count. |
+| `CSR_TELEM_STOP_QUEUE_REQUEST_COUNT` | 0x724 | RO | 0 | Accepted STOP_QUEUE request count. |
+
+Stall / recovery counters increment only when `CSR_TELEM_CONTROL.TELEMETRY_ENABLE=1`.
+
+Timeout and memory-guard telemetry are summary counts only.  The authoritative diagnostics remain `CSR_QUEUE_ERROR_STATUS`, `CSR_QUEUE_ERROR_DETAIL`, and the P27 memory guard diagnostic registers.
+
+#### 10.12.9 Runtime Cycle Counters
+
+| Register | Offset | Access | Reset | Description |
+|---|---:|---|---:|---|
+| `CSR_TELEM_QUEUE_ENABLED_CYCLES` | 0x728 | RO | 0 | Cycles with queue enable policy active. |
+| `CSR_TELEM_QUEUE_BUSY_CYCLES` | 0x72C | RO | 0 | Cycles with queue_busy high. |
+| `CSR_TELEM_QUEUE_IDLE_CYCLES` | 0x730 | RO | 0 | Cycles with queue enabled, not busy, and not stalled. |
+| `CSR_TELEM_QUEUE_STALLED_CYCLES` | 0x734 | RO | 0 | Cycles with queue stalled. |
+| `CSR_TELEM_CQ_FULL_STALL_CYCLES` | 0x738 | RO | 0 | Cycles with CQ-full stall active. |
+| `CSR_TELEM_LOWER_WAIT_CYCLES` | 0x73C | RO | 0 | Cycles waiting for lower-level quiescence or terminal progress. |
+
+Cycle counters increment only when both `TELEMETRY_ENABLE=1` and `CYCLE_COUNT_ENABLE=1`.
+
+The first implementation should increment each cycle counter at most once per dma_clk cycle.
+
+#### 10.12.10 P29B Frozen Telemetry Constants
+
+```text
+CSR_TELEM_BASE_ADDR              = 0x6C0
+CSR_TELEM_WINDOW_LAST            = 0x73C
+CSR_TELEM_VERSION_RESET          = 0x0001_0029
+CSR_TELEM_CONTROL_RESET          = 0x0000_0000
+P29_COUNTER_WIDTH                = 32
+P29_COUNTER_OVERFLOW_POLICY      = wrap modulo 2^32
+```
+
+
 
 ## 11. Configuration Register Defaults
 
@@ -2458,7 +2753,6 @@ P23 reuses the existing CSR windows:
 ```text
 P19 queue window               : 0x580 - 0x5FC
 P22 event notification window  : 0x600 - 0x63C
-P27 memory guard window        : 0x640 - 0x6BC
 ```
 
 Validated P23 CSR usage:
@@ -2888,3 +3182,78 @@ FAIL  : 0
 ```
 
 P28H does not add a new CSR window, change any existing CSR address, change the SQ entry format, change the CQ completion record format, change the P17 descriptor format, change the P18 completion record format, or change the BRAM/GEMM/DMA/frontend datapaths.
+
+
+---
+
+## 32. P29B Runtime Telemetry CSR Policy / Counter Map Freeze
+
+P29B freezes the first runtime telemetry CSR policy for queue/event/cycle observability.
+
+Unlike P28, P29 allocates a new CSR window because the telemetry block needs a consolidated software-readable counter view beyond the existing queue, event, moderation, and guard debug registers.
+
+Frozen P29 CSR policy:
+
+```text
+New P29 runtime telemetry CSR window: 0x6C0 - 0x73C
+Telemetry disabled by reset to preserve existing regression behavior
+Telemetry counters are observational only
+Telemetry clear does not clear functional queue/event/guard state
+32-bit software-visible counters
+Counters wrap on overflow in the first prototype
+No hardware division or ratio registers
+No new P22 event bit
+No SQ entry format change
+No CQ completion record format change
+No descriptor format change
+No completion record format change
+No BRAM / GEMM / DMA / frontend datapath semantic change
+```
+
+Frozen P29 telemetry groups:
+
+```text
+Queue service counters:
+  queue starts, SQ command accepts, command completions, CQ commits, drained / stopped / error observations
+
+Host CQ consumption counters:
+  positive CQ_HEAD update count, total consumed CQ delta, maximum CQ batch size
+
+Event / interrupt efficiency counters:
+  event captures, IRQ-eligible captures, completion-style event releases
+
+P28 moderation counters:
+  coalesced releases, threshold releases, timer releases, urgent bypass observations
+
+Stall / recovery counters:
+  CQ-full stall, CQ-space recovery, timeout error, memory-guard error, STOP_QUEUE request
+
+Cycle counters:
+  queue enabled, queue busy, queue idle, queue stalled, CQ-full stall, lower-level wait cycles
+```
+
+Frozen P29 source policy:
+
+```text
+P29 counters observe existing queue/event/moderation/guard source points.
+P29 counters must not create new command acceptance, new event pending bits, new queue errors, or new datapath side effects.
+P29 host-consume telemetry observes positive CSR_CQ_HEAD deltas only.
+P29 event efficiency telemetry mirrors source points already validated by P22 and P28.
+P29 timeout and guard telemetry are summary counts; existing P24/P27 diagnostics remain authoritative.
+```
+
+P29B validation status:
+
+```text
+P29A: Runtime telemetry prototype spec PASS
+P29B: Telemetry CSR policy / counter map freeze PASS
+```
+
+P29B does not add RTL, UVM regression items, Tcl scripts, README updates, or regression-list items.  Full regression remains:
+
+```text
+TOTAL : 144
+PASS  : 144
+FAIL  : 0
+```
+
