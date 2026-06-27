@@ -17,6 +17,7 @@ module ai_accel_csr_regs #(
     parameter logic [31:0] CSR_QUEUE_VERSION_VALUE         = 32'h0001_0019,
     parameter logic [31:0] CSR_EVENT_VERSION_VALUE         = 32'h0001_0022,
     parameter logic [31:0] CSR_MEM_GUARD_VERSION_VALUE     = 32'h0001_0027,
+    parameter logic [31:0] CSR_TELEM_VERSION_VALUE         = 32'h0001_0029,
     parameter logic [31:0] CSR_EVENT_CONTROL_RESET         = 32'h0000_0004,
     parameter int          P16_RECIPE_QUEUE_DEPTH       = 4
 )(
@@ -614,6 +615,42 @@ module ai_accel_csr_regs #(
     localparam logic [CSR_ADDR_WIDTH-1:0] CSR_MEM_GUARD_DST_LIMIT_ADDR            = 12'h6A4;
 
     // ------------------------------------------------------------
+    // P29 runtime telemetry CSR window
+    // ------------------------------------------------------------
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_VERSION_ADDR                  = 12'h6C0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_COMMAND_ADDR                  = 12'h6C4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_STATUS_ADDR                   = 12'h6C8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CONTROL_ADDR                  = 12'h6CC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_START_COUNT_ADDR        = 12'h6D0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_SQ_ACCEPT_COUNT_ADDR          = 12'h6D4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CMD_COMPLETE_COUNT_ADDR       = 12'h6D8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_COMMIT_COUNT_ADDR          = 12'h6DC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_DRAINED_COUNT_ADDR      = 12'h6E0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_STOPPED_COUNT_ADDR      = 12'h6E4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_ERROR_COUNT_ADDR        = 12'h6E8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_HEAD_UPDATE_COUNT_ADDR     = 12'h6EC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_CONSUMED_COUNT_ADDR        = 12'h6F0;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_MAX_CQ_BATCH_SIZE_ADDR        = 12'h6F4;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_EVENT_CAPTURE_COUNT_ADDR      = 12'h6F8;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_IRQ_ELIGIBLE_COUNT_ADDR       = 12'h6FC;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_COMPLETION_EVENT_COUNT_ADDR   = 12'h700;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_COALESCED_RELEASE_COUNT_ADDR  = 12'h704;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_THRESHOLD_RELEASE_COUNT_ADDR  = 12'h708;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_TIMER_RELEASE_COUNT_ADDR      = 12'h70C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_URGENT_BYPASS_COUNT_ADDR      = 12'h710;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_FULL_STALL_COUNT_ADDR      = 12'h714;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_SPACE_RECOVERED_COUNT_ADDR = 12'h718;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_TIMEOUT_ERROR_COUNT_ADDR      = 12'h71C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_MEM_GUARD_ERROR_COUNT_ADDR    = 12'h720;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_STOP_QUEUE_REQUEST_COUNT_ADDR = 12'h724;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_ENABLED_CYCLES_ADDR     = 12'h728;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_BUSY_CYCLES_ADDR        = 12'h72C;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_IDLE_CYCLES_ADDR        = 12'h730;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_QUEUE_STALLED_CYCLES_ADDR     = 12'h734;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_CQ_FULL_STALL_CYCLES_ADDR     = 12'h738;
+    localparam logic [CSR_ADDR_WIDTH-1:0] CSR_TELEM_LOWER_WAIT_CYCLES_ADDR        = 12'h73C;
+
+    // ------------------------------------------------------------
     // P27 memory access guard constants
     // ------------------------------------------------------------
     localparam int MEM_GUARD_CMD_CLEAR_ERROR    = 8;
@@ -663,11 +700,33 @@ module ai_accel_csr_regs #(
     localparam int MEM_GUARD_REJ_UNSUPPORTED_CMD  = 2;
     localparam int MEM_GUARD_REJ_STRICT_START     = 3;
 
+    localparam int P24_QUEUE_TIMEOUT_ERROR_BIT      = 6;
     localparam int P27_QUEUE_MEMORY_GUARD_ERROR_BIT = 9;
 
     localparam logic [31:0] MEM_GUARD_CONTROL_WR_MASK = 32'h0000_11F3;
     localparam logic [31:0] MEM_GUARD_ALL_ERROR_MASK  = 32'h0000_FFFF;
     localparam logic [31:0] MEM_GUARD_ALL_REJECT_MASK = 32'h0000_000F;
+
+    // ------------------------------------------------------------
+    // P29 runtime telemetry constants
+    // ------------------------------------------------------------
+    localparam int TELEM_CMD_CLEAR_COUNTERS = 8;
+
+    localparam int TELEM_CONTROL_ENABLE                 = 0;
+    localparam int TELEM_CONTROL_CYCLE_COUNT_ENABLE     = 1;
+    localparam int TELEM_CONTROL_HOST_CQ_CONSUME_ENABLE = 2;
+    localparam int TELEM_CONTROL_EVENT_EFF_ENABLE       = 3;
+
+    localparam int TELEM_STATUS_ENABLED                = 0;
+    localparam int TELEM_STATUS_CYCLE_ENABLED          = 1;
+    localparam int TELEM_STATUS_HOST_CQ_CONSUME_ENABLE = 2;
+    localparam int TELEM_STATUS_EVENT_EFF_ENABLE       = 3;
+    localparam int TELEM_STATUS_ANY_COUNTER_NONZERO    = 4;
+    localparam int TELEM_STATUS_QUEUE_ACTIVE           = 5;
+    localparam int TELEM_STATUS_CYCLE_ACTIVE           = 6;
+    localparam int TELEM_STATUS_CSR_READY              = 16;
+
+    localparam logic [31:0] TELEM_CONTROL_WR_MASK = 32'h0000_000F;
 
     // ------------------------------------------------------------
     // P22 event notification / P28 moderation constants
@@ -1130,6 +1189,62 @@ module ai_accel_csr_regs #(
     logic        queue_done_stopped_d_q;
     logic        queue_cq_full_stall_d_q;
     logic        queue_cq_space_nonzero_d_q;
+
+    logic        queue_timeout_error_d_q;
+    logic        queue_mem_guard_error_d_q;
+
+    logic [31:0] telem_control_q;
+    logic [31:0] telem_status_read_data;
+    logic [31:0] telem_command_masked;
+    logic        telem_command_has_active_strobe;
+    logic        telem_clear_counters_cmd;
+    logic        telem_enabled;
+    logic        telem_cycle_enabled;
+    logic        telem_host_cq_consume_enabled;
+    logic        telem_event_efficiency_enabled;
+    logic        telem_queue_active;
+    logic        telem_cycle_active;
+    logic        telem_any_counter_nonzero;
+    logic        telem_queue_start_source;
+    logic        telem_stop_queue_source;
+    logic        telem_cq_head_update_source;
+    logic [31:0] telem_cq_head_write_value;
+    logic [31:0] telem_cq_head_write_delta;
+    logic        telem_completion_event_source;
+    logic        telem_cq_full_stall_source;
+    logic        telem_cq_space_recovered_source;
+    logic        telem_timeout_error_source;
+    logic        telem_mem_guard_error_source;
+    logic        telem_lower_wait_active;
+
+    logic [31:0] telem_queue_start_count_q;
+    logic [31:0] telem_sq_accept_count_q;
+    logic [31:0] telem_cmd_complete_count_q;
+    logic [31:0] telem_cq_commit_count_q;
+    logic [31:0] telem_queue_drained_count_q;
+    logic [31:0] telem_queue_stopped_count_q;
+    logic [31:0] telem_queue_error_count_q;
+    logic [31:0] telem_cq_head_update_count_q;
+    logic [31:0] telem_cq_consumed_count_q;
+    logic [31:0] telem_max_cq_batch_size_q;
+    logic [31:0] telem_event_capture_count_q;
+    logic [31:0] telem_irq_eligible_count_q;
+    logic [31:0] telem_completion_event_count_q;
+    logic [31:0] telem_coalesced_release_count_q;
+    logic [31:0] telem_threshold_release_count_q;
+    logic [31:0] telem_timer_release_count_q;
+    logic [31:0] telem_urgent_bypass_count_q;
+    logic [31:0] telem_cq_full_stall_count_q;
+    logic [31:0] telem_cq_space_recovered_count_q;
+    logic [31:0] telem_timeout_error_count_q;
+    logic [31:0] telem_mem_guard_error_count_q;
+    logic [31:0] telem_stop_queue_request_count_q;
+    logic [31:0] telem_queue_enabled_cycles_q;
+    logic [31:0] telem_queue_busy_cycles_q;
+    logic [31:0] telem_queue_idle_cycles_q;
+    logic [31:0] telem_queue_stalled_cycles_q;
+    logic [31:0] telem_cq_full_stall_cycles_q;
+    logic [31:0] telem_lower_wait_cycles_q;
 
     // ------------------------------------------------------------
     // Internal command decode helpers
@@ -1645,7 +1760,40 @@ CSR_QUEUE_VERSION_ADDR,
             CSR_MEM_GUARD_SRC_BASE_ADDR,
             CSR_MEM_GUARD_SRC_LIMIT_ADDR,
             CSR_MEM_GUARD_DST_BASE_ADDR,
-            CSR_MEM_GUARD_DST_LIMIT_ADDR: begin
+            CSR_MEM_GUARD_DST_LIMIT_ADDR,
+
+            CSR_TELEM_VERSION_ADDR,
+            CSR_TELEM_COMMAND_ADDR,
+            CSR_TELEM_STATUS_ADDR,
+            CSR_TELEM_CONTROL_ADDR,
+            CSR_TELEM_QUEUE_START_COUNT_ADDR,
+            CSR_TELEM_SQ_ACCEPT_COUNT_ADDR,
+            CSR_TELEM_CMD_COMPLETE_COUNT_ADDR,
+            CSR_TELEM_CQ_COMMIT_COUNT_ADDR,
+            CSR_TELEM_QUEUE_DRAINED_COUNT_ADDR,
+            CSR_TELEM_QUEUE_STOPPED_COUNT_ADDR,
+            CSR_TELEM_QUEUE_ERROR_COUNT_ADDR,
+            CSR_TELEM_CQ_HEAD_UPDATE_COUNT_ADDR,
+            CSR_TELEM_CQ_CONSUMED_COUNT_ADDR,
+            CSR_TELEM_MAX_CQ_BATCH_SIZE_ADDR,
+            CSR_TELEM_EVENT_CAPTURE_COUNT_ADDR,
+            CSR_TELEM_IRQ_ELIGIBLE_COUNT_ADDR,
+            CSR_TELEM_COMPLETION_EVENT_COUNT_ADDR,
+            CSR_TELEM_COALESCED_RELEASE_COUNT_ADDR,
+            CSR_TELEM_THRESHOLD_RELEASE_COUNT_ADDR,
+            CSR_TELEM_TIMER_RELEASE_COUNT_ADDR,
+            CSR_TELEM_URGENT_BYPASS_COUNT_ADDR,
+            CSR_TELEM_CQ_FULL_STALL_COUNT_ADDR,
+            CSR_TELEM_CQ_SPACE_RECOVERED_COUNT_ADDR,
+            CSR_TELEM_TIMEOUT_ERROR_COUNT_ADDR,
+            CSR_TELEM_MEM_GUARD_ERROR_COUNT_ADDR,
+            CSR_TELEM_STOP_QUEUE_REQUEST_COUNT_ADDR,
+            CSR_TELEM_QUEUE_ENABLED_CYCLES_ADDR,
+            CSR_TELEM_QUEUE_BUSY_CYCLES_ADDR,
+            CSR_TELEM_QUEUE_IDLE_CYCLES_ADDR,
+            CSR_TELEM_QUEUE_STALLED_CYCLES_ADDR,
+            CSR_TELEM_CQ_FULL_STALL_CYCLES_ADDR,
+            CSR_TELEM_LOWER_WAIT_CYCLES_ADDR: begin
                 return 1'b1;
             end
 
@@ -2328,6 +2476,135 @@ CSR_QUEUE_VERSION_ADDR,
                 return mem_guard_dst_limit_q;
             end
 
+
+            CSR_TELEM_VERSION_ADDR: begin
+                return CSR_TELEM_VERSION_VALUE;
+            end
+
+            CSR_TELEM_COMMAND_ADDR: begin
+                return 32'h0000_0000;
+            end
+
+            CSR_TELEM_STATUS_ADDR: begin
+                return telem_status_read_data;
+            end
+
+            CSR_TELEM_CONTROL_ADDR: begin
+                return telem_control_q & TELEM_CONTROL_WR_MASK;
+            end
+
+            CSR_TELEM_QUEUE_START_COUNT_ADDR: begin
+                return telem_queue_start_count_q;
+            end
+
+            CSR_TELEM_SQ_ACCEPT_COUNT_ADDR: begin
+                return telem_sq_accept_count_q;
+            end
+
+            CSR_TELEM_CMD_COMPLETE_COUNT_ADDR: begin
+                return telem_cmd_complete_count_q;
+            end
+
+            CSR_TELEM_CQ_COMMIT_COUNT_ADDR: begin
+                return telem_cq_commit_count_q;
+            end
+
+            CSR_TELEM_QUEUE_DRAINED_COUNT_ADDR: begin
+                return telem_queue_drained_count_q;
+            end
+
+            CSR_TELEM_QUEUE_STOPPED_COUNT_ADDR: begin
+                return telem_queue_stopped_count_q;
+            end
+
+            CSR_TELEM_QUEUE_ERROR_COUNT_ADDR: begin
+                return telem_queue_error_count_q;
+            end
+
+            CSR_TELEM_CQ_HEAD_UPDATE_COUNT_ADDR: begin
+                return telem_cq_head_update_count_q;
+            end
+
+            CSR_TELEM_CQ_CONSUMED_COUNT_ADDR: begin
+                return telem_cq_consumed_count_q;
+            end
+
+            CSR_TELEM_MAX_CQ_BATCH_SIZE_ADDR: begin
+                return telem_max_cq_batch_size_q;
+            end
+
+            CSR_TELEM_EVENT_CAPTURE_COUNT_ADDR: begin
+                return telem_event_capture_count_q;
+            end
+
+            CSR_TELEM_IRQ_ELIGIBLE_COUNT_ADDR: begin
+                return telem_irq_eligible_count_q;
+            end
+
+            CSR_TELEM_COMPLETION_EVENT_COUNT_ADDR: begin
+                return telem_completion_event_count_q;
+            end
+
+            CSR_TELEM_COALESCED_RELEASE_COUNT_ADDR: begin
+                return telem_coalesced_release_count_q;
+            end
+
+            CSR_TELEM_THRESHOLD_RELEASE_COUNT_ADDR: begin
+                return telem_threshold_release_count_q;
+            end
+
+            CSR_TELEM_TIMER_RELEASE_COUNT_ADDR: begin
+                return telem_timer_release_count_q;
+            end
+
+            CSR_TELEM_URGENT_BYPASS_COUNT_ADDR: begin
+                return telem_urgent_bypass_count_q;
+            end
+
+            CSR_TELEM_CQ_FULL_STALL_COUNT_ADDR: begin
+                return telem_cq_full_stall_count_q;
+            end
+
+            CSR_TELEM_CQ_SPACE_RECOVERED_COUNT_ADDR: begin
+                return telem_cq_space_recovered_count_q;
+            end
+
+            CSR_TELEM_TIMEOUT_ERROR_COUNT_ADDR: begin
+                return telem_timeout_error_count_q;
+            end
+
+            CSR_TELEM_MEM_GUARD_ERROR_COUNT_ADDR: begin
+                return telem_mem_guard_error_count_q;
+            end
+
+            CSR_TELEM_STOP_QUEUE_REQUEST_COUNT_ADDR: begin
+                return telem_stop_queue_request_count_q;
+            end
+
+            CSR_TELEM_QUEUE_ENABLED_CYCLES_ADDR: begin
+                return telem_queue_enabled_cycles_q;
+            end
+
+            CSR_TELEM_QUEUE_BUSY_CYCLES_ADDR: begin
+                return telem_queue_busy_cycles_q;
+            end
+
+            CSR_TELEM_QUEUE_IDLE_CYCLES_ADDR: begin
+                return telem_queue_idle_cycles_q;
+            end
+
+            CSR_TELEM_QUEUE_STALLED_CYCLES_ADDR: begin
+                return telem_queue_stalled_cycles_q;
+            end
+
+            CSR_TELEM_CQ_FULL_STALL_CYCLES_ADDR: begin
+                return telem_cq_full_stall_cycles_q;
+            end
+
+            CSR_TELEM_LOWER_WAIT_CYCLES_ADDR: begin
+                return telem_lower_wait_cycles_q;
+            end
+
             default: begin
                 if (recipe_slot_addr_is_valid(addr)) begin
                     return recipe_slot_read_data(addr);
@@ -2725,6 +3002,74 @@ CSR_QUEUE_VERSION_ADDR,
         mem_guard_status_read_data[MEM_GUARD_STATUS_DST_CHECK_ENABLED]  = mem_guard_control_q[MEM_GUARD_CONTROL_DST_CHECK_ENABLE];
         mem_guard_status_read_data[MEM_GUARD_STATUS_ERROR_PENDING]      = |mem_guard_error_status_q;
         mem_guard_status_read_data[MEM_GUARD_STATUS_QUEUE_ERROR_MIRROR] = (((queue_error_status | queue_extra_error_status_q) >> P27_QUEUE_MEMORY_GUARD_ERROR_BIT) & 32'h0000_0001);
+
+        telem_enabled                 = telem_control_q[TELEM_CONTROL_ENABLE];
+        telem_cycle_enabled           = telem_enabled &&
+                                        telem_control_q[TELEM_CONTROL_CYCLE_COUNT_ENABLE];
+        telem_host_cq_consume_enabled = telem_enabled &&
+                                        telem_control_q[TELEM_CONTROL_HOST_CQ_CONSUME_ENABLE];
+        telem_event_efficiency_enabled = telem_enabled &&
+                                         telem_control_q[TELEM_CONTROL_EVENT_EFF_ENABLE];
+
+        telem_completion_event_source = |(event_source_mask &
+                                          ((32'h1 << P22_EVENT_QUEUE_COMPLETED) |
+                                           (32'h1 << P22_EVENT_CQ_NOT_EMPTY) |
+                                           (32'h1 << P22_EVENT_CQ_THRESHOLD) |
+                                           (32'h1 << P28_EVENT_CQ_MOD_TIMER)));
+        telem_cq_full_stall_source = queue_cq_full_stall & ~queue_cq_full_stall_d_q;
+        telem_cq_space_recovered_source = queue_busy &&
+                                          (queue_cq_space != 32'h0000_0000) &&
+                                          ~queue_cq_space_nonzero_d_q;
+        telem_timeout_error_source = ((queue_error_status | queue_extra_error_status_q) &
+                                      (32'h1 << P24_QUEUE_TIMEOUT_ERROR_BIT)) != 32'h0000_0000 &&
+                                     !queue_timeout_error_d_q;
+        telem_mem_guard_error_source = ((queue_error_status | queue_extra_error_status_q) &
+                                        (32'h1 << P27_QUEUE_MEMORY_GUARD_ERROR_BIT)) != 32'h0000_0000 &&
+                                       !queue_mem_guard_error_d_q;
+        telem_lower_wait_active = queue_busy &&
+                                  (desc_fetch_busy || recipe_busy || job_busy ||
+                                   micro_op_busy || completion_wb_busy);
+
+        telem_queue_active = telem_enabled;
+        telem_cycle_active = telem_cycle_enabled;
+        telem_any_counter_nonzero = |(telem_queue_start_count_q |
+                                      telem_sq_accept_count_q |
+                                      telem_cmd_complete_count_q |
+                                      telem_cq_commit_count_q |
+                                      telem_queue_drained_count_q |
+                                      telem_queue_stopped_count_q |
+                                      telem_queue_error_count_q |
+                                      telem_cq_head_update_count_q |
+                                      telem_cq_consumed_count_q |
+                                      telem_max_cq_batch_size_q |
+                                      telem_event_capture_count_q |
+                                      telem_irq_eligible_count_q |
+                                      telem_completion_event_count_q |
+                                      telem_coalesced_release_count_q |
+                                      telem_threshold_release_count_q |
+                                      telem_timer_release_count_q |
+                                      telem_urgent_bypass_count_q |
+                                      telem_cq_full_stall_count_q |
+                                      telem_cq_space_recovered_count_q |
+                                      telem_timeout_error_count_q |
+                                      telem_mem_guard_error_count_q |
+                                      telem_stop_queue_request_count_q |
+                                      telem_queue_enabled_cycles_q |
+                                      telem_queue_busy_cycles_q |
+                                      telem_queue_idle_cycles_q |
+                                      telem_queue_stalled_cycles_q |
+                                      telem_cq_full_stall_cycles_q |
+                                      telem_lower_wait_cycles_q);
+
+        telem_status_read_data = 32'h0000_0000;
+        telem_status_read_data[TELEM_STATUS_ENABLED]                = telem_enabled;
+        telem_status_read_data[TELEM_STATUS_CYCLE_ENABLED]          = telem_control_q[TELEM_CONTROL_CYCLE_COUNT_ENABLE];
+        telem_status_read_data[TELEM_STATUS_HOST_CQ_CONSUME_ENABLE] = telem_control_q[TELEM_CONTROL_HOST_CQ_CONSUME_ENABLE];
+        telem_status_read_data[TELEM_STATUS_EVENT_EFF_ENABLE]       = telem_control_q[TELEM_CONTROL_EVENT_EFF_ENABLE];
+        telem_status_read_data[TELEM_STATUS_ANY_COUNTER_NONZERO]    = telem_any_counter_nonzero;
+        telem_status_read_data[TELEM_STATUS_QUEUE_ACTIVE]           = telem_queue_active;
+        telem_status_read_data[TELEM_STATUS_CYCLE_ACTIVE]           = telem_cycle_active;
+        telem_status_read_data[TELEM_STATUS_CSR_READY]              = 1'b1;
     end
 
     // ------------------------------------------------------------
@@ -2812,6 +3157,29 @@ CSR_QUEUE_VERSION_ADDR,
 
         mem_guard_command_has_active_strobe = |write_strb;
         mem_guard_command_masked            = write_data & strobe_to_mask(write_strb);
+
+        telem_command_has_active_strobe = |write_strb;
+        telem_command_masked            = write_data & strobe_to_mask(write_strb);
+        telem_clear_counters_cmd        = write_apply &&
+                                          (write_addr == CSR_TELEM_COMMAND_ADDR) &&
+                                          telem_command_has_active_strobe &&
+                                          telem_command_masked[TELEM_CMD_CLEAR_COUNTERS];
+
+        telem_cq_head_write_value  = apply_wstrb32(queue_cq_head_q, write_data, write_strb);
+        telem_cq_head_write_delta  = telem_cq_head_write_value - queue_cq_head_q;
+        telem_cq_head_update_source = write_apply &&
+                                      (write_addr == CSR_QUEUE_CQ_HEAD_ADDR) &&
+                                      (|write_strb) &&
+                                      (telem_cq_head_write_value > queue_cq_head_q);
+
+        telem_queue_start_source = write_apply &&
+                                   (write_addr == CSR_QUEUE_COMMAND_ADDR) &&
+                                   queue_command_has_active_strobe &&
+                                   queue_command_has_start;
+        telem_stop_queue_source  = write_apply &&
+                                   (write_addr == CSR_QUEUE_COMMAND_ADDR) &&
+                                   queue_command_has_active_strobe &&
+                                   queue_command_masked[QUEUE_CMD_STOP_BIT];
     end
 
     // ------------------------------------------------------------
@@ -2989,6 +3357,38 @@ CSR_QUEUE_VERSION_ADDR,
             queue_done_stopped_d_q      <= 1'b0;
             queue_cq_full_stall_d_q     <= 1'b0;
             queue_cq_space_nonzero_d_q  <= 1'b0;
+            queue_timeout_error_d_q     <= 1'b0;
+            queue_mem_guard_error_d_q   <= 1'b0;
+
+            telem_control_q                       <= 32'h0000_0000;
+            telem_queue_start_count_q             <= 32'h0000_0000;
+            telem_sq_accept_count_q               <= 32'h0000_0000;
+            telem_cmd_complete_count_q            <= 32'h0000_0000;
+            telem_cq_commit_count_q               <= 32'h0000_0000;
+            telem_queue_drained_count_q           <= 32'h0000_0000;
+            telem_queue_stopped_count_q           <= 32'h0000_0000;
+            telem_queue_error_count_q             <= 32'h0000_0000;
+            telem_cq_head_update_count_q          <= 32'h0000_0000;
+            telem_cq_consumed_count_q             <= 32'h0000_0000;
+            telem_max_cq_batch_size_q             <= 32'h0000_0000;
+            telem_event_capture_count_q           <= 32'h0000_0000;
+            telem_irq_eligible_count_q            <= 32'h0000_0000;
+            telem_completion_event_count_q        <= 32'h0000_0000;
+            telem_coalesced_release_count_q       <= 32'h0000_0000;
+            telem_threshold_release_count_q       <= 32'h0000_0000;
+            telem_timer_release_count_q           <= 32'h0000_0000;
+            telem_urgent_bypass_count_q           <= 32'h0000_0000;
+            telem_cq_full_stall_count_q           <= 32'h0000_0000;
+            telem_cq_space_recovered_count_q      <= 32'h0000_0000;
+            telem_timeout_error_count_q           <= 32'h0000_0000;
+            telem_mem_guard_error_count_q         <= 32'h0000_0000;
+            telem_stop_queue_request_count_q      <= 32'h0000_0000;
+            telem_queue_enabled_cycles_q          <= 32'h0000_0000;
+            telem_queue_busy_cycles_q             <= 32'h0000_0000;
+            telem_queue_idle_cycles_q             <= 32'h0000_0000;
+            telem_queue_stalled_cycles_q          <= 32'h0000_0000;
+            telem_cq_full_stall_cycles_q          <= 32'h0000_0000;
+            telem_lower_wait_cycles_q             <= 32'h0000_0000;
 
             for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
                 recipe_slot_control_q[slot_i]          <= 32'h0000_0000;
@@ -3075,6 +3475,124 @@ CSR_QUEUE_VERSION_ADDR,
             queue_done_stopped_d_q     <= queue_done_status[3];
             queue_cq_full_stall_d_q    <= queue_cq_full_stall;
             queue_cq_space_nonzero_d_q <= (queue_cq_space != 32'h0000_0000);
+            queue_timeout_error_d_q    <= (((queue_error_status | queue_extra_error_status_q) &
+                                           (32'h1 << P24_QUEUE_TIMEOUT_ERROR_BIT)) != 32'h0000_0000);
+            queue_mem_guard_error_d_q  <= (((queue_error_status | queue_extra_error_status_q) &
+                                           (32'h1 << P27_QUEUE_MEMORY_GUARD_ERROR_BIT)) != 32'h0000_0000);
+
+            if (telem_clear_counters_cmd) begin
+                telem_queue_start_count_q        <= 32'h0000_0000;
+                telem_sq_accept_count_q          <= 32'h0000_0000;
+                telem_cmd_complete_count_q       <= 32'h0000_0000;
+                telem_cq_commit_count_q          <= 32'h0000_0000;
+                telem_queue_drained_count_q      <= 32'h0000_0000;
+                telem_queue_stopped_count_q      <= 32'h0000_0000;
+                telem_queue_error_count_q        <= 32'h0000_0000;
+                telem_cq_head_update_count_q     <= 32'h0000_0000;
+                telem_cq_consumed_count_q        <= 32'h0000_0000;
+                telem_max_cq_batch_size_q        <= 32'h0000_0000;
+                telem_event_capture_count_q      <= 32'h0000_0000;
+                telem_irq_eligible_count_q       <= 32'h0000_0000;
+                telem_completion_event_count_q   <= 32'h0000_0000;
+                telem_coalesced_release_count_q  <= 32'h0000_0000;
+                telem_threshold_release_count_q  <= 32'h0000_0000;
+                telem_timer_release_count_q      <= 32'h0000_0000;
+                telem_urgent_bypass_count_q      <= 32'h0000_0000;
+                telem_cq_full_stall_count_q      <= 32'h0000_0000;
+                telem_cq_space_recovered_count_q <= 32'h0000_0000;
+                telem_timeout_error_count_q      <= 32'h0000_0000;
+                telem_mem_guard_error_count_q    <= 32'h0000_0000;
+                telem_stop_queue_request_count_q <= 32'h0000_0000;
+                telem_queue_enabled_cycles_q     <= 32'h0000_0000;
+                telem_queue_busy_cycles_q        <= 32'h0000_0000;
+                telem_queue_idle_cycles_q        <= 32'h0000_0000;
+                telem_queue_stalled_cycles_q     <= 32'h0000_0000;
+                telem_cq_full_stall_cycles_q     <= 32'h0000_0000;
+                telem_lower_wait_cycles_q        <= 32'h0000_0000;
+            end else if (telem_enabled) begin
+                if (telem_queue_start_source) begin
+                    telem_queue_start_count_q <= telem_queue_start_count_q + 32'd1;
+                end
+                if (queue_cmd_validated_pulse) begin
+                    telem_sq_accept_count_q <= telem_sq_accept_count_q + 32'd1;
+                end
+                if (queue_completion_commit_pulse) begin
+                    telem_cmd_complete_count_q <= telem_cmd_complete_count_q + 32'd1;
+                    telem_cq_commit_count_q    <= telem_cq_commit_count_q + 32'd1;
+                end
+                if (queue_drained_pulse) begin
+                    telem_queue_drained_count_q <= telem_queue_drained_count_q + 32'd1;
+                end
+                if (queue_done_status[3] & ~queue_done_stopped_d_q) begin
+                    telem_queue_stopped_count_q <= telem_queue_stopped_count_q + 32'd1;
+                end
+                if (queue_error_pulse || queue_completion_error_pulse) begin
+                    telem_queue_error_count_q <= telem_queue_error_count_q + 32'd1;
+                end
+                if (telem_host_cq_consume_enabled && telem_cq_head_update_source) begin
+                    telem_cq_head_update_count_q <= telem_cq_head_update_count_q + 32'd1;
+                    telem_cq_consumed_count_q    <= telem_cq_consumed_count_q + telem_cq_head_write_delta;
+                    if (telem_cq_head_write_delta > telem_max_cq_batch_size_q) begin
+                        telem_max_cq_batch_size_q <= telem_cq_head_write_delta;
+                    end
+                end
+                if (telem_event_efficiency_enabled) begin
+                    if (event_countable) begin
+                        telem_event_capture_count_q <= telem_event_capture_count_q + 32'd1;
+                    end
+                    if (event_irq_eligible_new) begin
+                        telem_irq_eligible_count_q <= telem_irq_eligible_count_q + 32'd1;
+                    end
+                    if (telem_completion_event_source) begin
+                        telem_completion_event_count_q <= telem_completion_event_count_q + 32'd1;
+                    end
+                    if (event_mod_release_pulse) begin
+                        telem_coalesced_release_count_q <= telem_coalesced_release_count_q + 32'd1;
+                    end
+                    if (event_mod_release_pulse && event_mod_threshold_hit) begin
+                        telem_threshold_release_count_q <= telem_threshold_release_count_q + 32'd1;
+                    end
+                    if (event_mod_release_pulse && event_mod_timer_hit) begin
+                        telem_timer_release_count_q <= telem_timer_release_count_q + 32'd1;
+                    end
+                    if (event_mod_urgent_bypass) begin
+                        telem_urgent_bypass_count_q <= telem_urgent_bypass_count_q + 32'd1;
+                    end
+                end
+                if (telem_cq_full_stall_source) begin
+                    telem_cq_full_stall_count_q <= telem_cq_full_stall_count_q + 32'd1;
+                end
+                if (telem_cq_space_recovered_source) begin
+                    telem_cq_space_recovered_count_q <= telem_cq_space_recovered_count_q + 32'd1;
+                end
+                if (telem_timeout_error_source) begin
+                    telem_timeout_error_count_q <= telem_timeout_error_count_q + 32'd1;
+                end
+                if (telem_mem_guard_error_source) begin
+                    telem_mem_guard_error_count_q <= telem_mem_guard_error_count_q + 32'd1;
+                end
+                if (telem_stop_queue_source) begin
+                    telem_stop_queue_request_count_q <= telem_stop_queue_request_count_q + 32'd1;
+                end
+                if (telem_cycle_enabled) begin
+                    if (queue_enable) begin
+                        telem_queue_enabled_cycles_q <= telem_queue_enabled_cycles_q + 32'd1;
+                    end
+                    if (queue_busy) begin
+                        telem_queue_busy_cycles_q <= telem_queue_busy_cycles_q + 32'd1;
+                    end
+                    if (queue_enable && !queue_busy && !queue_cq_full_stall) begin
+                        telem_queue_idle_cycles_q <= telem_queue_idle_cycles_q + 32'd1;
+                    end
+                    if (queue_cq_full_stall) begin
+                        telem_queue_stalled_cycles_q     <= telem_queue_stalled_cycles_q + 32'd1;
+                        telem_cq_full_stall_cycles_q     <= telem_cq_full_stall_cycles_q + 32'd1;
+                    end
+                    if (telem_lower_wait_active) begin
+                        telem_lower_wait_cycles_q <= telem_lower_wait_cycles_q + 32'd1;
+                    end
+                end
+            end
 
             event_pending_q <= (event_pending_q & ~event_clear_mask) | event_source_mask;
 
@@ -3900,6 +4418,15 @@ CSR_QUEUE_VERSION_ADDR,
 
                         CSR_QUEUE_CQ_STRIDE_ADDR: begin
                             queue_cq_stride_q <= apply_wstrb32(queue_cq_stride_q, write_data, write_strb);
+                        end
+
+                        CSR_TELEM_COMMAND_ADDR: begin
+                            // W1P clear is handled by telem_clear_counters_cmd.
+                        end
+
+                        CSR_TELEM_CONTROL_ADDR: begin
+                            telem_control_q <= apply_wstrb32(telem_control_q, write_data, write_strb) &
+                                               TELEM_CONTROL_WR_MASK;
                         end
 
 

@@ -258,6 +258,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_event_mod_timer_fallback_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P29 runtime telemetry tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_basic_telemetry_counter_smoke_test.sv"
+
 endpackage
 
 `endif

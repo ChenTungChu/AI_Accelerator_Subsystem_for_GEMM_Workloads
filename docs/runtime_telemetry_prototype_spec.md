@@ -929,3 +929,136 @@ Tradeoff explanation:
 ```text
 The design intentionally avoids complex profiling hardware, histograms, or out-of-order execution.  The first telemetry layer is a small set of software-readable counters that are easy to validate, easy to explain, and directly useful for driver bring-up.
 ```
+
+
+---
+
+## P29C Queue/Event Telemetry Counter RTL Integration Checkpoint
+
+P29C implements the first RTL integration checkpoint for the P29 runtime telemetry CSR window.
+
+Files updated:
+
+```text
+rtl/csr/ai_accel_csr_regs.sv
+```
+
+P29C keeps telemetry observational.  The telemetry counters read queue, event, moderation, guard, and cycle source points that already exist in the CSR block.  They do not generate new queue commands, new event pending bits, new queue errors, or any lower-level datapath side effects.
+
+Implemented telemetry CSR behavior:
+
+```text
+CSR_TELEM_VERSION reports 0x0001_0029
+CSR_TELEM_CONTROL enables telemetry categories
+CSR_TELEM_COMMAND.CLEAR_TELEMETRY_COUNTERS clears only telemetry counters / max trackers
+telemetry is disabled by reset
+all counters are 32-bit wrapping counters
+```
+
+Implemented counter source groups:
+
+```text
+Queue service counters observe START_QUEUE command writes, SQ command validation, CQ commit, drained, stopped, and queue error source points.
+Host CQ consumption counters observe positive CSR_CQ_HEAD deltas and track max batch size.
+Event / IRQ counters observe existing P22 event capture, IRQ eligibility, completion-style releases, and P28 moderation release causes.
+Stall / recovery counters observe CQ-full stall, CQ-space recovery, timeout error, memory-guard error, and STOP_QUEUE request source points.
+Cycle counters observe queue-enabled, busy, idle, CQ-full-stall, and lower-level wait cycles.
+```
+
+P29C does not add a standalone UVM top, standalone sim flow, new SQ/CQ format, new event bit, new queue policy, or BRAM/GEMM/DMA/frontend datapath change.
+
+Current expected status after P29C implementation:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+
+Full regression remains:
+  TOTAL : 144
+  PASS  : 144
+  FAIL  : 0
+```
+
+
+---
+
+## P29D Basic Telemetry Counter Smoke Implementation Checkpoint
+
+P29D adds the first targeted UVM validation for the P29 runtime telemetry CSR window.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_basic_telemetry_counter_smoke_test.sv
+```
+
+P29D reuses the validated P23 event-driven two-command SQ/CQ queue drain path.  It enables the P29 telemetry CSR window, runs a two-command queue session, consumes the resulting CQ records through the existing host runtime helper, and checks that basic telemetry counters moved in the expected direction.
+
+P29D validation flow:
+
+```text
+read CSR_TELEM_VERSION and check 0x0001_0029
+verify telemetry is disabled by reset
+issue CLEAR_TELEMETRY_COUNTERS while telemetry is disabled
+verify selected counters are zero
+enable telemetry, cycle counters, host-CQ-consume counters, and event-efficiency counters
+run a two-command event-driven queue drain
+wait for queue completion / CQ-not-empty / drained event notification
+consume CQ[0] and CQ[1]
+advance CQ_HEAD through the existing host runtime helper
+W1C-ack handled event bits
+check GEMM / DMA result compare still passes
+check queue / CQ / event / IRQ / cycle telemetry counters
+clear telemetry counters after the run and verify selected counters return to zero
+```
+
+Expected P29D PASS markers:
+
+```text
+[P29D_TELEM/RESET_PASS]
+[P29D_TELEM/CLEAR_PASS]
+[P29D_TELEM/ZERO_PASS]
+[P29D_TELEM/ENABLE_PASS]
+[P29D_TELEM/RUNTIME_COUNTERS_PASS]
+[P29D_TELEM/PASS]
+```
+
+P29D checks these basic telemetry behaviors:
+
+```text
+telemetry reset disabled policy
+telemetry CSR enable/status mirror behavior
+CLEAR_TELEMETRY_COUNTERS clears telemetry counters only
+accepted queue start count
+SQ accepted command count
+normal command completion count
+CQ commit count
+queue drained observation count
+host CQ_HEAD positive update count
+host CQ consumed delta count
+event capture count
+IRQ-eligible event count
+completion-style event count
+queue enabled / busy / idle cycle counters
+zero error/stall/recovery counters for a clean queue session
+```
+
+P29D does not add RTL, a standalone UVM top, a standalone sim flow, a new CSR window, new event bits, SQ/CQ format changes, descriptor format changes, completion record format changes, or BRAM/GEMM/DMA/frontend datapath changes.
+
+Current expected status after P29D implementation:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              IMPLEMENTED / RUN PENDING
+
+Full regression remains:
+  TOTAL : 144
+  PASS  : 144
+  FAIL  : 0
+```
