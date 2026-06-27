@@ -120,6 +120,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_mem_guard_dma_range_smoke_test \
     ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test \
     ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test \
+    ai_accel_subsys_csr_event_mod_timer_fallback_smoke_test \
+    ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test \
 ]
 
 # --------------------------------------------------

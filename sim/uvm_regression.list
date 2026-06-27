@@ -446,3 +446,17 @@ ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test CASE_ID 102 UVM_TOP ai_ac
 ai_accel_subsys_csr_mem_guard_dma_range_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 141: csr_mem_guard_cq_recovery_case102
 ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+
+
+# P28G event coalescing / interrupt moderation representative additions:
+#   - csr_event_mod_cq_threshold_case102
+#   - csr_event_mod_timer_fallback_case102
+#   - csr_event_mod_batch_rearm_recovery_case102
+
+# 142: csr_event_mod_cq_threshold_case102
+ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 143: csr_event_mod_timer_fallback_case102
+ai_accel_subsys_csr_event_mod_timer_fallback_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+# 144: csr_event_mod_batch_rearm_recovery_case102
+ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+

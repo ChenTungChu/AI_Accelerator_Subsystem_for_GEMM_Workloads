@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, and memory access guard / address range validation.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, and event coalescing / interrupt moderation validation.
 
 Current milestone:
 
 ```text
-Memory Access Guard / Address Range Validation P27H: Documentation Closure Completed
+Event Coalescing / Interrupt Moderation P28H: Documentation Closure Completed
 
 Regression:
-  TOTAL : 141
-  PASS  : 141
+  TOTAL : 144
+  PASS  : 144
   FAIL  : 0
 ```
 
@@ -58,6 +58,7 @@ CSR queue timeout / watchdog regression across descriptor-fetch timeout, complet
 CSR runtime stress / robustness regression across multi-session host runtime reuse, append/CQ-consume timing variation, STOP_QUEUE, timeout, and recovery mixed stress
 CSR queue lifecycle / soft-reset regression across drained cleanup/reinit, STOP_QUEUE preserve/restart, and timeout/error discard/reinit
 CSR memory access guard regression across SQ / descriptor / DMA source / destination / CQ completion safety
+CSR event coalescing / interrupt moderation regression across CQ threshold, timer fallback, and batch consume / re-arm recovery
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -300,6 +301,21 @@ Unsafe CQ writeback suppression when the selected CQ slot is outside the allowed
 P22 QUEUE_ERROR_EVENT reuse for memory-guard failures
 P26 lifecycle cleanup and known-good recovery after guard rejects
 Full regression after P27G: 141/141 PASS
+```
+
+P28 extends the P22/P23 event-driven queue runtime stack with event coalescing / interrupt moderation.  CQ records remain committed one per completed command and remain the authoritative completion detail, while the event path can delay completion-style host notification until a CQ occupancy threshold or moderation timer release condition is met.
+
+P28 scope:
+
+```text
+P28 event moderation fields reused inside the existing P22 event CSR window at 0x630 - 0x63C
+CQ threshold interrupt moderation validation
+Moderation timer fallback validation for sparse CQ occupancy
+Host runtime batch-CQ consume helper validation
+W1C ack / event re-arm recovery across multiple coalesced batches
+Urgent queue terminal / error / lifecycle events bypass moderation
+No SQ entry, CQ record, descriptor, completion record, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath format change
+Full regression after P28G: 144/144 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -963,6 +979,7 @@ Current UVM regression covers:
 - CSR runtime stress / robustness multi-session, append/consume timing, STOP_QUEUE, timeout, and recovery stress regression
 - CSR queue lifecycle / soft-reset drained cleanup, stopped preserve/restart, and timeout/error reinit regression
 - CSR memory access guard SQ / descriptor / DMA source / destination / CQ recovery regression
+- CSR event coalescing / interrupt moderation threshold / timer / batch re-arm regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -973,11 +990,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 141 items and is passing:
+The current full UVM regression contains 144 items and is passing:
 
 ```text
-TOTAL : 141
-PASS  : 141
+TOTAL : 144
+PASS  : 144
 FAIL  : 0
 ```
 
@@ -1143,8 +1160,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 141
-PASS  : 141
+TOTAL : 144
+PASS  : 144
 FAIL  : 0
 ```
 
@@ -1763,6 +1780,16 @@ csr_mem_guard_cq_recovery_case102
 
 These validate SQ / descriptor range rejects, DMA source / destination range rejects, CQ range reject with unsafe completion writeback suppression, P22 QUEUE_ERROR_EVENT reporting, and P26 lifecycle recovery to a known-good command.
 
+P28G added these event coalescing / interrupt moderation representative items:
+
+```text
+csr_event_mod_cq_threshold_case102
+csr_event_mod_timer_fallback_case102
+csr_event_mod_batch_rearm_recovery_case102
+```
+
+These validate CQ threshold-based coalesced notification, moderation timer fallback for sparse CQ occupancy, host batch-CQ consume, W1C ack / re-arm recovery, and urgent bypass visibility while moderation is enabled.
+
 The P23/P24/P25/P26 queue-runtime items use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, reuse the P19 SQ/CQ queue, P21 runtime doorbell behavior, P22 event CSR window, and P24 timeout policy, and validate a driver-style host runtime loop: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C ack/re-arm events, recover CQ-full, handle STOP_QUEUE, observe queue errors, recover from timeout, and reinitialize queue lifecycle state.
 
 ---
@@ -1784,7 +1811,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Memory Access Guard / Address Range Validation P27H: Documentation Closure Completed
+Event Coalescing / Interrupt Moderation P28H: Documentation Closure Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1829,9 +1856,17 @@ Completed:
   P27F: CQ / completion writeback guard + recovery smoke     PASS
   P27G: full regression integration                          PASS
   P27H: documentation closure                                PASS
+  P28A: event coalescing / interrupt moderation spec          PASS
+  P28B: event CSR moderation policy freeze                    PASS
+  P28C: host runtime batch-CQ helper extension                PASS
+  P28D: CQ threshold interrupt smoke                          PASS
+  P28E: moderation timer fallback smoke                       PASS
+  P28F: multi-command batch consume / re-arm recovery smoke   PASS
+  P28G: full regression integration                           PASS
+  P28H: documentation closure                                 PASS
 
 Regression:
-  141/141 PASS
+  144/144 PASS
 ```
 
 
@@ -1839,7 +1874,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, and memory access guard / address range validation.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, and event coalescing / interrupt moderation.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -1868,6 +1903,8 @@ P25F proves that the event-driven runtime remains reusable under representative 
 P26G proves that the queue runtime has a documented lifecycle contract around drained, stopped, and timeout/error terminal states.  The host can clean up a drained session and reinit, preserve pending SQ work across STOP_QUEUE and restart it, and discard a timeout/error session after lower-level quiescence before launching a known-good command.  Full regression closes at 138/138 PASS.
 
 P27G proves that host-visible memory addresses are now validated before unsafe external-memory traffic is launched.  The guard covers SQ command memory, CQ completion memory, descriptor memory, source memory, and destination memory; failures are reported through guard diagnostics, queue `MEMORY_GUARD_ERROR`, and the existing P22 `QUEUE_ERROR_EVENT`.  P27F also proves that an unsafe CQ slot suppresses completion writeback instead of writing outside the allowed CQ region.  Full regression closes at 141/141 PASS.
+
+P28G proves that the event path can coalesce completion-style host notifications without changing CQ record authority or queue execution order.  Threshold moderation wakes the host after enough CQ records accumulate, timer fallback bounds latency for sparse CQ occupancy, and the host runtime can batch-consume CQ records, advance CQ_HEAD, W1C-ack events, and re-arm for the next coalesced batch.  Urgent terminal/error events remain visible while moderation is enabled.  Full regression closes at 144/144 PASS.
 
 
 ---
@@ -2223,3 +2260,56 @@ CQ / completion writeback guard:
 ```
 
 P27 reuses the existing P22 `QUEUE_ERROR_EVENT` notification path and P26 cleanup/reinit policy.  The CQ completion record remains authoritative when the selected CQ slot is valid; if the CQ slot itself is unsafe, guard CSR diagnostics and queue CSR error/detail are authoritative.
+
+---
+
+## P28H Event Coalescing / Interrupt Moderation Documentation Closure
+
+P28H records the validated event coalescing / interrupt moderation behavior after full-regression closure.
+
+Validated P28 milestones:
+
+```text
+P28A: Event coalescing / interrupt moderation prototype spec     PASS
+P28B: Event CSR moderation policy freeze                         PASS
+P28C: Host runtime batch-CQ consume helper extension             PASS
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+P28F: Multi-command batch consume / re-arm recovery smoke        PASS
+P28G: Full regression integration                                PASS
+P28H: Documentation closure                                      PASS
+```
+
+Validated P28 full-regression representatives:
+
+```text
+csr_event_mod_cq_threshold_case102
+csr_event_mod_timer_fallback_case102
+csr_event_mod_batch_rearm_recovery_case102
+```
+
+Full regression after P28G:
+
+```text
+TOTAL : 144
+PASS  : 144
+FAIL  : 0
+```
+
+P28 reuses the existing P22 event notification window and does not allocate a new CSR window.  It uses the P28 moderation registers at `0x630 - 0x63C`, reuses `CSR_EVENT_CQ_THRESHOLD`, and keeps moderation disabled by reset so existing event behavior remains compatible unless software explicitly enables moderation.
+
+Validated P28 moderation behavior:
+
+```text
+CQ threshold release:
+  threshold=2, one CQ record does not generate an early completion IRQ, two CQ records release CQ_NOT_EMPTY / CQ_THRESHOLD notification, and the host consumes both CQ records as one batch
+
+Moderation timer fallback:
+  threshold=3, one CQ record remains below threshold, the moderation timer releases CQ_MODERATION_TIMER / CQ_NOT_EMPTY notification, and the timer release is not reported as a queue error
+
+Batch consume / re-arm recovery:
+  two coalesced batches complete in one queue pointer epoch, host consumes CQ[0:1], W1C-acks and re-arms, appends SQ[2:3], consumes CQ[2:3], and exits with event pending clear and CQ occupancy zero
+```
+
+P28 changes notification timing only.  CQ records remain authoritative, command execution remains single-active-command and in order, CQ records remain committed in order, and urgent queue terminal/error/lifecycle events bypass moderation.
+

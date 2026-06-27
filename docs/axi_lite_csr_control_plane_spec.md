@@ -2841,3 +2841,50 @@ TOTAL : 141
 PASS  : 141
 FAIL  : 0
 ```
+
+
+---
+
+## 31. P28H Event Coalescing / Interrupt Moderation CSR Closure
+
+P28H records closure of the event coalescing / interrupt moderation CSR policy after P28D/P28E/P28F targeted validation and P28G full-regression integration.
+
+The canonical P28 CSR map remains unchanged from P28B:
+
+```text
+P22/P28 event notification window : 0x600 - 0x63C
+CSR_EVENT_CQ_THRESHOLD            : 0x628
+CSR_EVENT_MOD_CONTROL             : 0x630
+CSR_EVENT_MOD_STATUS              : 0x634
+CSR_EVENT_MOD_TIMER_LIMIT         : 0x638
+CSR_EVENT_MOD_DEBUG               : 0x63C
+```
+
+Validated P28 CSR behavior:
+
+```text
+CSR_EVENT_MOD_CONTROL reset disables moderation and preserves immediate P22 behavior.
+CSR_EVENT_CQ_THRESHOLD controls threshold-based coalesced CQ notification.
+CSR_EVENT_MOD_TIMER_LIMIT controls bounded-latency timer fallback notification.
+CSR_EVENT_MOD_STATUS exposes moderation active state, CQ occupancy, unnotified CQ count, and timer state.
+CSR_EVENT_MOD_DEBUG exposes release cause and threshold/timer release counters.
+CSR_EVENT_PENDING[11] reports CQ_MODERATION_TIMER_EVENT for timer fallback release.
+```
+
+Validated P28 full-regression representatives:
+
+```text
+csr_event_mod_cq_threshold_case102
+csr_event_mod_timer_fallback_case102
+csr_event_mod_batch_rearm_recovery_case102
+```
+
+Full regression after P28G:
+
+```text
+TOTAL : 144
+PASS  : 144
+FAIL  : 0
+```
+
+P28H does not add a new CSR window, change any existing CSR address, change the SQ entry format, change the CQ completion record format, change the P17 descriptor format, change the P18 completion record format, or change the BRAM/GEMM/DMA/frontend datapaths.

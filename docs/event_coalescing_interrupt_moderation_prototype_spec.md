@@ -628,11 +628,11 @@ Recommended P28 split:
 P28A: Event coalescing / interrupt moderation prototype spec     PASS
 P28B: Event CSR moderation policy freeze                         PASS
 P28C: Host runtime batch-CQ consume helper extension             PASS
-P28D: CQ threshold interrupt smoke                               IMPLEMENTED / RUN PENDING
-P28E: moderation timer fallback smoke                            TODO
-P28F: multi-command batch consume / re-arm recovery smoke        TODO
-P28G: full regression integration                                TODO
-P28H: documentation closure                                      TODO
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+P28F: multi-command batch consume / re-arm recovery smoke        PASS
+P28G: full regression integration                                PASS
+P28H: documentation closure                                      PASS
 ```
 
 ### 13.1 P28B Event CSR Moderation Policy Freeze
@@ -951,9 +951,9 @@ P28G should add a small representative subset to the full regression.
 Recommended full-regression items:
 
 ```text
-csr_event_coalesce_threshold_case102
-csr_event_coalesce_timer_case102
-csr_event_coalesce_batch_rearm_case102
+csr_event_mod_cq_threshold_case102
+csr_event_mod_timer_fallback_case102
+csr_event_mod_batch_rearm_recovery_case102
 ```
 
 Expected full-regression count if three items are added:
@@ -1159,10 +1159,252 @@ P27H: Documentation closure                                      PASS
 P28A: Event coalescing / interrupt moderation prototype spec     PASS
 P28B: Event CSR moderation policy freeze                         PASS
 P28C: Host runtime batch-CQ consume helper extension             PASS
-P28D: CQ threshold interrupt smoke                               IMPLEMENTED / RUN PENDING
+P28D: CQ threshold interrupt smoke                               PASS
 
 Full regression remains:
   TOTAL : 141
   PASS  : 141
+  FAIL  : 0
+```
+
+---
+
+## 17. P28E Moderation Timer Fallback Smoke Implementation Checkpoint
+
+P28E validates the sparse-workload half of the P28 event coalescing / interrupt moderation policy.
+
+P28D already validated threshold-based release for a busy two-command queue drain.  P28E intentionally keeps CQ occupancy below the configured threshold and proves that the moderation timer still releases a bounded-latency notification.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_event_mod_timer_fallback_smoke_test.sv
+```
+
+P28E reuses the P28D RTL event moderation implementation in `ai_accel_csr_regs.sv`; no additional RTL delta is required for this checkpoint.
+
+P28E does not require a new standalone UVM top, a new sim flow, a new CSR window, an SQ/CQ format change, a descriptor format change, a completion record format change, or a BRAM/GEMM/DMA/frontend datapath change.
+
+P28E validation flow:
+
+```text
+program moderation threshold above sparse CQ occupancy
+program moderation timer limit
+submit one valid command
+observe one CQ record committed while threshold is not met
+verify no early completion-style interrupt before timer release
+wait for CQ_MODERATION_TIMER_EVENT / CQ_NOT_EMPTY notification
+verify threshold release counter remains zero
+verify timer release counter increments and release cause is TIMER
+host consumes the visible CQ record through the batch consume helper
+host publishes one CQ_HEAD update
+host W1C-clears and re-arms the event path
+final DMA result compare still passes
+```
+
+Expected P28E PASS markers:
+
+```text
+[P28E_MOD/BASELINE_PASS]
+[P28E_MOD/NO_THRESHOLD_PASS]
+[P28E_MOD/TIMER_IRQ_PASS]
+[P28E_MOD/BATCH_CONSUME_PASS]
+[P28E_MOD/REARM_PASS]
+[P28E_MOD/PASS]
+```
+
+Current status after P28E validation:
+
+```text
+P27H: Documentation closure                                      PASS
+P28A: Event coalescing / interrupt moderation prototype spec     PASS
+P28B: Event CSR moderation policy freeze                         PASS
+P28C: Host runtime batch-CQ consume helper extension             PASS
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+
+Full regression remains:
+  TOTAL : 141
+  PASS  : 141
+  FAIL  : 0
+```
+
+
+
+---
+
+## 18. P28F Multi-Command Batch Consume / Re-arm Recovery Smoke Implementation Checkpoint
+
+P28F validates that the P28 event moderation path remains usable across more than one coalesced completion window.
+
+P28D proved a single two-command queue drain can release a threshold-based CQ notification and that the host can consume two CQ records as one batch.  P28E proved that sparse CQ occupancy can be released by the moderation timer.  P28F focuses on the host-runtime recovery contract after W1C and re-arm:
+
+```text
+batch 0:
+  submit two SQ commands
+  wait for threshold-based coalesced CQ notification
+  batch-consume CQ[0] and CQ[1]
+  W1C-ack handled event bits
+  re-arm event path
+
+batch 1:
+  without resetting the queue pointer epoch, append two more SQ commands
+  wait for a second threshold-based coalesced CQ notification
+  batch-consume CQ[2] and CQ[3]
+  W1C-ack handled event bits
+  re-arm event path
+```
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test.sv
+```
+
+P28F reuses the P28D RTL event moderation implementation in `ai_accel_csr_regs.sv`; no additional RTL delta is required for this checkpoint.
+
+P28F does not require a new standalone UVM top, a new sim flow, a new CSR window, an SQ/CQ format change, a descriptor format change, a completion record format change, or a BRAM/GEMM/DMA/frontend datapath change.
+
+P28F validation flow:
+
+```text
+program one queue session with RUN_UNTIL_EMPTY enabled
+program moderation threshold = 2
+submit SQ[0] and SQ[1]
+wait for CQ_NOT_EMPTY / CQ_THRESHOLD notification
+confirm queue terminal / urgent bits remain visible while moderation is enabled
+consume CQ[0] and CQ[1] through the batch-CQ helper
+publish CQ_HEAD once after the batch
+W1C-ack and re-arm
+append SQ[2] and SQ[3] without resetting the pointer epoch
+wait for a second CQ_NOT_EMPTY / CQ_THRESHOLD notification
+confirm the threshold release counter advances again
+consume CQ[2] and CQ[3] through the batch-CQ helper
+publish CQ_HEAD once after the second batch
+W1C-ack and re-arm
+confirm final CQ occupancy is zero
+final DMA result compare still passes
+```
+
+Expected P28F PASS markers:
+
+```text
+[P28F_MOD/BATCH1_PASS]
+[P28F_MOD/REARM_PASS]
+[P28F_MOD/BATCH2_PASS]
+[P28F_MOD/URGENT_BYPASS_PASS]
+[P28F_MOD/RECOVERY_PASS]
+[P28F_MOD/PASS]
+```
+
+Current status after P28F validation:
+
+```text
+P27H: Documentation closure                                      PASS
+P28A: Event coalescing / interrupt moderation prototype spec     PASS
+P28B: Event CSR moderation policy freeze                         PASS
+P28C: Host runtime batch-CQ consume helper extension             PASS
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+P28F: Multi-command batch consume / re-arm recovery smoke        PASS
+
+Full regression remains:
+  TOTAL : 141
+  PASS  : 141
+  FAIL  : 0
+```
+
+
+---
+
+## 19. P28G Full Regression Integration Closure
+
+P28G integrates the targeted P28 event coalescing / interrupt moderation tests into the full UVM regression.
+
+Full-regression representatives added:
+
+```text
+csr_event_mod_cq_threshold_case102
+csr_event_mod_timer_fallback_case102
+csr_event_mod_batch_rearm_recovery_case102
+```
+
+The three representatives cover:
+
+```text
+CQ threshold interrupt moderation
+moderation timer fallback for sparse CQ occupancy
+multi-command batch consume / W1C ack / re-arm recovery
+```
+
+P28G uses the existing CSR wrapper top and existing `run_full_uvm_regression.tcl` flow.  It does not add a standalone UVM top, a standalone simulation flow, a new CSR window, an SQ/CQ format change, a descriptor format change, a completion record format change, or a BRAM/GEMM/DMA/frontend datapath change.
+
+Full regression after P28G:
+
+```text
+TOTAL : 144
+PASS  : 144
+FAIL  : 0
+```
+
+Current status after P28G:
+
+```text
+P27H: Documentation closure                                      PASS
+P28A: Event coalescing / interrupt moderation prototype spec     PASS
+P28B: Event CSR moderation policy freeze                         PASS
+P28C: Host runtime batch-CQ consume helper extension             PASS
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+P28F: Multi-command batch consume / re-arm recovery smoke        PASS
+P28G: Full regression integration                                PASS
+```
+
+---
+
+## 20. P28H Documentation Closure
+
+P28H closes the P28 documentation checkpoint after full-regression validation.
+
+Files updated:
+
+```text
+README.md
+event_coalescing_interrupt_moderation_prototype_spec.md
+axi_lite_csr_control_plane_spec.md
+uvm_regression.list
+run_full_uvm_regression.tcl
+```
+
+P28H records the validated behavior without changing the canonical CSR policy.  The canonical register map, bit fields, access types, and reset values remain in `axi_lite_csr_control_plane_spec.md`.
+
+Validated P28 behavior:
+
+```text
+CQ records remain authoritative and are still committed one per completed command.
+Completion-style notification may be held until a CQ threshold release or timer fallback release.
+Urgent queue terminal / error / lifecycle / recovery events bypass moderation.
+Host runtime can consume multiple CQ records per wakeup and publish one CQ_HEAD update.
+W1C ack and re-arm do not block a subsequent coalesced notification window.
+Moderation remains disabled by reset.
+```
+
+Final P28 status:
+
+```text
+P28A: Event coalescing / interrupt moderation prototype spec     PASS
+P28B: Event CSR moderation policy freeze                         PASS
+P28C: Host runtime batch-CQ consume helper extension             PASS
+P28D: CQ threshold interrupt smoke                               PASS
+P28E: Moderation timer fallback smoke                            PASS
+P28F: Multi-command batch consume / re-arm recovery smoke        PASS
+P28G: Full regression integration                                PASS
+P28H: Documentation closure                                      PASS
+
+Full regression:
+  TOTAL : 144
+  PASS  : 144
   FAIL  : 0
 ```

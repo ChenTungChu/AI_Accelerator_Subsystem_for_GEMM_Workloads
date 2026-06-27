@@ -24,6 +24,7 @@ transcript
 logs/
 *.log
 *.xml
+tcl_stacktrace.txt
 
 # Temporary/backup files
 *.bak

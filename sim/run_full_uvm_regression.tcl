@@ -2666,6 +2666,52 @@ run_reg_item "csr_mem_guard_cq_recovery_case102" {
 }
 
 # ============================================================
+# P28G: Event coalescing / interrupt moderation regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P28 targeted validation into the full regression by
+# covering CQ threshold interrupt moderation, moderation timer
+# fallback notification, and multi-command batch consume / re-arm
+# recovery.
+# Expected total after P28G: 144.
+# ============================================================
+run_reg_item "csr_event_mod_cq_threshold_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_event_mod_timer_fallback_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_mod_timer_fallback_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_event_mod_batch_rearm_recovery_case102" {
+    set UVM_TEST ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"
