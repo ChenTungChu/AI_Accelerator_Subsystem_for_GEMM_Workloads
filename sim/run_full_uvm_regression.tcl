@@ -2712,6 +2712,51 @@ run_reg_item "csr_event_mod_batch_rearm_recovery_case102" {
 }
 
 # ============================================================
+# P29G: Runtime telemetry regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P29 targeted validation into the full regression by
+# covering basic runtime telemetry counters, interrupt-efficiency /
+# coalescing telemetry, and CQ-full stall / recovery telemetry.
+# Expected total after P29G: 147.
+# ============================================================
+run_reg_item "csr_basic_telemetry_counter_case102" {
+    set UVM_TEST ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_interrupt_efficiency_telemetry_case102" {
+    set UVM_TEST ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_stall_recovery_telemetry_case102" {
+    set UVM_TEST ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"

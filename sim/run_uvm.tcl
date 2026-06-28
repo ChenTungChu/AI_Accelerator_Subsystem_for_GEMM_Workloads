@@ -124,6 +124,7 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test \
     ai_accel_subsys_csr_basic_telemetry_counter_smoke_test \
     ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test \
+    ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test \
 ]
 
 # --------------------------------------------------

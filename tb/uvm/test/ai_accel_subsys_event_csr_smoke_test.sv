@@ -41,9 +41,10 @@ class ai_accel_subsys_event_csr_smoke_test extends uvm_test;
     localparam logic [11:0] CSR_EVENT_CQ_THRESHOLD = 12'h628;
     localparam logic [11:0] CSR_EVENT_IRQ_COUNT    = 12'h62C;
 
-    // P27 memory guard CSRs occupy 0x640-0x6BC, so the
-    // event-window invalid-address probe must stay beyond that window.
-    localparam logic [11:0] CSR_EVENT_INVALID_ADDR = 12'h6C0;
+    // P27 memory guard CSRs occupy 0x640-0x6BC and P29 runtime
+    // telemetry CSRs occupy 0x6C0-0x73C.  The event-window invalid-
+    // address probe must stay beyond all allocated CSR windows.
+    localparam logic [11:0] CSR_EVENT_INVALID_ADDR = 12'h740;
 
     localparam int EVENT_CMD_CLEAR_PENDING  = 0;
     localparam int EVENT_CMD_FORCE_TEST     = 1;
@@ -227,7 +228,7 @@ class ai_accel_subsys_event_csr_smoke_test extends uvm_test;
         end
 
         `uvm_info("P22C_EVENT_CSR/PASS",
-            "P22C integrated Event CSR smoke completed: event window reset/readback, TEST_EVENT, mask/global IRQ summary, W1C/CLEAR_PENDING, counters, threshold RW, and P27-aware invalid-address SLVERR all passed",
+            "P22C integrated Event CSR smoke completed: event window reset/readback, TEST_EVENT, mask/global IRQ summary, W1C/CLEAR_PENDING, counters, threshold RW, and P29-aware invalid-address SLVERR all passed",
             UVM_LOW)
 
         phase.drop_objection(this);

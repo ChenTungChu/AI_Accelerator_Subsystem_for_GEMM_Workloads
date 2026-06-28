@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, and event coalescing / interrupt moderation validation.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, event coalescing / interrupt moderation validation, and runtime telemetry / queue performance counter validation.
 
 Current milestone:
 
 ```text
-Event Coalescing / Interrupt Moderation P28H: Documentation Closure Completed
+Runtime Telemetry / Queue Performance Counters P29H: Documentation Closure Completed
 
 Regression:
-  TOTAL : 144
-  PASS  : 144
+  TOTAL : 147
+  PASS  : 147
   FAIL  : 0
 ```
 
@@ -59,6 +59,7 @@ CSR runtime stress / robustness regression across multi-session host runtime reu
 CSR queue lifecycle / soft-reset regression across drained cleanup/reinit, STOP_QUEUE preserve/restart, and timeout/error discard/reinit
 CSR memory access guard regression across SQ / descriptor / DMA source / destination / CQ completion safety
 CSR event coalescing / interrupt moderation regression across CQ threshold, timer fallback, and batch consume / re-arm recovery
+CSR runtime telemetry regression across basic counters, interrupt-efficiency / coalescing counters, and CQ-full stall / recovery counters
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -316,6 +317,23 @@ W1C ack / event re-arm recovery across multiple coalesced batches
 Urgent queue terminal / error / lifecycle events bypass moderation
 No SQ entry, CQ record, descriptor, completion record, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath format change
 Full regression after P28G: 144/144 PASS
+```
+
+P29 extends the P19 through P28 host-runtime stack with a runtime telemetry / queue performance counter layer.  The telemetry block is observational only: it counts queue service, CQ consumption, event / IRQ efficiency, P28 coalescing releases, CQ-full stall / recovery behavior, and coarse queue cycle activity without changing command execution or any host-visible queue data format.
+
+P29 scope:
+
+```text
+P29 runtime telemetry CSR window at 0x6C0 - 0x73C
+Telemetry disabled by reset and explicitly enabled by software / UVM
+Queue service counters for START_QUEUE, SQ command acceptance, command completion, CQ commit, drained / stopped / error observations
+Host CQ consumption counters based on positive CSR_CQ_HEAD deltas and maximum observed batch size
+Event / IRQ efficiency counters for event capture, IRQ-eligible capture, completion-style release, and P28 coalescing release causes
+Stall / recovery counters for CQ-full stall and CQ-space recovered behavior
+Queue cycle counters for enabled / busy / idle / stalled / CQ-full stall / lower-level wait cycles
+Telemetry clear is observational only and does not clear queue, event, guard, timeout, SQ/CQ pointer, or datapath state
+No SQ entry, CQ record, descriptor, completion record, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath format change
+Full regression after P29G: 147/147 PASS
 ```
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
@@ -980,6 +998,7 @@ Current UVM regression covers:
 - CSR queue lifecycle / soft-reset drained cleanup, stopped preserve/restart, and timeout/error reinit regression
 - CSR memory access guard SQ / descriptor / DMA source / destination / CQ recovery regression
 - CSR event coalescing / interrupt moderation threshold / timer / batch re-arm regression
+- CSR runtime telemetry basic counter / interrupt-efficiency / stall-recovery regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -990,11 +1009,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 144 items and is passing:
+The current full UVM regression contains 147 items and is passing:
 
 ```text
-TOTAL : 144
-PASS  : 144
+TOTAL : 147
+PASS  : 147
 FAIL  : 0
 ```
 
@@ -1160,8 +1179,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 144
-PASS  : 144
+TOTAL : 147
+PASS  : 147
 FAIL  : 0
 ```
 
@@ -2312,4 +2331,56 @@ Batch consume / re-arm recovery:
 ```
 
 P28 changes notification timing only.  CQ records remain authoritative, command execution remains single-active-command and in order, CQ records remain committed in order, and urgent queue terminal/error/lifecycle events bypass moderation.
+
+---
+
+## P29H Runtime Telemetry Documentation Closure
+
+P29H records the validated runtime telemetry / queue performance counter behavior after full-regression closure.
+
+Validated P29 milestones:
+
+```text
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+P29G: Full regression integration                                PASS
+P29H: Documentation closure                                      PASS
+```
+
+Validated P29 full-regression representatives:
+
+```text
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
+```
+
+Full regression after P29G:
+
+```text
+TOTAL : 147
+PASS  : 147
+FAIL  : 0
+```
+
+P29 adds one CSR window, the runtime telemetry window at `0x6C0 - 0x73C`.  The telemetry block is disabled by reset, enabled explicitly by software / UVM, and remains observational only.
+
+Validated P29 telemetry behavior:
+
+```text
+basic telemetry counter smoke:
+  CSR_TELEM_VERSION reads 0x0001_0029, telemetry is disabled by reset, enable/status mirror behavior is correct, CLEAR_TELEMETRY_COUNTERS clears telemetry counters only, two-command queue drain increments queue/CQ/event/cycle counters, and a post-run clear returns selected counters to zero
+
+interrupt-efficiency / coalescing telemetry smoke:
+  threshold=2 coalesces two CQ commits into one interrupt-eligible release, cq_commit_count=2, irq_eligible_count=1, coalesced_release_count=1, threshold_release_count=1, timer_release_count=0, host performs one CQ_HEAD update with consumed delta=2, and max_cq_batch_size=2
+
+stall / recovery telemetry smoke:
+  CQ depth=1 with two SQ commands produces one CQ-full stall, host consumes CQ[0] and advances CQ_HEAD, CQ-space recovery is observed, the second command completes, cq_full_stall_count=1, cq_space_recovered_count=1, queue_stalled_cycles and cq_full_stall_cycles are non-zero, and error / timeout / guard / STOP_QUEUE counters remain zero in the clean recovery flow
+```
+
+P29 does not change the SQ entry format, CQ completion record format, descriptor format, completion record format, P22 event bit allocation, P28 moderation policy, P27 memory guard policy, P26 lifecycle model, BRAM behavior, GEMM datapath behavior, DMA datapath behavior, AXI-Stream frontend behavior, or Direct Stream frontend behavior.  CQ records remain authoritative for per-command completion detail; telemetry provides a consolidated software-readable performance and health summary.
 

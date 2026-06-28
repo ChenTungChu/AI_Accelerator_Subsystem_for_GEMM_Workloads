@@ -263,6 +263,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_basic_telemetry_counter_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test.sv"
 
 endpackage
 

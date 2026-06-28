@@ -626,10 +626,10 @@ P29A: Runtime telemetry prototype spec                           PASS
 P29B: Telemetry CSR policy / counter map freeze                  PASS
 P29C: Queue/event telemetry counter RTL integration              PASS
 P29D: Basic telemetry counter smoke                              PASS
-P29E: Interrupt efficiency / coalescing telemetry smoke          IMPLEMENTED / RUN PENDING
-P29F: Stall / recovery telemetry smoke                           TODO
-P29G: full regression integration                                TODO
-P29H: documentation closure                                      TODO
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+P29G: full regression integration                                PASS
+P29H: documentation closure                                      PASS
 ```
 
 ### 12.1 P29B Telemetry CSR Policy / Counter Map Freeze
@@ -781,27 +781,29 @@ Purpose:
 ```text
 validate CQ-full stall counter and cycle count
 validate CQ-space recovered counter
-validate STOP_QUEUE / stopped-session telemetry
-validate timeout error telemetry
-validate memory guard error telemetry
+validate CQ-space recovered telemetry
+validate timeout / memory guard / STOP_QUEUE counters remain zero in a clean CQ-full recovery flow
 validate post-recovery telemetry remains readable and clearable
 ```
 
 Suggested test name:
 
 ```text
-ai_accel_subsys_csr_runtime_telemetry_stall_recovery_smoke_test
+ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test
 ```
 
 Expected PASS markers:
 
 ```text
-[P29_TEL/CQ_FULL_STALL_PASS]
-[P29_TEL/CQ_SPACE_RECOVERY_PASS]
-[P29_TEL/STOP_RECOVERY_PASS]
-[P29_TEL/TIMEOUT_COUNTER_PASS]
-[P29_TEL/GUARD_COUNTER_PASS]
-[P29_TEL/PASS]
+[P29F_TELEM/CLEAR_PASS]
+[P29F_TELEM/ZERO_PASS]
+[P29F_TELEM/ENABLE_PASS]
+[P29F_TELEM/CQ_FULL_STALL_PASS]
+[P29F_TELEM/CQ_SPACE_RECOVERY_PASS]
+[P29F_TELEM/RECOVERY_PASS]
+[P29F_TELEM/STALL_COUNTERS_PASS]
+[P29F_TELEM/RECOVERY_COUNTERS_PASS]
+[P29F_TELEM/PASS]
 ```
 
 ### 12.6 P29G Full Regression Integration
@@ -811,9 +813,9 @@ P29G should add a small representative subset to the full regression.
 Recommended full-regression items:
 
 ```text
-csr_runtime_telemetry_basic_case102
-csr_runtime_telemetry_irq_efficiency_case102
-csr_runtime_telemetry_stall_recovery_case102
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
 ```
 
 Expected full-regression count if three items are added:
@@ -825,7 +827,7 @@ After P29G  : 147
 
 ### 12.7 P29H Documentation Closure
 
-P29H should update:
+P29H updates:
 
 ```text
 README.md
@@ -1140,11 +1142,229 @@ P29A: Runtime telemetry prototype spec                           PASS
 P29B: Telemetry CSR policy / counter map freeze                  PASS
 P29C: Queue/event telemetry counter RTL integration              PASS
 P29D: Basic telemetry counter smoke                              PASS
-P29E: Interrupt efficiency / coalescing telemetry smoke          IMPLEMENTED / RUN PENDING
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
 
 Full regression remains:
   TOTAL : 144
   PASS  : 144
+  FAIL  : 0
+```
+
+
+---
+
+## P29F Stall / Recovery Telemetry Smoke Implementation Checkpoint
+
+P29F adds a targeted UVM validation for the P29 telemetry counters that observe queue stall and recovery behavior.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test.sv
+```
+
+P29F reuses the validated P21/P23 CQ-full live-service recovery path.  Telemetry is enabled before a two-command queue session.  The test intentionally programs a one-entry CQ while publishing two SQ commands.  The first command commits CQ[0], the second command reaches a command-boundary CQ-full stall, and the host recovers the queue by consuming CQ[0] and advancing `CSR_CQ_HEAD`.
+
+P29F validation flow:
+
+```text
+read CSR_TELEM_VERSION and check 0x0001_0029
+clear selected telemetry counters before the run
+enable telemetry, cycle counters, host-CQ-consume counters, and event-efficiency counters
+program SQ depth for two commands and CQ depth for one completion record
+submit two SQ commands through the existing queue/runtime path
+wait for CQ_FULL_STALL_EVENT after the first CQ commit fills the one-entry CQ
+consume CQ[0] and advance CSR_CQ_HEAD
+wait for CQ_SPACE_RECOVERED_EVENT
+wait for the second command to complete and for QUEUE_DRAINED_EVENT
+consume CQ[1]
+check CQ-full stall count and CQ-full stall cycle counters
+check CQ-space recovered count
+check queue/CQ completion counters and host CQ consumption counters
+check timeout / memory guard / STOP_QUEUE counters remain zero
+check GEMM / DMA result compare still passes
+clear telemetry counters after the run and verify selected counters return to zero
+```
+
+Expected P29F PASS markers:
+
+```text
+[P29F_TELEM/CLEAR_PASS]
+[P29F_TELEM/ZERO_PASS]
+[P29F_TELEM/ENABLE_PASS]
+[P29F_TELEM/CQ_FULL_STALL_PASS]
+[P29F_TELEM/CQ_SPACE_RECOVERY_PASS]
+[P29F_TELEM/RECOVERY_PASS]
+[P29F_TELEM/STALL_COUNTERS_PASS]
+[P29F_TELEM/RECOVERY_COUNTERS_PASS]
+[P29F_TELEM/PASS]
+```
+
+P29F checks these stall / recovery telemetry behaviors:
+
+```text
+CQ-full stall event is observed when CQ depth is exhausted
+CQ-full stall count increments
+CQ-full stall cycle counter increments
+queue stalled cycle counter increments
+CQ-space recovered count increments after host advances CQ_HEAD
+both commands still complete and commit CQ records
+host CQ_HEAD positive update count reflects CQ consumption
+host CQ consumed delta reaches two
+queue error, timeout error, memory guard error, and STOP_QUEUE request counters remain zero
+queue enabled / busy / idle / lower-wait cycle counters remain live
+```
+
+P29F does not add RTL, a standalone UVM top, a standalone sim flow, a new CSR window, new event bits, SQ/CQ format changes, descriptor format changes, completion record format changes, or BRAM/GEMM/DMA/frontend datapath changes.
+
+Current expected status after P29F implementation:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+
+Full regression remains:
+  TOTAL : 144
+  PASS  : 144
+  FAIL  : 0
+```
+
+---
+
+## P29G Full Regression Integration Checkpoint
+
+P29G integrates the targeted P29 runtime telemetry smoke tests into the full UVM regression.
+
+Files updated:
+
+```text
+sim/run_full_uvm_regression.tcl
+uvm_regression.list
+```
+
+P29G adds three representative tests after the P28G event coalescing / interrupt moderation representatives:
+
+```text
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
+```
+
+The representatives reuse the existing CSR wrapper top and the existing regression flow:
+
+```text
+UVM_TOP = ai_accel_subsys_csr_uvm_top
+CASE_ID = 102
+ENABLE_RESULT_CHECK = 0
+FORCE_HELPER_MEM_PATH = 0
+DMA_CLK_PERIOD_NS = 10
+CORE_CLK_PERIOD_NS = 14
+```
+
+Full regression after P29G:
+
+```text
+TOTAL : 147
+PASS  : 147
+FAIL  : 0
+```
+
+P29G also fixes the legacy P22 event CSR invalid-address probe so it no longer reads from the newly allocated P29 telemetry window.  The invalid probe now targets an address above `CSR_TELEM_WINDOW_LAST=0x73C`.
+
+Current status after P29G:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+P29G: Full regression integration                                PASS
+
+Full regression:
+  TOTAL : 147
+  PASS  : 147
+  FAIL  : 0
+```
+
+---
+
+## P29H Documentation Closure
+
+P29H records the validated runtime telemetry behavior after P29G full-regression closure.
+
+Files updated:
+
+```text
+README.md
+axi_lite_csr_control_plane_spec.md
+runtime_telemetry_prototype_spec.md
+uvm_regression.list
+run_full_uvm_regression.tcl
+```
+
+P29H closure status:
+
+```text
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+P29G: Full regression integration                                PASS
+P29H: Documentation closure                                      PASS
+```
+
+Validated P29 telemetry scope:
+
+```text
+runtime telemetry CSR window at 0x6C0 - 0x73C
+telemetry reset-disabled compatibility policy
+telemetry enable / status mirror behavior
+telemetry clear as observational-only state cleanup
+queue start / SQ accept / command complete / CQ commit counters
+host CQ_HEAD positive delta counters and max CQ batch size tracker
+event capture / IRQ-eligible / completion-style release counters
+P28 coalesced / threshold / timer / urgent-bypass release counters
+CQ-full stall and CQ-space recovered counters
+queue enabled / busy / idle / stalled / CQ-full stall / lower-wait cycle counters
+```
+
+Validated P29 full-regression representatives:
+
+```text
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
+```
+
+P29 remains an observability layer.  It does not add new event bits, alter P28 moderation behavior, alter P27 guard behavior, alter P26 lifecycle cleanup, change SQ/CQ/descriptor/completion formats, or change BRAM/GEMM/DMA/frontend datapath behavior.
+
+Current expected status after P29H:
+
+```text
+P28H: Documentation closure                                      PASS
+P29A: Runtime telemetry prototype spec                           PASS
+P29B: Telemetry CSR policy / counter map freeze                  PASS
+P29C: Queue/event telemetry counter RTL integration              PASS
+P29D: Basic telemetry counter smoke                              PASS
+P29E: Interrupt efficiency / coalescing telemetry smoke          PASS
+P29F: Stall / recovery telemetry smoke                           PASS
+P29G: Full regression integration                                PASS
+P29H: Documentation closure                                      PASS
+
+Full regression:
+  TOTAL : 147
+  PASS  : 147
   FAIL  : 0
 ```
 

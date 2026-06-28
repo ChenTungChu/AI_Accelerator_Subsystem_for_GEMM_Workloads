@@ -3257,3 +3257,53 @@ PASS  : 144
 FAIL  : 0
 ```
 
+---
+
+## 33. P29H Runtime Telemetry CSR Closure
+
+P29H records closure of the runtime telemetry CSR policy after P29D/P29E/P29F targeted validation and P29G full-regression integration.
+
+The canonical P29 CSR map remains the P29B frozen runtime telemetry window:
+
+```text
+P29 runtime telemetry window : 0x6C0 - 0x73C
+CSR_TELEM_VERSION            : 0x6C0
+CSR_TELEM_COMMAND            : 0x6C4
+CSR_TELEM_STATUS             : 0x6C8
+CSR_TELEM_CONTROL            : 0x6CC
+CSR_TELEM_QUEUE_START_COUNT  : 0x6D0
+CSR_TELEM_LOWER_WAIT_CYCLES  : 0x73C
+```
+
+Validated P29 CSR behavior:
+
+```text
+CSR_TELEM_VERSION reports 0x0001_0029.
+CSR_TELEM_CONTROL reset is 0x0000_0000, so telemetry is disabled by reset.
+CSR_TELEM_COMMAND.CLEAR_TELEMETRY_COUNTERS clears telemetry counters and max trackers only.
+Telemetry clear does not clear queue state, event pending bits, memory guard diagnostics, timeout status, SQ/CQ pointers, CQ records, or lower-level sticky status.
+Queue service counters observe accepted START_QUEUE, SQ accepts, command completions, CQ commits, drained, stopped, and error observations.
+Host CQ consumption counters observe positive CSR_CQ_HEAD deltas and track maximum CQ batch size.
+Event / IRQ efficiency counters observe existing P22 event capture and IRQ-eligible source points.
+P28 moderation counters observe coalesced, threshold, timer, and urgent-bypass release source points.
+CQ-full stall / CQ-space recovery counters and cycle counters observe existing queue state source points.
+```
+
+Validated P29 full-regression representatives:
+
+```text
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
+```
+
+Full regression after P29G:
+
+```text
+TOTAL : 147
+PASS  : 147
+FAIL  : 0
+```
+
+P29H does not change the P29B address map, access types, reset values, or register bit definitions.  It also does not add new event bits, alter P28 moderation policy, alter P27 memory guard policy, alter P26 lifecycle policy, change SQ/CQ/descriptor/completion formats, or change BRAM/GEMM/DMA/frontend datapaths.
+
