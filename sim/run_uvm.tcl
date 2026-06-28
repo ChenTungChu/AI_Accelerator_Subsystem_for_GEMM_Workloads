@@ -125,6 +125,8 @@ set SUPPORTED_UVM_TESTS [list \
     ai_accel_subsys_csr_basic_telemetry_counter_smoke_test \
     ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test \
     ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test \
+    ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test \
+    ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test \
 ]
 
 # --------------------------------------------------

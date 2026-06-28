@@ -265,6 +265,12 @@ package ai_accel_subsys_uvm_pkg;
     `include "../test/ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test.sv"
 
+    // ------------------------------------------------------------
+    // P30 driver-facing runtime ABI tests
+    // ------------------------------------------------------------
+    `include "../test/ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test.sv"
+
 endpackage
 
 `endif

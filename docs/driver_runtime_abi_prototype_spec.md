@@ -765,8 +765,8 @@ Recommended P30 split:
 P30A: Driver-facing runtime ABI prototype spec                   PASS
 P30B: CSR programming sequence / ABI policy freeze               PASS
 P30C: Host runtime driver helper cleanup / API consolidation     TODO
-P30D: Cold boot -> queue setup -> first command smoke            TODO
-P30E: Steady-state driver loop smoke                             TODO
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+P30E: Steady-state driver loop smoke                             IMPLEMENTED / RUN PENDING
 P30F: Driver recovery contract smoke                             TODO
 P30G: full regression integration                                TODO
 P30H: documentation closure                                      TODO
@@ -1395,6 +1395,366 @@ Current expected status after P30B:
 P29H: Documentation closure                                      PASS
 P30A: Driver-facing runtime ABI prototype spec                   PASS
 P30B: CSR programming sequence / ABI policy freeze               PASS
+Full regression remains:
+  TOTAL : 147
+  PASS  : 147
+  FAIL  : 0
+```
+
+
+
+---
+
+## 20. P30C Host Runtime Driver Helper Cleanup / API Consolidation Checkpoint
+
+P30C adds a UVM helper consolidation checkpoint for the P30 driver-facing ABI.
+
+Implementation files updated:
+
+```text
+tb/uvm/helper/ai_accel_csr_access_helper.sv
+tb/uvm/helper/ai_accel_event_driven_host_runtime_stress_helper.sv
+```
+
+P30C does not change RTL, CSR address allocation, register bit definitions, SQ/CQ formats, descriptor formats, completion record formats, event bits, telemetry counters, UVM top selection, Tcl flow, or regression-list contents.
+
+### 20.1 Consolidation Intent
+
+P19 through P29 built the runtime stack through several directed helper layers.  P30C keeps those lower-level helper functions intact and adds a thin driver-facing layer above them.
+
+The intent is to make later P30D/P30E/P30F tests read like a software driver sequence rather than a milestone-by-milestone collection of primitive CSR writes.
+
+P30C consolidates helper coverage for:
+
+```text
+telemetry CSR constants and read/clear/enable helpers
+telemetry snapshot / log helpers
+P30 driver ABI configuration bundle
+cold-boot runtime initialization sequence
+SQ submit + doorbell helper
+START_QUEUE helper
+CQ consume helper
+event W1C + re-arm helper
+telemetry sample helper
+```
+
+### 20.2 CSR Helper Consolidation
+
+`ai_accel_csr_access_helper.sv` now exposes the P29 telemetry CSR constants that were previously local to P29D/P29E/P29F tests.
+
+The added helper constants mirror the canonical P29B CSR policy in `axi_lite_csr_control_plane_spec.md`:
+
+```text
+CSR_TELEM_VERSION                  0x6C0
+CSR_TELEM_COMMAND                  0x6C4
+CSR_TELEM_STATUS                   0x6C8
+CSR_TELEM_CONTROL                  0x6CC
+CSR_TELEM_QUEUE_START_COUNT        0x6D0
+CSR_TELEM_SQ_ACCEPT_COUNT          0x6D4
+CSR_TELEM_CMD_COMPLETE_COUNT       0x6D8
+CSR_TELEM_CQ_COMMIT_COUNT          0x6DC
+CSR_TELEM_QUEUE_DRAINED_COUNT      0x6E0
+CSR_TELEM_QUEUE_STOPPED_COUNT      0x6E4
+CSR_TELEM_QUEUE_ERROR_COUNT        0x6E8
+CSR_TELEM_CQ_HEAD_UPDATE_COUNT     0x6EC
+CSR_TELEM_CQ_CONSUMED_COUNT        0x6F0
+CSR_TELEM_MAX_CQ_BATCH_SIZE        0x6F4
+CSR_TELEM_EVENT_CAPTURE_COUNT      0x6F8
+CSR_TELEM_IRQ_ELIGIBLE_COUNT       0x6FC
+CSR_TELEM_COMPLETION_EVENT_COUNT   0x700
+CSR_TELEM_COALESCED_RELEASE_COUNT  0x704
+CSR_TELEM_THRESHOLD_RELEASE_COUNT  0x708
+CSR_TELEM_TIMER_RELEASE_COUNT      0x70C
+CSR_TELEM_URGENT_BYPASS_COUNT      0x710
+CSR_TELEM_CQ_FULL_STALL_COUNT      0x714
+CSR_TELEM_CQ_SPACE_RECOVERED_COUNT 0x718
+CSR_TELEM_TIMEOUT_ERROR_COUNT      0x71C
+CSR_TELEM_MEM_GUARD_ERROR_COUNT    0x720
+CSR_TELEM_STOP_QUEUE_REQUEST_COUNT 0x724
+CSR_TELEM_QUEUE_ENABLED_CYCLES     0x728
+CSR_TELEM_QUEUE_BUSY_CYCLES        0x72C
+CSR_TELEM_QUEUE_IDLE_CYCLES        0x730
+CSR_TELEM_QUEUE_STALLED_CYCLES     0x734
+CSR_TELEM_CQ_FULL_STALL_CYCLES     0x738
+CSR_TELEM_LOWER_WAIT_CYCLES        0x73C
+```
+
+This is a UVM helper cleanup only.  The canonical CSR map remains in `axi_lite_csr_control_plane_spec.md`.
+
+### 20.3 Driver ABI Helper Bundle
+
+P30C adds a reusable `p30_driver_runtime_abi_cfg_t` configuration bundle containing:
+
+```text
+queue configuration
+memory guard configuration
+event moderation configuration
+event enable mask
+event threshold / control policy
+telemetry control value
+enable_guard
+enable_event_moderation
+enable_telemetry
+clear_queue_memory
+clear_lower_sticky
+```
+
+This lets later P30 tests pass one ABI configuration object through the bring-up, service, and recovery helper APIs.
+
+### 20.4 P30C Helper APIs
+
+P30C adds these driver-facing helper APIs:
+
+```text
+host_rt_telem_control_value
+host_rt_telem_clear
+host_rt_telem_enable
+host_rt_telem_disable
+host_rt_telem_capture_snapshot
+host_rt_telem_log_snapshot
+host_rt_telem_snapshot_and_log
+host_rt_telem_check_selected_zero
+host_rt_abi_default_cfg
+host_rt_abi_cold_boot_init
+host_rt_abi_submit_command
+host_rt_abi_start_queue
+host_rt_abi_consume_one_cq
+host_rt_abi_ack_and_rearm
+host_rt_abi_sample_telemetry
+```
+
+The APIs are intentionally thin wrappers over existing P23/P26/P27/P28/P29 helper behavior.  They do not hide the lower-level primitives from directed tests.
+
+### 20.5 Frozen P30C Policy
+
+P30C freezes these helper-layer policies:
+
+```text
+P30 driver ABI tests should prefer P30 helper APIs for normal driver flow.
+P30 tests may still call lower-level helpers when they intentionally validate a narrow sub-policy.
+Telemetry helper constants live in ai_accel_csr_access_helper for UVM reuse.
+P30 helper APIs must not change functional hardware state beyond the CSR writes required by the ABI sequence.
+P30 cold-boot init must program guard regions before queue traffic when guard is enabled.
+P30 cold-boot init must clear telemetry before enabling a measurement window.
+P30 event ack/re-arm must preserve the P28 moderation path when moderation is enabled.
+P30 CQ consumption must still advance CSR_CQ_HEAD after software has consumed CQ records.
+```
+
+### 20.6 P30C Closure Criteria
+
+P30C is complete when:
+
+```text
+P29 telemetry CSR constants are available from the CSR helper
+telemetry clear / enable / snapshot helper APIs are available
+P30 driver ABI configuration bundle is available
+cold-boot init helper is available
+submit / start / CQ consume / ack-rearm / telemetry sample helpers are available
+existing lower-level helper APIs remain available
+no RTL / CSR map / SQ-CQ format / event-bit / Tcl / regression-list changes are required
+```
+
+Current expected status after P30C:
+
+```text
+P29H: Documentation closure                                      PASS
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+Full regression remains:
+  TOTAL : 147
+  PASS  : 147
+  FAIL  : 0
+```
+
+
+---
+
+## 21. P30D Cold Boot / Queue Setup / First Command Smoke Checkpoint
+
+P30D adds the first targeted UVM validation for the P30 driver-facing runtime ABI.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test.sv
+```
+
+P30D reuses the validated P19 through P29 queue / event / guard / telemetry runtime stack and the P30C helper API consolidation.  The test body is intentionally written as a software-driver-style bring-up flow instead of as a collection of unrelated low-level CSR transactions.
+
+P30D validation flow:
+
+```text
+wait for reset release
+initialize CSR bus access
+build the selected CASE_ID payload
+prepare DMA source / destination memories
+program one memory-backed descriptor table
+build one SQ command pointing at that descriptor table
+build a P30 driver ABI configuration bundle
+run P30 cold-boot init helper
+  clear queue / event / lower-level / guard / telemetry sticky state
+  program memory guard SQ / CQ / descriptor ranges
+  program queue base / depth / stride / pointers
+  arm queue completion and drained events
+  enable telemetry
+submit one SQ command
+publish SQ_TAIL=1
+issue START_QUEUE
+wait for event notification
+consume CQ[0]
+advance CSR_CQ_HEAD
+W1C-ack handled events and re-arm
+sample telemetry
+compare DMA destination C against the software reference
+```
+
+The memory guard is enabled for the normal driver bring-up path with SQ, CQ, and descriptor checks enabled.  Source and destination guard checks are left disabled in P30D because the first smoke focuses on the cold-boot / queue / event / telemetry ABI sequence.  Negative guard recovery is reserved for P30F.
+
+Expected P30D PASS markers:
+
+```text
+[P30_ABI/INIT_PASS]
+[P30D_ABI/COLD_BOOT_PASS]
+[P30D_ABI/EVENT_PASS]
+[P30_ABI/CQ_CONSUME]
+[P30_ABI/ACK_REARM_PASS]
+[P30D_ABI/QUEUE_STATE_PASS]
+[P27_GUARD/CLEAN_PASS]
+[P30_ABI/TELEM_SAMPLE_PASS]
+[P30D_ABI/TELEMETRY_PASS]
+[P30D_ABI/PASS]
+```
+
+P30D checks these driver ABI behaviors:
+
+```text
+cold boot helper leaves the queue idle and clean
+memory guard can be programmed before queue traffic
+queue setup is software-visible and reusable
+first SQ command can be submitted through the P30 helper API
+event wait sees CQ-not-empty / command-completed / drained notification
+CQ consume advances CSR_CQ_HEAD
+W1C ack plus re-arm clears handled event bits
+CQ record remains the authoritative completion detail
+telemetry captures start / accept / complete / CQ commit / CQ consume / event / IRQ / cycle counters
+no timeout, memory guard, STOP_QUEUE, CQ-full stall, or moderation counters increment in the clean first-command path
+GEMM / DMA result compare still passes
+```
+
+P30D does not add RTL, a CSR address window, register bit fields, SQ/CQ format changes, descriptor format changes, completion record format changes, event bits, telemetry counters, a standalone UVM top, or a standalone sim flow.
+
+Current expected status after P30D validation:
+
+```text
+P29H: Documentation closure                                      PASS
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+
+Full regression remains:
+  TOTAL : 147
+  PASS  : 147
+  FAIL  : 0
+```
+
+---
+
+## 22. P30E Steady-State Driver Loop Smoke Checkpoint
+
+P30E adds the second targeted UVM validation for the P30 driver-facing runtime ABI.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test.sv
+```
+
+P30E reuses the P30C driver-facing helper API and the P30D cold-boot bring-up sequence.  Unlike P30D, which proves the first command after initialization, P30E validates that software can stay in a steady-state driver loop over one monotonic SQ/CQ pointer epoch without re-running full cold boot initialization between commands.
+
+P30E validation flow:
+
+```text
+wait for reset release
+initialize CSR bus access
+build the selected CASE_ID payload
+prepare DMA source / destination memories
+program three memory-backed descriptor tables
+build one P30 driver ABI configuration bundle
+run P30 cold-boot init helper once
+  clear queue / event / lower-level / guard / telemetry sticky state
+  program memory guard SQ / CQ / descriptor ranges
+  program queue base / depth / stride / pointers
+  arm queue completion and drained events
+  enable telemetry
+for each steady-state loop iteration:
+  build one SQ command with a unique command tag and descriptor base
+  submit the SQ command at the next SQ physical index
+  publish the next monotonic SQ_TAIL value
+  issue START_QUEUE
+  wait for event notification
+  consume the matching CQ entry
+  advance CSR_CQ_HEAD
+  W1C-ack handled events and re-arm
+  clear queue done sticky before the next iteration
+sample telemetry after the final iteration
+check final SQ/CQ monotonic pointer state
+check memory guard remains clean
+compare DMA destination C against the software reference
+```
+
+P30E intentionally consumes one CQ entry per wakeup.  It proves the steady-state driver loop contract without enabling P28 moderation; batched CQ consumption remains covered by P28/P29 and can be reused by later P30 tests when needed.
+
+Expected P30E PASS markers:
+
+```text
+[P30_ABI/INIT_PASS]
+[P30E_ABI/COLD_BOOT_PASS]
+[P30E_ABI/SUBMIT_PASS]
+[P30E_ABI/EVENT_WAIT_PASS]
+[P30_ABI/CQ_CONSUME]
+[P30_ABI/ACK_REARM_PASS]
+[P30E_ABI/ITER_PASS]
+[P30E_ABI/REARM_PASS]
+[P30E_ABI/LOOP_STATE_PASS]
+[P27_GUARD/CLEAN_PASS]
+[P30_ABI/TELEM_SAMPLE_PASS]
+[P30E_ABI/TELEMETRY_PASS]
+[P30E_ABI/PASS]
+```
+
+P30E checks these driver ABI behaviors:
+
+```text
+cold boot helper is run once before the steady-state loop
+queue configuration remains reusable across multiple START_QUEUE sessions
+SQ_HEAD / SQ_TAIL advance monotonically across loop iterations
+CQ_HEAD / CQ_TAIL advance monotonically as software consumes CQ records
+software can W1C-ack and re-arm events after each wakeup
+queue done sticky can be cleared between drained steady-state iterations
+CQ records remain the authoritative per-command completion detail
+telemetry accumulates queue start / accept / complete / CQ commit / CQ consume counters across the loop
+max CQ batch size remains one when the driver consumes one CQ record per wakeup
+memory guard remains clean across repeated queue traffic
+no timeout, memory guard, STOP_QUEUE, CQ-full stall, or moderation counters increment in the clean steady-state loop
+GEMM / DMA result compare still passes
+```
+
+P30E does not add RTL, a CSR address window, register bit fields, SQ/CQ format changes, descriptor format changes, completion record format changes, event bits, telemetry counters, a standalone UVM top, or a standalone sim flow.
+
+Current expected status after P30E implementation:
+
+```text
+P29H: Documentation closure                                      PASS
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+P30E: Steady-state driver loop smoke                             IMPLEMENTED / RUN PENDING
+
 Full regression remains:
   TOTAL : 147
   PASS  : 147

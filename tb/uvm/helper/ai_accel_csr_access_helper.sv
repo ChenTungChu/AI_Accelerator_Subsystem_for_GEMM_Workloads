@@ -224,6 +224,43 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam logic [11:0] CSR_MEM_GUARD_DST_BASE             = 12'h6A0;
     localparam logic [11:0] CSR_MEM_GUARD_DST_LIMIT            = 12'h6A4;
 
+
+    // ------------------------------------------------------------
+    // P29 Runtime telemetry CSR window
+    // ------------------------------------------------------------
+    localparam logic [11:0] CSR_TELEM_VERSION                  = 12'h6C0;
+    localparam logic [11:0] CSR_TELEM_COMMAND                  = 12'h6C4;
+    localparam logic [11:0] CSR_TELEM_STATUS                   = 12'h6C8;
+    localparam logic [11:0] CSR_TELEM_CONTROL                  = 12'h6CC;
+    localparam logic [11:0] CSR_TELEM_QUEUE_START_COUNT        = 12'h6D0;
+    localparam logic [11:0] CSR_TELEM_SQ_ACCEPT_COUNT          = 12'h6D4;
+    localparam logic [11:0] CSR_TELEM_CMD_COMPLETE_COUNT       = 12'h6D8;
+    localparam logic [11:0] CSR_TELEM_CQ_COMMIT_COUNT          = 12'h6DC;
+    localparam logic [11:0] CSR_TELEM_QUEUE_DRAINED_COUNT      = 12'h6E0;
+    localparam logic [11:0] CSR_TELEM_QUEUE_STOPPED_COUNT      = 12'h6E4;
+    localparam logic [11:0] CSR_TELEM_QUEUE_ERROR_COUNT        = 12'h6E8;
+    localparam logic [11:0] CSR_TELEM_CQ_HEAD_UPDATE_COUNT     = 12'h6EC;
+    localparam logic [11:0] CSR_TELEM_CQ_CONSUMED_COUNT        = 12'h6F0;
+    localparam logic [11:0] CSR_TELEM_MAX_CQ_BATCH_SIZE        = 12'h6F4;
+    localparam logic [11:0] CSR_TELEM_EVENT_CAPTURE_COUNT      = 12'h6F8;
+    localparam logic [11:0] CSR_TELEM_IRQ_ELIGIBLE_COUNT       = 12'h6FC;
+    localparam logic [11:0] CSR_TELEM_COMPLETION_EVENT_COUNT   = 12'h700;
+    localparam logic [11:0] CSR_TELEM_COALESCED_RELEASE_COUNT  = 12'h704;
+    localparam logic [11:0] CSR_TELEM_THRESHOLD_RELEASE_COUNT  = 12'h708;
+    localparam logic [11:0] CSR_TELEM_TIMER_RELEASE_COUNT      = 12'h70C;
+    localparam logic [11:0] CSR_TELEM_URGENT_BYPASS_COUNT      = 12'h710;
+    localparam logic [11:0] CSR_TELEM_CQ_FULL_STALL_COUNT      = 12'h714;
+    localparam logic [11:0] CSR_TELEM_CQ_SPACE_RECOVERED_COUNT = 12'h718;
+    localparam logic [11:0] CSR_TELEM_TIMEOUT_ERROR_COUNT      = 12'h71C;
+    localparam logic [11:0] CSR_TELEM_MEM_GUARD_ERROR_COUNT    = 12'h720;
+    localparam logic [11:0] CSR_TELEM_STOP_QUEUE_REQUEST_COUNT = 12'h724;
+    localparam logic [11:0] CSR_TELEM_QUEUE_ENABLED_CYCLES     = 12'h728;
+    localparam logic [11:0] CSR_TELEM_QUEUE_BUSY_CYCLES        = 12'h72C;
+    localparam logic [11:0] CSR_TELEM_QUEUE_IDLE_CYCLES        = 12'h730;
+    localparam logic [11:0] CSR_TELEM_QUEUE_STALLED_CYCLES     = 12'h734;
+    localparam logic [11:0] CSR_TELEM_CQ_FULL_STALL_CYCLES     = 12'h738;
+    localparam logic [11:0] CSR_TELEM_LOWER_WAIT_CYCLES        = 12'h73C;
+
     // P22 Event command bits
     localparam int EVENT_CMD_CLEAR_PENDING  = 0;
     localparam int EVENT_CMD_FORCE_TEST     = 1;
@@ -377,6 +414,32 @@ class ai_accel_csr_access_helper extends uvm_object;
 
     localparam logic [31:0] MEM_GUARD_ALL_ERROR_MASK = 32'h0000_FFFF;
     localparam logic [31:0] MEM_GUARD_ALL_REJECT_MASK= 32'h0000_000F;
+
+
+    // ------------------------------------------------------------
+    // P29 Runtime telemetry constants
+    // ------------------------------------------------------------
+    localparam logic [31:0] TELEM_VERSION_RESET = 32'h0001_0029;
+    localparam logic [31:0] TELEM_CONTROL_RESET = 32'h0000_0000;
+    localparam logic [31:0] TELEM_CMD_CLEAR_COUNTERS_VALUE = 32'h0000_0100;
+
+    localparam int TELEM_CMD_CLEAR_COUNTERS              = 8;
+
+    localparam int TELEM_CONTROL_ENABLE                  = 0;
+    localparam int TELEM_CONTROL_CYCLE_COUNT_ENABLE      = 1;
+    localparam int TELEM_CONTROL_HOST_CQ_CONSUME_ENABLE  = 2;
+    localparam int TELEM_CONTROL_EVENT_EFF_ENABLE        = 3;
+
+    localparam int TELEM_STATUS_ENABLED                  = 0;
+    localparam int TELEM_STATUS_CYCLE_ENABLED            = 1;
+    localparam int TELEM_STATUS_HOST_CQ_CONSUME_ENABLED  = 2;
+    localparam int TELEM_STATUS_EVENT_EFF_ENABLED        = 3;
+    localparam int TELEM_STATUS_ANY_COUNTER_NONZERO      = 4;
+    localparam int TELEM_STATUS_QUEUE_COUNTERS_ACTIVE    = 5;
+    localparam int TELEM_STATUS_CYCLE_COUNTERS_ACTIVE    = 6;
+    localparam int TELEM_STATUS_CSR_READY                = 16;
+
+    localparam logic [31:0] TELEM_ENABLE_ALL_VALUE       = 32'h0000_000F;
 
     localparam logic [6:0] SLOT_CONTROL          = 7'h00;
     localparam logic [6:0] SLOT_BASE_ADDR_A      = 7'h04;

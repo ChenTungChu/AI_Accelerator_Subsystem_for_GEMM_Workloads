@@ -7,6 +7,7 @@
 // P26C queue lifecycle helper extension
 // P27C memory guard helper / checker utility extension
 // P28C host runtime batch-CQ consume helper extension
+// P30C driver-facing runtime ABI helper consolidation
 //
 // Scope:
 //   - TB/UVM helper only.
@@ -28,6 +29,7 @@ class ai_accel_event_driven_host_runtime_stress_helper
     localparam int unsigned P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES = 300000;
     localparam int unsigned P27_DEFAULT_GUARD_TIMEOUT_CYCLES = 300000;
     localparam int unsigned P28_DEFAULT_MOD_TIMEOUT_CYCLES = 300000;
+    localparam int unsigned P30_DEFAULT_ABI_TIMEOUT_CYCLES = 300000;
 
     typedef enum int unsigned {
         P26_LIFE_CLEAN_DRAINED,
@@ -149,6 +151,57 @@ class ai_accel_event_driven_host_runtime_stress_helper
         logic [31:0] cq_occupancy;
         logic [31:0] cq_space;
     } p28_event_mod_snapshot_t;
+
+
+
+    typedef struct {
+        logic [31:0] version;
+        logic [31:0] status;
+        logic [31:0] control;
+        logic [31:0] queue_start_count;
+        logic [31:0] sq_accept_count;
+        logic [31:0] cmd_complete_count;
+        logic [31:0] cq_commit_count;
+        logic [31:0] queue_drained_count;
+        logic [31:0] queue_stopped_count;
+        logic [31:0] queue_error_count;
+        logic [31:0] cq_head_update_count;
+        logic [31:0] cq_consumed_count;
+        logic [31:0] max_cq_batch_size;
+        logic [31:0] event_capture_count;
+        logic [31:0] irq_eligible_count;
+        logic [31:0] completion_event_count;
+        logic [31:0] coalesced_release_count;
+        logic [31:0] threshold_release_count;
+        logic [31:0] timer_release_count;
+        logic [31:0] urgent_bypass_count;
+        logic [31:0] cq_full_stall_count;
+        logic [31:0] cq_space_recovered_count;
+        logic [31:0] timeout_error_count;
+        logic [31:0] mem_guard_error_count;
+        logic [31:0] stop_queue_request_count;
+        logic [31:0] queue_enabled_cycles;
+        logic [31:0] queue_busy_cycles;
+        logic [31:0] queue_idle_cycles;
+        logic [31:0] queue_stalled_cycles;
+        logic [31:0] cq_full_stall_cycles;
+        logic [31:0] lower_wait_cycles;
+    } p29_runtime_telem_snapshot_t;
+
+    typedef struct {
+        p23_queue_cfg_t      queue_cfg;
+        p27_guard_cfg_t      guard_cfg;
+        p28_event_mod_cfg_t  event_mod_cfg;
+        logic [31:0]         event_enable_mask;
+        logic [31:0]         event_cq_threshold;
+        logic [31:0]         event_control;
+        logic [31:0]         telemetry_control;
+        bit                  enable_guard;
+        bit                  enable_event_moderation;
+        bit                  enable_telemetry;
+        bit                  clear_queue_memory;
+        bit                  clear_lower_sticky;
+    } p30_driver_runtime_abi_cfg_t;
 
     typedef struct {
         logic [31:0] start_cq_head;
@@ -2269,6 +2322,399 @@ class ai_accel_event_driven_host_runtime_stress_helper
                 urgent_mask,
                 snap.event_pending,
                 snap.event_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+
+    // ------------------------------------------------------------
+    // P29 telemetry helper primitives
+    // ------------------------------------------------------------
+    function automatic logic [31:0] host_rt_telem_control_value(
+        input bit telemetry_enable        = 1'b1,
+        input bit cycle_count_enable      = 1'b1,
+        input bit host_cq_consume_enable  = 1'b1,
+        input bit event_eff_enable        = 1'b1
+    );
+        logic [31:0] value;
+    begin
+        value = 32'h0000_0000;
+        value[ai_accel_csr_access_helper::TELEM_CONTROL_ENABLE]                 = telemetry_enable;
+        value[ai_accel_csr_access_helper::TELEM_CONTROL_CYCLE_COUNT_ENABLE]     = cycle_count_enable;
+        value[ai_accel_csr_access_helper::TELEM_CONTROL_HOST_CQ_CONSUME_ENABLE] = host_cq_consume_enable;
+        value[ai_accel_csr_access_helper::TELEM_CONTROL_EVENT_EFF_ENABLE]       = event_eff_enable;
+        return value;
+    end
+    endfunction
+
+    task automatic host_rt_telem_read(
+        input  logic [11:0] addr,
+        input  string       name,
+        output logic [31:0] data,
+        input  uvm_verbosity verbosity = UVM_HIGH
+    );
+    begin
+        check_ready("host_rt_telem_read");
+        csr.read32_expect_okay(addr, data);
+        `uvm_info("P30_ABI/TELEM_READ",
+            $sformatf("%s = 0x%08h", name, data),
+            verbosity)
+    end
+    endtask
+
+    task automatic host_rt_telem_clear(input string label = "host_rt_telem_clear");
+    begin
+        check_ready(label);
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_TELEM_COMMAND,
+            ai_accel_csr_access_helper::TELEM_CMD_CLEAR_COUNTERS_VALUE);
+        repeat (2) @(posedge ctrl_vif.clk);
+
+        `uvm_info("P30_ABI/TELEM_CLEAR",
+            $sformatf("%s: issued CLEAR_TELEMETRY_COUNTERS", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_telem_enable(
+        input logic [31:0] control_value = ai_accel_csr_access_helper::TELEM_ENABLE_ALL_VALUE,
+        input string       label = "host_rt_telem_enable"
+    );
+        logic [31:0] status;
+    begin
+        check_ready(label);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CONTROL, control_value);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_STATUS, status);
+
+        if (control_value[ai_accel_csr_access_helper::TELEM_CONTROL_ENABLE] &&
+            !status[ai_accel_csr_access_helper::TELEM_STATUS_ENABLED]) begin
+            `uvm_fatal("P30_ABI/TELEM_ENABLE",
+                $sformatf("%s: telemetry enable did not mirror into status: control=0x%08h status=0x%08h",
+                    label,
+                    control_value,
+                    status))
+        end
+
+        `uvm_info("P30_ABI/TELEM_ENABLE",
+            $sformatf("%s: telemetry control=0x%08h status=0x%08h",
+                label,
+                control_value,
+                status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_telem_disable(input string label = "host_rt_telem_disable");
+    begin
+        check_ready(label);
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CONTROL, 32'h0000_0000);
+        `uvm_info("P30_ABI/TELEM_DISABLE",
+            $sformatf("%s: telemetry disabled", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_telem_capture_snapshot(
+        output p29_runtime_telem_snapshot_t snap,
+        input  string                       label = "host_rt_telem_capture_snapshot"
+    );
+    begin
+        check_ready(label);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_VERSION,                  snap.version);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_STATUS,                   snap.status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CONTROL,                  snap.control);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_START_COUNT,        snap.queue_start_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_SQ_ACCEPT_COUNT,          snap.sq_accept_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CMD_COMPLETE_COUNT,       snap.cmd_complete_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_COMMIT_COUNT,          snap.cq_commit_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_DRAINED_COUNT,      snap.queue_drained_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_STOPPED_COUNT,      snap.queue_stopped_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_ERROR_COUNT,        snap.queue_error_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_HEAD_UPDATE_COUNT,     snap.cq_head_update_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_CONSUMED_COUNT,        snap.cq_consumed_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_MAX_CQ_BATCH_SIZE,        snap.max_cq_batch_size);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_EVENT_CAPTURE_COUNT,      snap.event_capture_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_IRQ_ELIGIBLE_COUNT,       snap.irq_eligible_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_COMPLETION_EVENT_COUNT,   snap.completion_event_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_COALESCED_RELEASE_COUNT,  snap.coalesced_release_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_THRESHOLD_RELEASE_COUNT,  snap.threshold_release_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_TIMER_RELEASE_COUNT,      snap.timer_release_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_URGENT_BYPASS_COUNT,      snap.urgent_bypass_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_FULL_STALL_COUNT,      snap.cq_full_stall_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_SPACE_RECOVERED_COUNT, snap.cq_space_recovered_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_TIMEOUT_ERROR_COUNT,      snap.timeout_error_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_MEM_GUARD_ERROR_COUNT,    snap.mem_guard_error_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_STOP_QUEUE_REQUEST_COUNT, snap.stop_queue_request_count);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_ENABLED_CYCLES,     snap.queue_enabled_cycles);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_BUSY_CYCLES,        snap.queue_busy_cycles);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_IDLE_CYCLES,        snap.queue_idle_cycles);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_QUEUE_STALLED_CYCLES,     snap.queue_stalled_cycles);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_CQ_FULL_STALL_CYCLES,     snap.cq_full_stall_cycles);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_TELEM_LOWER_WAIT_CYCLES,        snap.lower_wait_cycles);
+    end
+    endtask
+
+    function automatic void host_rt_telem_log_snapshot(
+        input string                       label,
+        input p29_runtime_telem_snapshot_t snap,
+        input uvm_verbosity                verbosity = UVM_MEDIUM
+    );
+        `uvm_info("P30_ABI/TELEM_SNAPSHOT",
+            $sformatf("%s: ctrl=0x%08h status=0x%08h start=%0d accept=%0d complete=%0d cq_commit=%0d drained=%0d stopped=%0d error=%0d cq_update=%0d cq_consumed=%0d max_batch=%0d event=%0d irq=%0d completion_event=%0d coal=%0d threshold=%0d timer=%0d urgent=%0d stall=%0d recovered=%0d timeout=%0d guard=%0d stop=%0d cycles(en/busy/idle/stall/cqfull/lower)=%0d/%0d/%0d/%0d/%0d/%0d",
+                label,
+                snap.control,
+                snap.status,
+                snap.queue_start_count,
+                snap.sq_accept_count,
+                snap.cmd_complete_count,
+                snap.cq_commit_count,
+                snap.queue_drained_count,
+                snap.queue_stopped_count,
+                snap.queue_error_count,
+                snap.cq_head_update_count,
+                snap.cq_consumed_count,
+                snap.max_cq_batch_size,
+                snap.event_capture_count,
+                snap.irq_eligible_count,
+                snap.completion_event_count,
+                snap.coalesced_release_count,
+                snap.threshold_release_count,
+                snap.timer_release_count,
+                snap.urgent_bypass_count,
+                snap.cq_full_stall_count,
+                snap.cq_space_recovered_count,
+                snap.timeout_error_count,
+                snap.mem_guard_error_count,
+                snap.stop_queue_request_count,
+                snap.queue_enabled_cycles,
+                snap.queue_busy_cycles,
+                snap.queue_idle_cycles,
+                snap.queue_stalled_cycles,
+                snap.cq_full_stall_cycles,
+                snap.lower_wait_cycles),
+            verbosity)
+    endfunction
+
+    task automatic host_rt_telem_snapshot_and_log(
+        output p29_runtime_telem_snapshot_t snap,
+        input  string                       label = "host_rt_telem_snapshot_and_log",
+        input  uvm_verbosity                verbosity = UVM_MEDIUM
+    );
+    begin
+        host_rt_telem_capture_snapshot(snap, label);
+        host_rt_telem_log_snapshot(label, snap, verbosity);
+    end
+    endtask
+
+    task automatic host_rt_telem_check_selected_zero(
+        input string label = "host_rt_telem_check_selected_zero"
+    );
+        p29_runtime_telem_snapshot_t snap;
+    begin
+        host_rt_telem_capture_snapshot(snap, label);
+        if ((snap.queue_start_count        != 32'h0000_0000) ||
+            (snap.sq_accept_count          != 32'h0000_0000) ||
+            (snap.cmd_complete_count       != 32'h0000_0000) ||
+            (snap.cq_commit_count          != 32'h0000_0000) ||
+            (snap.cq_head_update_count     != 32'h0000_0000) ||
+            (snap.cq_consumed_count        != 32'h0000_0000) ||
+            (snap.event_capture_count      != 32'h0000_0000) ||
+            (snap.irq_eligible_count       != 32'h0000_0000) ||
+            (snap.cq_full_stall_count      != 32'h0000_0000) ||
+            (snap.cq_space_recovered_count != 32'h0000_0000) ||
+            (snap.queue_stalled_cycles     != 32'h0000_0000) ||
+            (snap.cq_full_stall_cycles     != 32'h0000_0000)) begin
+            `uvm_fatal("P30_ABI/TELEM_NOT_ZERO",
+                $sformatf("%s: selected telemetry counters not zero", label))
+        end
+
+        `uvm_info("P30_ABI/TELEM_ZERO_PASS",
+            $sformatf("%s: selected telemetry counters are zero", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // P30 driver-facing runtime ABI composite helpers
+    // ------------------------------------------------------------
+    task automatic host_rt_abi_default_cfg(
+        output p30_driver_runtime_abi_cfg_t cfg,
+        input  p23_queue_cfg_t              queue_cfg,
+        input  logic [31:0]                 event_enable_mask,
+        input  p27_guard_cfg_t              guard_cfg,
+        input  p28_event_mod_cfg_t          event_mod_cfg,
+        input  bit                          enable_guard = 1'b0,
+        input  bit                          enable_event_moderation = 1'b0,
+        input  bit                          enable_telemetry = 1'b1,
+        input  logic [31:0]                 telemetry_control = ai_accel_csr_access_helper::TELEM_ENABLE_ALL_VALUE,
+        input  bit                          clear_queue_memory = 1'b1,
+        input  bit                          clear_lower_sticky = 1'b1
+    );
+    begin
+        cfg.queue_cfg              = queue_cfg;
+        cfg.guard_cfg              = guard_cfg;
+        cfg.event_mod_cfg          = event_mod_cfg;
+        cfg.event_enable_mask      = event_enable_mask & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        cfg.event_cq_threshold     = 32'h0000_0000;
+        cfg.event_control          = P23_EVENT_CONTROL_IRQ_SNAPSHOT;
+        cfg.telemetry_control      = telemetry_control;
+        cfg.enable_guard           = enable_guard;
+        cfg.enable_event_moderation= enable_event_moderation;
+        cfg.enable_telemetry       = enable_telemetry;
+        cfg.clear_queue_memory     = clear_queue_memory;
+        cfg.clear_lower_sticky     = clear_lower_sticky;
+    end
+    endtask
+
+    task automatic host_rt_abi_cold_boot_init(
+        input p30_driver_runtime_abi_cfg_t cfg,
+        input string                       label = "host_rt_abi_cold_boot_init"
+    );
+    begin
+        check_ready(label);
+
+        host_rt_lifecycle_wait_idle({label, " wait_idle"}, P30_DEFAULT_ABI_TIMEOUT_CYCLES, 1'b1);
+        host_rt_lifecycle_clear_queue_all_sticky(1'b1, {label, " queue_clear"});
+        if (cfg.clear_lower_sticky) begin
+            host_rt_lifecycle_clear_lower_sticky({label, " lower_clear"});
+        end
+
+        host_rt_event_mod_disable({label, " moderation_disable"});
+        host_rt_lifecycle_clear_all_events_and_counters({label, " event_clear"});
+        host_rt_mem_guard_clear_all({label, " guard_clear"});
+        host_rt_telem_clear({label, " telemetry_clear"});
+
+        if (cfg.clear_queue_memory) begin
+            clear_queue_memory(cfg.queue_cfg);
+        end
+
+        if (cfg.enable_guard) begin
+            host_rt_mem_guard_program_regions(cfg.guard_cfg, {label, " guard_program"});
+        end else begin
+            host_rt_mem_guard_disable({label, " guard_disable"});
+        end
+
+        program_queue(cfg.queue_cfg);
+
+        if (cfg.enable_event_moderation) begin
+            host_rt_event_mod_program(cfg.event_mod_cfg, {label, " moderation_program"});
+        end else begin
+            arm_events(cfg.event_enable_mask, cfg.event_cq_threshold, cfg.event_control);
+        end
+
+        if (cfg.enable_telemetry) begin
+            host_rt_telem_enable(cfg.telemetry_control, {label, " telemetry_enable"});
+        end
+
+        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+
+        `uvm_info("P30_ABI/INIT_PASS",
+            $sformatf("%s: driver ABI cold-boot init PASS guard=%0d moderation=%0d telemetry=%0d SQ(base=0x%08h depth=%0d) CQ(base=0x%08h depth=%0d) event_mask=0x%08h",
+                label,
+                cfg.enable_guard,
+                cfg.enable_event_moderation,
+                cfg.enable_telemetry,
+                cfg.queue_cfg.sq_base,
+                cfg.queue_cfg.sq_depth,
+                cfg.queue_cfg.cq_base,
+                cfg.queue_cfg.cq_depth,
+                cfg.event_enable_mask),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_abi_submit_command(
+        input p30_driver_runtime_abi_cfg_t cfg,
+        input int unsigned                 entry_index,
+        input p23_sq_cmd_t                 cmd,
+        input logic [31:0]                 new_tail,
+        input string                       label = "host_rt_abi_submit_command"
+    );
+    begin
+        check_ready(label);
+        write_sq_command(cfg.queue_cfg, entry_index, cmd, 1'b1);
+        ring_sq_tail(new_tail);
+        `uvm_info("P30_ABI/SUBMIT",
+            $sformatf("%s: SQ[%0d] submitted tag=0x%08h new_tail=%0d",
+                label,
+                entry_index,
+                cmd.user_tag,
+                new_tail),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_abi_start_queue(input string label = "host_rt_abi_start_queue");
+    begin
+        start_queue();
+        `uvm_info("P30_ABI/START_QUEUE",
+            $sformatf("%s: START_QUEUE issued", label),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_abi_consume_one_cq(
+        input  p30_driver_runtime_abi_cfg_t cfg,
+        input  int unsigned                 entry_index,
+        output p23_cq_record_t              rec,
+        input  bit                          clear_cq_commit = 1'b1,
+        input  string                       label = "host_rt_abi_consume_one_cq"
+    );
+    begin
+        wait_cq_commit(cfg.queue_cfg, entry_index, rec, P30_DEFAULT_ABI_TIMEOUT_CYCLES);
+        consume_cq_entry(cfg.queue_cfg, entry_index, clear_cq_commit);
+        `uvm_info("P30_ABI/CQ_CONSUME",
+            $sformatf("%s: consumed CQ[%0d] commit=0x%08h tag=0x%08h",
+                label,
+                entry_index,
+                rec.commit_word,
+                rec.first_user_tag),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_abi_ack_and_rearm(
+        input p30_driver_runtime_abi_cfg_t cfg,
+        input logic [31:0]                 event_mask,
+        input string                       label = "host_rt_abi_ack_and_rearm"
+    );
+    begin
+        check_ready(label);
+        if (cfg.enable_event_moderation) begin
+            host_rt_event_mod_ack_and_rearm(
+                event_mask,
+                cfg.event_mod_cfg.event_enable_mask,
+                cfg.event_mod_cfg.cq_threshold,
+                cfg.event_mod_cfg.event_control[ai_accel_csr_access_helper::EVENT_CONTROL_GLOBAL_IRQ_ENABLE],
+                cfg.event_mod_cfg.event_control[ai_accel_csr_access_helper::EVENT_CONTROL_CAPTURE_SNAPSHOT],
+                label);
+        end else begin
+            host_rt_lifecycle_clear_handled_events(event_mask, {label, " clear"});
+            host_rt_lifecycle_rearm_events(
+                cfg.event_enable_mask,
+                cfg.event_control[ai_accel_csr_access_helper::EVENT_CONTROL_GLOBAL_IRQ_ENABLE],
+                cfg.event_cq_threshold,
+                cfg.event_control[ai_accel_csr_access_helper::EVENT_CONTROL_CAPTURE_SNAPSHOT],
+                {label, " rearm"});
+        end
+
+        `uvm_info("P30_ABI/ACK_REARM_PASS",
+            $sformatf("%s: ack/re-arm completed event_mask=0x%08h",
+                label,
+                event_mask & ai_accel_csr_access_helper::EVENT_VALID_MASK),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic host_rt_abi_sample_telemetry(
+        output p29_runtime_telem_snapshot_t snap,
+        input  string                       label = "host_rt_abi_sample_telemetry"
+    );
+    begin
+        host_rt_telem_snapshot_and_log(snap, label, UVM_MEDIUM);
+        `uvm_info("P30_ABI/TELEM_SAMPLE_PASS",
+            $sformatf("%s: telemetry sample captured", label),
             UVM_MEDIUM)
     end
     endtask
