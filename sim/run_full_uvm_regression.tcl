@@ -2757,6 +2757,52 @@ run_reg_item "csr_stall_recovery_telemetry_case102" {
 }
 
 # ============================================================
+# P30G: Driver-facing runtime ABI regression representatives
+#
+# The CSR-wrapper subsystem top is selected explicitly.  These
+# items extend P30 targeted validation into the full regression by
+# covering driver ABI cold boot / first command, steady-state
+# driver loop service, and driver recovery contracts for CQ-full,
+# timeout, and memory-guard recovery.
+# Expected total after P30G: 150.
+# ============================================================
+run_reg_item "csr_driver_abi_cold_boot_first_command_case102" {
+    set UVM_TEST ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_driver_abi_steady_state_loop_case102" {
+    set UVM_TEST ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+run_reg_item "csr_driver_abi_recovery_contract_case102" {
+    set UVM_TEST ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
+    set UVM_TOP ai_accel_subsys_csr_uvm_top
+    set ENABLE_RESULT_CHECK 0
+    set CASE_ID 102
+
+    set FORCE_HELPER_MEM_PATH 0
+
+    set DMA_CLK_PERIOD_NS 10
+    set CORE_CLK_PERIOD_NS 14
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"

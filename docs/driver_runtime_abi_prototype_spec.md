@@ -764,12 +764,12 @@ Recommended P30 split:
 ```text
 P30A: Driver-facing runtime ABI prototype spec                   PASS
 P30B: CSR programming sequence / ABI policy freeze               PASS
-P30C: Host runtime driver helper cleanup / API consolidation     TODO
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
 P30D: Cold boot -> queue setup -> first command smoke            PASS
-P30E: Steady-state driver loop smoke                             IMPLEMENTED / RUN PENDING
-P30F: Driver recovery contract smoke                             TODO
-P30G: full regression integration                                TODO
-P30H: documentation closure                                      TODO
+P30E: Steady-state driver loop smoke                             PASS
+P30F: Driver recovery contract smoke                             PASS
+P30G: Full regression integration                                PASS
+P30H: Documentation closure                                      PASS
 ```
 
 ### 16.1 P30B CSR Programming Sequence / ABI Policy Freeze
@@ -911,9 +911,9 @@ P30G should add a small representative subset to the full regression.
 Recommended full-regression items:
 
 ```text
-csr_driver_abi_cold_boot_case102
-csr_driver_abi_steady_state_case102
-csr_driver_abi_recovery_case102
+csr_driver_abi_cold_boot_first_command_case102
+csr_driver_abi_steady_state_loop_case102
+csr_driver_abi_recovery_contract_case102
 ```
 
 Expected full-regression count if three items are added:
@@ -931,10 +931,9 @@ P30H should update:
 README.md
 driver_runtime_abi_prototype_spec.md
 uvm_regression.list
-run_full_uvm_regression.tcl
 ```
 
-The CSR map remains canonical only in `axi_lite_csr_control_plane_spec.md`.
+`run_full_uvm_regression.tcl` is updated in P30G when the representative tests enter the full regression.  P30H is documentation closure only.  The CSR map remains canonical only in `axi_lite_csr_control_plane_spec.md`.
 
 ---
 
@@ -1621,6 +1620,7 @@ Expected P30D PASS markers:
 [P30_ABI/CQ_CONSUME]
 [P30_ABI/ACK_REARM_PASS]
 [P30D_ABI/QUEUE_STATE_PASS]
+[P30F_ABI/GUARD_STICKY_CLEAR_PASS]
 [P27_GUARD/CLEAN_PASS]
 [P30_ABI/TELEM_SAMPLE_PASS]
 [P30D_ABI/TELEMETRY_PASS]
@@ -1720,6 +1720,7 @@ Expected P30E PASS markers:
 [P30E_ABI/ITER_PASS]
 [P30E_ABI/REARM_PASS]
 [P30E_ABI/LOOP_STATE_PASS]
+[P30F_ABI/GUARD_STICKY_CLEAR_PASS]
 [P27_GUARD/CLEAN_PASS]
 [P30_ABI/TELEM_SAMPLE_PASS]
 [P30E_ABI/TELEMETRY_PASS]
@@ -1753,11 +1754,251 @@ P30A: Driver-facing runtime ABI prototype spec                   PASS
 P30B: CSR programming sequence / ABI policy freeze               PASS
 P30C: Host runtime driver helper cleanup / API consolidation     PASS
 P30D: Cold boot -> queue setup -> first command smoke            PASS
-P30E: Steady-state driver loop smoke                             IMPLEMENTED / RUN PENDING
+P30E: Steady-state driver loop smoke                             PASS
 
 Full regression remains:
   TOTAL : 147
   PASS  : 147
   FAIL  : 0
+```
+
+
+---
+
+## 23. P30F Driver Recovery Contract Smoke Checkpoint
+
+P30F adds the third targeted UVM validation for the P30 driver-facing runtime ABI.
+
+Implementation files updated:
+
+```text
+tb/uvm/pkg/ai_accel_subsys_uvm_pkg.sv
+tb/uvm/test/ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test.sv
+```
+
+P30F reuses the P30C driver-facing helper API and validates representative software recovery contracts over the already-validated P19 through P29 runtime stack.  The test keeps the hardware command model single-active and in-order, but exercises the driver-visible recovery sequence after backpressure, timeout, and memory-safety failures.
+
+P30F validation flow:
+
+```text
+wait for reset release
+initialize CSR bus access
+build the selected CASE_ID payload
+prepare DMA source / destination memories
+program descriptor tables for recovery and known-good restart commands
+run P30 cold-boot init helper once
+  clear queue / event / lower-level / guard / telemetry sticky state
+  program memory guard SQ / CQ / descriptor / source / destination ranges
+  program queue base / depth / stride / pointers
+  arm queue completion / drained / error / CQ-full / CQ-space-recovered events
+  enable telemetry
+
+CQ-full recovery phase:
+  program CQ depth to one entry
+  submit two SQ commands before START_QUEUE
+  wait for CQ_FULL_STALL_EVENT
+  consume CQ[0] and advance CSR_CQ_HEAD
+  wait for CQ_SPACE_RECOVERED_EVENT
+  wait for the second command to complete and queue to drain
+  consume CQ[1]
+  W1C-ack / re-arm events
+  cleanup drained state without RESET_QUEUE_POINTERS and recycle host SQ/CQ memory before the next phase
+
+timeout recovery phase:
+  submit one finite-timeout SQ command
+  wait for QUEUE_ERROR_EVENT and COMMAND_TIMEOUT_ERROR status
+  discard the errored session through the P26 cleanup contract
+  wait for lower-level quiescence before restart
+  submit one timeout-disabled known-good command
+  wait for completion / drained event
+  consume CQ and W1C-ack / re-arm events
+  cleanup drained state for the next phase
+
+memory-guard recovery phase:
+  program an intentionally narrow descriptor guard range
+  submit one SQ command whose descriptor base is outside the allowed descriptor region
+  wait for QUEUE_ERROR_EVENT and memory-guard diagnostics
+  discard the guarded-error session
+  reprogram a valid guard range
+  submit one known-good command
+  wait for completion / drained event
+  consume CQ and W1C-ack / re-arm events
+  cleanup drained state
+
+clear retired guard sticky diagnostics before the final clean check
+sample telemetry
+check memory guard is clean after recovery
+compare DMA destination C against the software reference
+```
+
+Expected P30F PASS markers:
+
+```text
+[P30_ABI/INIT_PASS]
+[P30F_ABI/COLD_BOOT_PASS]
+[P30F_ABI/CQ_FULL_STALL_PASS]
+[P30F_ABI/CQ_SPACE_RECOVERY_PASS]
+[P30F_ABI/CQ_FULL_RECOVERY_PASS]
+[P30F_ABI/TIMEOUT_OBSERVED]
+[P30F_ABI/TIMEOUT_RECOVERY_PASS]
+[P27_GUARD/EXPECTED_ERROR_PASS]
+[P30F_ABI/GUARD_RECOVERY_PASS]
+[P30F_ABI/GUARD_STICKY_CLEAR_PASS]
+[P27_GUARD/CLEAN_PASS]
+[P30_ABI/TELEM_SAMPLE_PASS]
+[P30F_ABI/TELEMETRY_PASS]
+[P30F_ABI/PASS]
+```
+
+P30F checks these driver ABI behaviors:
+
+```text
+CQ-full is a recoverable backpressure condition, not a queue error
+software recovery from CQ-full is CSR_CQ_HEAD advancement followed by event service
+finite command timeout is a terminal queue error and uses P26 error-discard cleanup
+timeout recovery waits for lower-level quiescence before known-good restart
+memory guard reject uses existing QUEUE_ERROR_EVENT and guard diagnostics
+memory guard recovery reprograms valid regions and restarts from a clean queue epoch
+CQ records remain authoritative for successful known-good completions after recovery
+telemetry observes CQ-full stall / CQ-space recovery / timeout / memory-guard counters
+telemetry remains readable after recovery and does not alter functional state
+GEMM / DMA result compare still passes after the final known-good recovery command
+```
+
+P30F does not add RTL, a CSR address window, register bit fields, SQ/CQ format changes, descriptor format changes, completion record format changes, event bits, telemetry counters, a standalone UVM top, or a standalone sim flow.
+
+Current expected status after P30F validation:
+
+```text
+P29H: Documentation closure                                      PASS
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+P30E: Steady-state driver loop smoke                             PASS
+P30F: Driver recovery contract smoke                             PASS
+
+Full regression remains:
+  TOTAL : 147
+  PASS  : 147
+  FAIL  : 0
+```
+
+---
+
+## 24. P30G Full Regression Integration Checkpoint
+
+P30G adds the P30 driver-facing runtime ABI representative tests into the existing full UVM regression runner.
+
+Implementation files updated:
+
+```text
+sim/run_full_uvm_regression.tcl
+```
+
+P30G reuses the existing CSR wrapper UVM top and the existing simulation flow.  No standalone ABI top or standalone P30 simulation script is added.
+
+Validated P30 full-regression representatives:
+
+```text
+csr_driver_abi_cold_boot_first_command_case102
+csr_driver_abi_steady_state_loop_case102
+csr_driver_abi_recovery_contract_case102
+```
+
+Representative test classes:
+
+```text
+ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test
+ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test
+ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
+```
+
+Full regression after P30G:
+
+```text
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+```
+
+P30G proves that the ABI representative coverage composes with the existing P0 through P29 regression set.  The three added items cover clean cold boot / first command, steady-state queue service, and representative recovery from CQ-full backpressure, timeout, and memory-guard reject conditions.
+
+P30G does not change RTL, CSR address allocation, register bit definitions, SQ/CQ formats, descriptor formats, completion record formats, event bits, telemetry counters, UVM top selection, or the existing compile/run flow.
+
+---
+
+## 25. P30H Documentation Closure
+
+P30H records the final validated driver-facing runtime ABI / software bring-up contract after P30G full-regression closure.
+
+Documentation files updated:
+
+```text
+README.md
+docs/driver_runtime_abi_prototype_spec.md
+uvm_regression.list
+```
+
+P30H does not update RTL, UVM tests, helper code, package files, CSR RTL, CSR map, Tcl run flow, SQ/CQ formats, descriptor formats, completion record formats, event bits, telemetry counters, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapaths.
+
+Validated P30 milestones:
+
+```text
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+P30E: Steady-state driver loop smoke                             PASS
+P30F: Driver recovery contract smoke                             PASS
+P30G: Full regression integration                                PASS
+P30H: Documentation closure                                      PASS
+```
+
+Validated P30 ABI behavior:
+
+```text
+cold boot / first command:
+  the driver-style bring-up clears sticky state, programs guard / SQ / CQ / event / telemetry state, submits one SQ command, consumes CQ[0], W1C-acks / re-arms events, samples telemetry, and compares the final C result
+
+steady-state loop:
+  the driver reuses one initialized queue session across multiple SQ/CQ service iterations, advances SQ_TAIL and CQ_HEAD monotonically, clears handled events, and keeps memory guard clean
+
+recovery contract:
+  CQ-full backpressure recovers through CQ_HEAD advancement, timeout recovers through P26 error-discard cleanup and lower-level quiescence before known-good restart, and memory-guard descriptor reject recovers through diagnostics cleanup, valid guard reprogramming, and known-good restart
+```
+
+Final P30 regression status:
+
+```text
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+```
+
+The CSR map remains canonical only in `axi_lite_csr_control_plane_spec.md`.  P30 is an ABI / software sequencing closure over the existing P19 through P29 runtime stack; it does not allocate new CSR addresses or change register reset / access policy.
+
+---
+
+## 26. P30 Final Interview Notes
+
+P30 is the point where the queue/event/guard/moderation/telemetry stack becomes a stable software-facing runtime contract.
+
+Concise explanation:
+
+```text
+After validating telemetry, I closed the driver-facing ABI.  The hardware still uses a simple single-active in-order queue, but the driver now has a documented and regression-tested sequence for reset, guard setup, SQ/CQ programming, event service, CQ consumption, telemetry sampling, and recovery.
+```
+
+Useful interview points:
+
+```text
+CQ records remain authoritative for per-command completion.
+Events are wakeups and summary notifications, not completion records.
+Telemetry is measurement and health reporting, not functional control.
+Memory guard is programmed before unsafe host-visible memory traffic can launch.
+CQ-full is normal backpressure and recovers through CQ_HEAD advancement.
+Timeout and memory-guard failures use explicit cleanup / reinit before known-good restart.
+P30 intentionally avoids multi-queue / out-of-order expansion and instead makes the existing runtime deterministic and driver-usable.
 ```
 

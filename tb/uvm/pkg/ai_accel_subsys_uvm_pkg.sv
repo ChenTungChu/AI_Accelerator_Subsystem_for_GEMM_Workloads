@@ -270,6 +270,7 @@ package ai_accel_subsys_uvm_pkg;
     // ------------------------------------------------------------
     `include "../test/ai_accel_subsys_csr_driver_abi_cold_boot_first_command_smoke_test.sv"
     `include "../test/ai_accel_subsys_csr_driver_abi_steady_state_loop_smoke_test.sv"
+    `include "../test/ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test.sv"
 
 endpackage
 

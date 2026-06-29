@@ -15,16 +15,16 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, event coalescing / interrupt moderation validation, and runtime telemetry / queue performance counter validation.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, event coalescing / interrupt moderation validation, runtime telemetry / queue performance counter validation, and driver-facing runtime ABI / software bring-up contract validation.
 
 Current milestone:
 
 ```text
-Runtime Telemetry / Queue Performance Counters P29H: Documentation Closure Completed
+Driver-Facing Runtime ABI / Software Bring-up Contract P30H: Documentation Closure Completed
 
 Regression:
-  TOTAL : 147
-  PASS  : 147
+  TOTAL : 150
+  PASS  : 150
   FAIL  : 0
 ```
 
@@ -60,6 +60,7 @@ CSR queue lifecycle / soft-reset regression across drained cleanup/reinit, STOP_
 CSR memory access guard regression across SQ / descriptor / DMA source / destination / CQ completion safety
 CSR event coalescing / interrupt moderation regression across CQ threshold, timer fallback, and batch consume / re-arm recovery
 CSR runtime telemetry regression across basic counters, interrupt-efficiency / coalescing counters, and CQ-full stall / recovery counters
+CSR driver-facing runtime ABI regression across cold boot, steady-state driver loop, and recovery contract
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -335,6 +336,24 @@ Telemetry clear is observational only and does not clear queue, event, guard, ti
 No SQ entry, CQ record, descriptor, completion record, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream datapath format change
 Full regression after P29G: 147/147 PASS
 ```
+
+
+P30 closes the P19 through P29 runtime stack as a driver-facing runtime ABI / software bring-up contract.  It documents and validates the software-visible ordering for cold boot, SQ/CQ programming, event service, CQ consumption, memory guard setup, interrupt moderation, telemetry sampling, and runtime recovery.
+
+P30 scope:
+
+```text
+Driver-facing runtime ABI prototype spec and CSR programming policy freeze
+Host runtime driver helper API consolidation
+Cold boot -> queue setup -> first command validation
+Steady-state driver loop validation across repeated SQ/CQ service
+CQ-full backpressure recovery validation
+Timeout error discard and known-good restart validation
+Memory guard reject cleanup and known-good restart validation
+Full regression after P30G: 150/150 PASS
+```
+
+P30 does not add a CSR window, register bit fields, SQ entry format, CQ completion record format, descriptor format, completion record format, event bit, telemetry counter, BRAM behavior, GEMM datapath behavior, DMA behavior, AXI-Stream frontend behavior, or Direct Stream frontend behavior.
 
 P10 extends the P9 cache8 path to K values larger than the local cache depth by executing multiple K tiles and accumulating partial sums in an internal row accumulator before writing final C results.
 
@@ -999,6 +1018,7 @@ Current UVM regression covers:
 - CSR memory access guard SQ / descriptor / DMA source / destination / CQ recovery regression
 - CSR event coalescing / interrupt moderation threshold / timer / batch re-arm regression
 - CSR runtime telemetry basic counter / interrupt-efficiency / stall-recovery regression
+- CSR driver-facing runtime ABI cold boot / steady-state loop / recovery contract regression
 - back-to-back jobs
 - reset recovery
 - mixed corner recipe
@@ -1009,11 +1029,11 @@ Current UVM regression covers:
 
 ## Current Regression Baseline
 
-The current full UVM regression contains 147 items and is passing:
+The current full UVM regression contains 150 items and is passing:
 
 ```text
-TOTAL : 147
-PASS  : 147
+TOTAL : 150
+PASS  : 150
 FAIL  : 0
 ```
 
@@ -1179,8 +1199,8 @@ do run_full_uvm_regression.tcl
 Expected current result:
 
 ```text
-TOTAL : 147
-PASS  : 147
+TOTAL : 150
+PASS  : 150
 FAIL  : 0
 ```
 
@@ -1809,7 +1829,29 @@ csr_event_mod_batch_rearm_recovery_case102
 
 These validate CQ threshold-based coalesced notification, moderation timer fallback for sparse CQ occupancy, host batch-CQ consume, W1C ack / re-arm recovery, and urgent bypass visibility while moderation is enabled.
 
-The P23/P24/P25/P26 queue-runtime items use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, reuse the P19 SQ/CQ queue, P21 runtime doorbell behavior, P22 event CSR window, and P24 timeout policy, and validate a driver-style host runtime loop: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C ack/re-arm events, recover CQ-full, handle STOP_QUEUE, observe queue errors, recover from timeout, and reinitialize queue lifecycle state.
+
+P29G added these runtime telemetry representative items:
+
+```text
+csr_basic_telemetry_counter_case102
+csr_interrupt_efficiency_telemetry_case102
+csr_stall_recovery_telemetry_case102
+```
+
+These validate basic runtime telemetry counters, interrupt-efficiency / coalescing telemetry, and CQ-full stall / recovery telemetry over the existing queue/event/moderation runtime stack.
+
+P30G added these driver-facing runtime ABI representative items:
+
+```text
+csr_driver_abi_cold_boot_first_command_case102
+csr_driver_abi_steady_state_loop_case102
+csr_driver_abi_recovery_contract_case102
+```
+
+These validate the software-facing bring-up contract across cold boot / first command, steady-state queue service, CQ-full backpressure recovery, timeout recovery, memory-guard recovery, final telemetry sampling, and final result compare.
+
+
+The P23/P24/P25/P26/P27/P28/P29/P30 queue-runtime items use `UVM_TOP=ai_accel_subsys_csr_uvm_top`, reuse the P19 SQ/CQ queue, P21 runtime doorbell behavior, P22 event CSR window, P24 timeout policy, P26 lifecycle policy, P27 memory guard, P28 moderation policy, and P29 telemetry counters, and validate a driver-style host runtime loop: submit SQ, wait event, consume CQ, advance CQ_HEAD, W1C ack/re-arm events, recover CQ-full, handle STOP_QUEUE, observe queue errors, recover from timeout, recover from memory-guard rejects, sample telemetry, and reinitialize queue lifecycle state.
 
 ---
 
@@ -1830,7 +1872,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Event Coalescing / Interrupt Moderation P28H: Documentation Closure Completed
+Driver-Facing Runtime ABI / Software Bring-up Contract P30H: Documentation Closure Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1859,33 +1901,21 @@ Completed:
   P23: event-driven host runtime / queue driver model        PASS
   P24: queue timeout / watchdog runtime recovery             PASS
   P25: runtime stress / robustness                           PASS
-  P26A: queue lifecycle / soft-reset prototype spec          PASS
-  P26B: lifecycle CSR policy freeze / helper plan            PASS
-  P26C: host runtime lifecycle helper extension              PASS
-  P26D: drained-session cleanup + reinit smoke               PASS
-  P26E: STOP_QUEUE stopped-session preserve/restart smoke    PASS
-  P26F: timeout/error lifecycle cleanup + reinit smoke       PASS
-  P26G: full regression integration                          PASS
-  P26H: documentation closure                                PASS
-  P27A: memory access guard prototype spec                   PASS
-  P27B: memory guard CSR policy / range map freeze           PASS
-  P27C: guard helper / checker utility integration           PASS
-  P27D: SQ / descriptor range validation smoke               PASS
-  P27E: DMA source / destination range validation smoke      PASS
-  P27F: CQ / completion writeback guard + recovery smoke     PASS
-  P27G: full regression integration                          PASS
-  P27H: documentation closure                                PASS
-  P28A: event coalescing / interrupt moderation spec          PASS
-  P28B: event CSR moderation policy freeze                    PASS
-  P28C: host runtime batch-CQ helper extension                PASS
-  P28D: CQ threshold interrupt smoke                          PASS
-  P28E: moderation timer fallback smoke                       PASS
-  P28F: multi-command batch consume / re-arm recovery smoke   PASS
-  P28G: full regression integration                           PASS
-  P28H: documentation closure                                 PASS
+  P26: queue lifecycle / soft-reset                          PASS
+  P27: memory access guard / range validation                PASS
+  P28: event coalescing / interrupt moderation               PASS
+  P29: runtime telemetry / queue performance counters        PASS
+  P30A: driver-facing runtime ABI prototype spec             PASS
+  P30B: CSR programming sequence / ABI policy freeze         PASS
+  P30C: host runtime driver helper API consolidation         PASS
+  P30D: cold boot -> queue setup -> first command smoke      PASS
+  P30E: steady-state driver loop smoke                       PASS
+  P30F: driver recovery contract smoke                       PASS
+  P30G: full regression integration                          PASS
+  P30H: documentation closure                                PASS
 
 Regression:
-  144/144 PASS
+  150/150 PASS
 ```
 
 
@@ -1893,7 +1923,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, and event coalescing / interrupt moderation.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, event coalescing / interrupt moderation, runtime telemetry, and a driver-facing runtime ABI / software bring-up contract.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 
@@ -2383,4 +2413,56 @@ stall / recovery telemetry smoke:
 ```
 
 P29 does not change the SQ entry format, CQ completion record format, descriptor format, completion record format, P22 event bit allocation, P28 moderation policy, P27 memory guard policy, P26 lifecycle model, BRAM behavior, GEMM datapath behavior, DMA datapath behavior, AXI-Stream frontend behavior, or Direct Stream frontend behavior.  CQ records remain authoritative for per-command completion detail; telemetry provides a consolidated software-readable performance and health summary.
+
+---
+
+## P30H Driver-Facing Runtime ABI Documentation Closure
+
+P30H records the validated driver-facing runtime ABI / software bring-up contract after full-regression closure.
+
+Validated P30 milestones:
+
+```text
+P30A: Driver-facing runtime ABI prototype spec                   PASS
+P30B: CSR programming sequence / ABI policy freeze               PASS
+P30C: Host runtime driver helper cleanup / API consolidation     PASS
+P30D: Cold boot -> queue setup -> first command smoke            PASS
+P30E: Steady-state driver loop smoke                             PASS
+P30F: Driver recovery contract smoke                             PASS
+P30G: Full regression integration                                PASS
+P30H: Documentation closure                                      PASS
+```
+
+Validated P30 full-regression representatives:
+
+```text
+csr_driver_abi_cold_boot_first_command_case102
+csr_driver_abi_steady_state_loop_case102
+csr_driver_abi_recovery_contract_case102
+```
+
+Full regression after P30G:
+
+```text
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+```
+
+P30 closes the driver-facing contract over the existing P19 through P29 runtime stack.  The validated ABI sequence covers cold boot, queue setup, event arm / W1C / re-arm, SQ submission, CQ consumption, memory guard setup, telemetry sampling, and recovery from CQ-full backpressure, timeout error, and memory-guard reject conditions.
+
+Validated P30 ABI behavior:
+
+```text
+cold boot / first command:
+  driver-style init clears sticky state, programs SQ/CQ and guard regions, arms events, enables telemetry, submits one SQ command, consumes CQ[0], W1C-acks / re-arms events, verifies telemetry, and compares the final DMA destination memory against the software reference
+
+steady-state loop:
+  one cold-boot init is reused across three SQ/CQ service iterations, SQ_HEAD / SQ_TAIL and CQ_HEAD / CQ_TAIL advance monotonically, events are W1C-acked and re-armed after each wakeup, telemetry accumulates expected queue/CQ counters, and memory guard remains clean
+
+recovery contract:
+  CQ-full is recovered by consuming CQ and advancing CQ_HEAD, timeout is recovered through P26 error-discard cleanup plus lower-level quiescence and known-good restart, memory-guard descriptor reject is recovered by clearing diagnostics / reprogramming valid guard ranges and restarting a known-good command, and final telemetry captures CQ-full, timeout, and memory-guard recovery counters
+```
+
+P30 does not add a CSR window, register bit field, SQ entry format, CQ completion record format, descriptor format, completion record format, event bit, telemetry counter, BRAM behavior, GEMM datapath behavior, DMA behavior, AXI-Stream frontend behavior, Direct Stream frontend behavior, UVM top, or standalone simulation flow.  P30G updated the existing full regression runner with three representative ABI tests; P30H is documentation closure only.
 
