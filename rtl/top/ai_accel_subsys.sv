@@ -1319,8 +1319,8 @@ module ai_accel_subsys #(
         .select_dma        (port0_select_dma),
         .select_dma_store  (port0_select_dma_store),
 
-        .host_axi_if       (axi0_if),
-        .bram_axi_if       (bram_axi0_if),
+        .host_axi_if       (axi0_if.mp_slave),
+        .bram_axi_if       (bram_axi0_if.mp_master),
 
         // DMA load write path
         .dma_awid          (dma_spad_awid),
@@ -1485,10 +1485,10 @@ module ai_accel_subsys #(
         .core_rst_n       (core_rst_n),
 
         // Port0 now goes through owner mux.
-        .axi0_if          (bram_axi0_if),
+        .axi0_if          (bram_axi0_if.mp_slave),
 
         // Port1 now goes through owner mux.
-        .axi1_if          (axi1_if),
+        .axi1_if          (axi1_if.mp_slave),
 
         .apply_if         (apply_if.mp_producer),
         .commit_if        (commit_if.mp_producer),
