@@ -87,6 +87,11 @@ package ai_accel_subsys_uvm_pkg;
     `include "../agent/ai_accel_subsys_agent.sv"
 
     // ------------------------------------------------------------
+    // Functional coverage
+    // ------------------------------------------------------------
+    `include "../cov/ai_accel_subsys_functional_coverage.sv"
+
+    // ------------------------------------------------------------
     // Env
     // ------------------------------------------------------------
     `include "../env/ai_accel_subsys_env.sv"

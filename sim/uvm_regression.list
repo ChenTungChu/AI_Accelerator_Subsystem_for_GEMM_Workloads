@@ -2,13 +2,20 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Driver-Facing Runtime ABI / Software Bring-up Contract P30G: Full Regression Completed
+#   Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
 #
 # Current baseline:
 #   TOTAL : 150
 #   PASS  : 150
 #   FAIL  : 0
 #   150/150 PASS
+#
+# Planned functional coverage:
+#   TOTAL COVERGROUP COVERAGE : 100.00%
+#   COVERGROUP TYPES          : 7 / 7 covered
+#   MISSING PLANNED BINS      : 0
+#   UCDB MERGE / REPORT       : PASS
+#   VCOVER ERRORS / WARNINGS  : 0 / 0
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -54,6 +61,9 @@
 #   - CSR event coalescing / interrupt moderation threshold / timer / batch re-arm behavior
 #   - CSR runtime telemetry basic counter / interrupt-efficiency / stall-recovery behavior
 #   - CSR driver-facing runtime ABI cold boot / steady-state loop / recovery contract behavior
+#   - RC-COV control event / GEMM profile / static configuration functional coverage
+#   - RC-COV queue / event moderation / memory guard / telemetry functional coverage
+#   - RC-COV UCDB collection / merge / report closure at 100.00%
 #
 # P13D focused DUT additions:
 #   - p13d_c_rmw_accum_case208
@@ -89,6 +99,17 @@
 # P15E CSR job-level frontend-mode additions:
 #   - csr_job_axis_stream_load_store_case102
 #   - csr_job_direct_stream_load_store_case102
+#
+# RC-COV closure:
+#   - functional coverage architecture uses control-monitor transactions,
+#     passive AXI-Lite CSR observation, and static build configuration
+#   - 7 / 7 planned covergroup domains covered
+#   - 150 / 150 regression items PASS
+#   - total planned functional coverage 100.00%
+#   - final reports:
+#       sim/coverage/rc_cov/rc_cov_summary.txt
+#       sim/coverage/rc_cov/rc_cov_details.txt
+#   - RC-COV added no new regression item; P29D/P29E were extended in place
 # ============================================================
 
 
@@ -475,8 +496,12 @@ ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test CASE_ID 102 UVM_TO
 
 
 # 145: csr_basic_telemetry_counter_case102
+#      Includes accepted live STOP_QUEUE telemetry, non-zero
+#      STOP_QUEUE_REQUEST_COUNT validation, and post-clear zero recovery.
 ai_accel_subsys_csr_basic_telemetry_counter_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 146: csr_interrupt_efficiency_telemetry_case102
+#      Includes threshold-release telemetry plus sparse timer-fallback
+#      TIMER_RELEASE_COUNT non-zero validation with threshold count held at zero.
 ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 147: csr_stall_recovery_telemetry_case102
 ai_accel_subsys_csr_stall_recovery_telemetry_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=0 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

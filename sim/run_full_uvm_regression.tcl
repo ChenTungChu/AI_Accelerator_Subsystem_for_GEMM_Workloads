@@ -23,6 +23,71 @@ if {$DO_COMPILE} {
 }
 
 # ============================================================
+# RC-COV UCDB collection / merge controls
+#
+# Default full-regression behavior:
+#   - enable Questa functional coverage collection
+#   - save one compact per-test UCDB
+#   - merge only UCDBs from passing regression items
+#   - generate summary and detailed text reports
+#
+# Escape hatch:
+#   set RC_COV_ENABLE 0
+#   do run_full_uvm_regression.tcl
+# ============================================================
+if {![info exists RC_COV_ENABLE]} {
+    set RC_COV_ENABLE 1
+}
+
+if {($RC_COV_ENABLE != 0) && ($RC_COV_ENABLE != 1)} {
+    error "\[REGRESSION\] Unsupported RC_COV_ENABLE='$RC_COV_ENABLE'. Supported values: 0, 1"
+}
+
+if {![info exists RC_COV_ROOT_DIR]} {
+    set RC_COV_ROOT_DIR coverage/rc_cov
+}
+
+if {![info exists RC_COV_CLEAN]} {
+    set RC_COV_CLEAN 1
+}
+
+if {($RC_COV_CLEAN != 0) && ($RC_COV_CLEAN != 1)} {
+    error "\[REGRESSION\] Unsupported RC_COV_CLEAN='$RC_COV_CLEAN'. Supported values: 0, 1"
+}
+
+set RC_COV_PER_TEST_DIR [file join $RC_COV_ROOT_DIR per_test]
+set RC_COV_MERGED_FILE  [file join $RC_COV_ROOT_DIR rc_cov_merged.ucdb]
+set RC_COV_SUMMARY_FILE [file join $RC_COV_ROOT_DIR rc_cov_summary.txt]
+set RC_COV_DETAILS_FILE [file join $RC_COV_ROOT_DIR rc_cov_details.txt]
+set RC_COV_MANIFEST_FILE [file join $RC_COV_ROOT_DIR rc_cov_manifest.tsv]
+set RC_COV_FLOW_OK 1
+
+if {$RC_COV_ENABLE} {
+    if {$RC_COV_CLEAN} {
+        catch {file delete -force $RC_COV_PER_TEST_DIR}
+        catch {file delete -force $RC_COV_MERGED_FILE}
+        catch {file delete -force $RC_COV_SUMMARY_FILE}
+        catch {file delete -force $RC_COV_DETAILS_FILE}
+        catch {file delete -force $RC_COV_MANIFEST_FILE}
+    }
+
+    file mkdir $RC_COV_PER_TEST_DIR
+
+    set manifest_fp [open $RC_COV_MANIFEST_FILE w]
+    puts $manifest_fp "index\tname\tstatus\tlog\tucdb"
+    close $manifest_fp
+
+    puts "\[REGRESSION\]\[RC_COV\] Coverage collection enabled"
+    puts "\[REGRESSION\]\[RC_COV\] Per-test UCDB dir: $RC_COV_PER_TEST_DIR"
+}
+
+# Preserve all 150 regression logs unless the caller explicitly
+# selects a different retention count.
+if {![info exists LOG_KEEP_COUNT]} {
+    set LOG_KEEP_COUNT 250
+}
+
+# ============================================================
 # Regression bookkeeping
 # ============================================================
 set REG_TOTAL 0
@@ -32,6 +97,7 @@ set REG_FAIL  0
 # Keep per-item results for the final pass/fail report.
 set REG_PASS_ITEMS {}
 set REG_FAIL_ITEMS {}
+set REG_COV_FILES  {}
 
 # Set STOP_ON_FIRST_FAIL=1 to stop after the first failed item.
 if {![info exists STOP_ON_FIRST_FAIL]} {
@@ -60,6 +126,12 @@ proc clear_uvm_run_vars {} {
         RUN_ALL
         EXTRA_PLUSARGS
         LOG_FILE
+
+        ENABLE_COVERAGE
+        COVERAGE_OUTPUT_DIR
+        COVERAGE_RUN_TAG
+        COVERAGE_FILE
+        VSIM_COVERAGE_ARGS
 
         SMOKE_DONE_TIMEOUT_CYCLES
         DMA_STORE_DONE_TIMEOUT_CYCLES
@@ -186,10 +258,143 @@ proc maybe_stop_on_first_fail {idx name log_file} {
 }
 
 # ============================================================
+# RC-COV utility procs
+# ============================================================
+proc get_current_coverage_file {} {
+    if {[info exists ::COVERAGE_FILE] && ($::COVERAGE_FILE ne "")} {
+        return $::COVERAGE_FILE
+    }
+    return "<COVERAGE_FILE not set>"
+}
+
+proc check_ucdb_file {ucdb_file} {
+    if {![file exists $ucdb_file]} {
+        puts "\[REGRESSION\]\[RC_COV\]\[FAIL\] UCDB file not found: $ucdb_file"
+        return 0
+    }
+
+    if {[file size $ucdb_file] <= 0} {
+        puts "\[REGRESSION\]\[RC_COV\]\[FAIL\] UCDB file is empty: $ucdb_file"
+        return 0
+    }
+
+    return 1
+}
+
+proc append_cov_manifest {idx name status log_file ucdb_file} {
+    global RC_COV_ENABLE RC_COV_MANIFEST_FILE
+
+    if {!$RC_COV_ENABLE} {
+        return
+    }
+
+    set fp [open $RC_COV_MANIFEST_FILE a]
+    puts $fp "$idx\t$name\t$status\t$log_file\t$ucdb_file"
+    close $fp
+}
+
+proc resolve_vcover_executable {} {
+    set vsim_exe [info nameofexecutable]
+    set bin_dir [file dirname $vsim_exe]
+
+    foreach candidate [list \
+        [file join $bin_dir vcover.exe] \
+        [file join $bin_dir vcover] \
+        vcover] {
+        if {($candidate eq "vcover") || [file exists $candidate]} {
+            return $candidate
+        }
+    }
+
+    return "vcover"
+}
+
+proc run_external_command {label command_list} {
+    puts "\[REGRESSION\]\[RC_COV\] $label"
+    puts "\[REGRESSION\]\[RC_COV\] command: [join $command_list { }]"
+
+    set status [catch {
+        exec {*}$command_list 2>@1
+    } message]
+
+    if {$message ne ""} {
+        puts $message
+    }
+
+    if {$status != 0} {
+        puts "\[REGRESSION\]\[RC_COV\]\[FAIL\] $label failed"
+        return 0
+    }
+
+    return 1
+}
+
+proc finalize_rc_cov {} {
+    global RC_COV_ENABLE
+    global RC_COV_MERGED_FILE RC_COV_SUMMARY_FILE RC_COV_DETAILS_FILE
+    global REG_COV_FILES
+
+    if {!$RC_COV_ENABLE} {
+        puts "\[REGRESSION\]\[RC_COV\] Coverage collection disabled"
+        return 1
+    }
+
+    if {[llength $REG_COV_FILES] == 0} {
+        puts "\[REGRESSION\]\[RC_COV\]\[FAIL\] No passing-test UCDB files were collected"
+        return 0
+    }
+
+    catch {quit -sim -f}
+
+    set vcover_exe [resolve_vcover_executable]
+
+    set merge_cmd [list $vcover_exe merge -out $RC_COV_MERGED_FILE]
+    foreach ucdb_file $REG_COV_FILES {
+        lappend merge_cmd $ucdb_file
+    }
+
+    if {![run_external_command \
+        "Merging [llength $REG_COV_FILES] passing-test UCDB file(s)" \
+        $merge_cmd]} {
+        return 0
+    }
+
+    set summary_cmd [list \
+        $vcover_exe report \
+        $RC_COV_MERGED_FILE \
+        > $RC_COV_SUMMARY_FILE]
+
+    if {![run_external_command \
+        "Generating functional coverage summary report" \
+        $summary_cmd]} {
+        return 0
+    }
+
+    set details_cmd [list \
+        $vcover_exe report \
+        -details \
+        $RC_COV_MERGED_FILE \
+        > $RC_COV_DETAILS_FILE]
+
+    if {![run_external_command \
+        "Generating functional coverage detailed report" \
+        $details_cmd]} {
+        return 0
+    }
+
+    puts "\[REGRESSION\]\[RC_COV\]\[PASS\] Merged UCDB: $RC_COV_MERGED_FILE"
+    puts "\[REGRESSION\]\[RC_COV\]\[PASS\] Summary report: $RC_COV_SUMMARY_FILE"
+    puts "\[REGRESSION\]\[RC_COV\]\[PASS\] Detailed report: $RC_COV_DETAILS_FILE"
+    return 1
+}
+
+# ============================================================
 # Run one regression item
 # ============================================================
 proc run_reg_item {name setup_body} {
     global REG_TOTAL REG_PASS REG_FAIL
+    global REG_COV_FILES
+    global RC_COV_ENABLE RC_COV_PER_TEST_DIR
 
     incr REG_TOTAL
     set item_idx $REG_TOTAL
@@ -204,13 +409,23 @@ proc run_reg_item {name setup_body} {
 
     uplevel 1 $setup_body
 
+    if {$RC_COV_ENABLE} {
+        set ::ENABLE_COVERAGE 1
+        set ::COVERAGE_OUTPUT_DIR $RC_COV_PER_TEST_DIR
+        set ::COVERAGE_RUN_TAG [format "%03d" $item_idx]
+    } else {
+        set ::ENABLE_COVERAGE 0
+    }
+
     set run_status [catch {do run_uvm.tcl} run_msg]
     set item_log [get_current_log_file]
+    set item_cov [get_current_coverage_file]
 
     if {$run_status != 0} {
         puts "\[REGRESSION\]\[FAIL\] Tcl/run error in: $name"
         puts $run_msg
 
+        append_cov_manifest $item_idx $name "RUN_FAIL" $item_log $item_cov
         record_reg_fail $item_idx $name $item_log
         incr REG_FAIL
 
@@ -218,13 +433,32 @@ proc run_reg_item {name setup_body} {
         return
     }
 
-    if {[check_uvm_log $item_log]} {
+    set log_ok [check_uvm_log $item_log]
+    set cov_ok 1
+
+    if {$RC_COV_ENABLE} {
+        set cov_ok [check_ucdb_file $item_cov]
+    }
+
+    if {$log_ok && $cov_ok} {
         puts "\[REGRESSION\]\[PASS\] $name"
+        append_cov_manifest $item_idx $name "PASS" $item_log $item_cov
         record_reg_pass $item_idx $name $item_log
         incr REG_PASS
+
+        if {$RC_COV_ENABLE} {
+            lappend REG_COV_FILES $item_cov
+        }
     } else {
         puts "\[REGRESSION\]\[FAIL\] $name"
 
+        if {!$log_ok} {
+            set item_status "UVM_FAIL"
+        } else {
+            set item_status "UCDB_FAIL"
+        }
+
+        append_cov_manifest $item_idx $name $item_status $item_log $item_cov
         record_reg_fail $item_idx $name $item_log
         incr REG_FAIL
 
@@ -2803,6 +3037,21 @@ run_reg_item "csr_driver_abi_recovery_contract_case102" {
 }
 
 # ============================================================
+# RC-COV merge / report
+#
+# Only UCDBs from regression items that passed both the UVM
+# log check and the per-test UCDB existence check are merged.
+# ============================================================
+if {$RC_COV_ENABLE} {
+    if {$REG_FAIL == 0} {
+        set RC_COV_FLOW_OK [finalize_rc_cov]
+    } else {
+        set RC_COV_FLOW_OK 0
+        puts "\[REGRESSION\]\[RC_COV\] Merge/report skipped because one or more regression items failed"
+    }
+}
+
+# ============================================================
 # Final summary
 # ============================================================
 puts "\n============================================================"
@@ -2811,6 +3060,10 @@ puts "============================================================"
 puts "TOTAL : $REG_TOTAL"
 puts "PASS  : $REG_PASS"
 puts "FAIL  : $REG_FAIL"
+if {$RC_COV_ENABLE} {
+    set RC_COV_STATUS_TEXT [expr {$RC_COV_FLOW_OK ? "PASS" : "FAIL"}]
+    puts "RC-COV: $RC_COV_STATUS_TEXT"
+}
 puts "============================================================"
 
 if {[llength $REG_FAIL_ITEMS] != 0} {
@@ -2829,6 +3082,11 @@ if {[llength $REG_FAIL_ITEMS] != 0} {
 
 if {$REG_FAIL != 0} {
     error "\[REGRESSION\] FAILED: $REG_FAIL item(s) failed"
+} elseif {$RC_COV_ENABLE && !$RC_COV_FLOW_OK} {
+    error "\[REGRESSION\] TESTS PASSED BUT RC-COV MERGE/REPORT FAILED"
 } else {
     puts "\[REGRESSION\] ALL TESTS PASSED"
+    if {$RC_COV_ENABLE} {
+        puts "\[REGRESSION\] RC-COV UCDB MERGE AND REPORT PASSED"
+    }
 }

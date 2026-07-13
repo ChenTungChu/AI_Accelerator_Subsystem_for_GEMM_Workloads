@@ -10,6 +10,19 @@ logs/
 work/
 work_*/
 
+# Generated simulation coverage artifacts
+
+# Ignore everything generated under coverage/
+sim/coverage/**
+
+# Keep directories visible
+!sim/coverage/
+!sim/coverage/*_cov/
+
+# Keep final reports
+!sim/coverage/*_cov/*_summary.txt
+!sim/coverage/*_cov/*_details.txt
+
 # Optimization output
 @_opt/
 */@_opt/

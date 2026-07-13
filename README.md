@@ -15,17 +15,27 @@ Host / DMA / AXI-Stream preload / Direct Stream operand preload
     -> Software reference / scoreboard compare
 ```
 
-The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, event coalescing / interrupt moderation validation, runtime telemetry / queue performance counter validation, and driver-facing runtime ABI / software bring-up contract validation.
+The current focus is subsystem integration, DMA load/store behavior, AXI-Stream frontend integration, Direct Stream GEMM frontend integration, CDC-aware control/status handling, reset robustness, UVM scoreboard-based verification, performance-oriented GEMM datapath upgrades, AXI-Lite CSR control-plane integration, CSR job descriptor / hardware sequencer integration, CSR recipe sequencing, memory-backed descriptor fetch, completion writeback integration, host-visible command / completion queue integration, multi-entry in-order command queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, event-driven host runtime / queue driver model validation, queue timeout / watchdog runtime recovery validation, runtime stress / robustness validation, queue lifecycle / soft-reset session reinitialization validation, memory access guard / address range validation, event coalescing / interrupt moderation validation, runtime telemetry / queue performance counter validation, driver-facing runtime ABI / software bring-up contract validation, and requirement-driven functional coverage closure.
 
 Current milestone:
 
 ```text
-Driver-Facing Runtime ABI / Software Bring-up Contract P30H: Documentation Closure Completed
+Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
 
 Regression:
   TOTAL : 150
   PASS  : 150
   FAIL  : 0
+
+Planned functional coverage:
+  TOTAL COVERGROUP COVERAGE : 100.00%
+  COVERGROUP TYPES          : 7 / 7 covered
+  MISSING PLANNED BINS      : 0
+  UCDB MERGE / REPORT       : PASS
+  VCOVER ERRORS / WARNINGS  : 0 / 0
+
+Next milestone:
+  CODE-COV: RTL Code Coverage Baseline, Gap Analysis, and Closure
 ```
 
 The current optimized baseline includes:
@@ -61,6 +71,7 @@ CSR memory access guard regression across SQ / descriptor / DMA source / destina
 CSR event coalescing / interrupt moderation regression across CQ threshold, timer fallback, and batch consume / re-arm recovery
 CSR runtime telemetry regression across basic counters, interrupt-efficiency / coalescing counters, and CQ-full stall / recovery counters
 CSR driver-facing runtime ABI regression across cold boot, steady-state driver loop, and recovery contract
+Requirement-driven functional coverage across seven planned covergroup domains with 100% closure
 ```
 
 Validated P13 C RMW accumulation representative configuration:
@@ -948,6 +959,8 @@ The UVM environment includes:
 - Direct Stream preload source memory responder
 - DMA destination memory model
 - helper fallback path
+- functional coverage subscriber
+- passive AXI-Lite CSR coverage observer
 
 The scoreboard checks:
 
@@ -1026,6 +1039,65 @@ Current UVM regression covers:
 - helper fallback sanity checks
 
 ---
+
+## Verification Coverage Status
+
+The current regression closes the defined and validated RC-COV planned functional coverage scope:
+
+```text
+Regression:
+  TOTAL : 150
+  PASS  : 150
+  FAIL  : 0
+
+Functional coverage:
+  TOTAL COVERGROUP COVERAGE : 100.00%
+  COVERGROUP TYPES          : 7 / 7 covered
+  MISSING PLANNED BINS      : 0
+  UCDB MERGE / REPORT       : PASS
+  VCOVER ERRORS / WARNINGS  : 0 / 0
+```
+
+Covered functional domains:
+
+```text
+control START / DONE events
+GEMM job profiles and latency classes
+validated static configurations
+queue runtime commands, states, outcomes, and occupancy
+event notification / interrupt moderation
+memory access guard behavior
+runtime telemetry counter observation and non-zero activity
+```
+
+The 100% result means closure of the defined and validated planned functional coverage scope.  It does not claim exhaustive coverage of every theoretical input, parameter combination, or RTL implementation path.
+
+Coverage specification:
+
+```text
+verification_coverage_spec.md
+```
+
+Tracked human-readable reports:
+
+```text
+sim/coverage/rc_cov/rc_cov_summary.txt
+sim/coverage/rc_cov/rc_cov_details.txt
+```
+
+Generated UCDB databases, per-test coverage databases, manual coverage runs, and manifests are intentionally excluded from version control.
+
+Functional coverage reproduction from the `sim/` directory:
+
+```tcl
+set DO_COMPILE 1
+set RC_COV_ENABLE 1
+set RC_COV_CLEAN 1
+set STOP_ON_FIRST_FAIL 0
+do run_full_uvm_regression.tcl
+```
+
+The next and final technical milestone is RTL code coverage baseline collection, uncovered-code classification, targeted closure where justified, and documented exclusions.
 
 ## Current Regression Baseline
 
@@ -1855,16 +1927,16 @@ The P23/P24/P25/P26/P27/P28/P29/P30 queue-runtime items use `UVM_TOP=ai_accel_su
 
 ---
 
-## Known Warning
+## Simulation Warning Status
 
-Questa may report `vsim-3838` multiple-driver warnings around `bram_axi0_if` request-side signals.
+The earlier `vsim-3838` / `vsim-3839` request-side multiple-driver warning around the BRAM-facing AXI interface was removed before RC-COV closure by making clocking-block request signals sampling-only and preserving explicit single-driver ownership through interface modports.
 
 Current policy:
 
 ```text
-Known warning accepted.
-Functional regression passes.
-No BRAM interface semantic change required.
+No accepted BRAM request-side multiple-driver warning.
+No BRAM functional semantic change.
+Full functional regression remains 150/150 PASS.
 ```
 
 ---
@@ -1872,7 +1944,7 @@ No BRAM interface semantic change required.
 ## Current Milestone Summary
 
 ```text
-Driver-Facing Runtime ABI / Software Bring-up Contract P30H: Documentation Closure Completed
+Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1913,9 +1985,21 @@ Completed:
   P30F: driver recovery contract smoke                       PASS
   P30G: full regression integration                          PASS
   P30H: documentation closure                                PASS
+  RC-COV-A: functional coverage architecture                 PASS
+  RC-COV-B: functional coverage implementation               PASS
+  RC-COV-C1: UCDB collection / merge / report                PASS
+  RC-COV-C2: planned-bin refinement                          PASS
+  RC-COV-C3: targeted telemetry closure                      PASS
+  RC-COV-D: documentation closure                            PASS
 
 Regression:
   150/150 PASS
+
+Planned functional coverage:
+  100.00% across 7 / 7 covergroup types
+
+Next:
+  CODE-COV: RTL code coverage baseline / gap analysis / closure
 ```
 
 
@@ -1923,7 +2007,7 @@ Regression:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, event coalescing / interrupt moderation, runtime telemetry, and a driver-facing runtime ABI / software bring-up contract.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, event coalescing / interrupt moderation, runtime telemetry, and a driver-facing runtime ABI / software bring-up contract.  The current verification baseline also includes a reproducible UCDB collection / merge / report flow and 100% closure of the defined and validated planned functional coverage scope across seven covergroup domains.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 

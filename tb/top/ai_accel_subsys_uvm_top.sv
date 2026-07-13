@@ -1408,6 +1408,20 @@ module ai_accel_subsys_uvm_top;
             null, "*", "axi0_vif", axi0_if
         );
 
+        // RC-COV static build configuration
+        uvm_config_db#(int)::set(null, "*", "cov_gemm_mac_lanes", GEMM_MAC_LANES);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_b_cache", GEMM_ENABLE_B_CACHE);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_packed_bcache", GEMM_ENABLE_PACKED_BCACHE_PRELOAD);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_a_row_cache", GEMM_ENABLE_A_ROW_CACHE);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_packed_a_row", GEMM_ENABLE_PACKED_A_ROW_PRELOAD);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_k_tiling", GEMM_ENABLE_K_TILING);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_n_tiling", GEMM_ENABLE_N_TILING);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_m_tiling", GEMM_ENABLE_M_TILING);
+        uvm_config_db#(bit)::set(null, "*", "cov_enable_c_rmw", GEMM_ENABLE_C_RMW_ACCUM);
+        uvm_config_db#(real)::set(null, "*", "cov_dma_clk_period_ns", dma_clk_period_ns);
+        uvm_config_db#(real)::set(null, "*", "cov_core_clk_period_ns", core_clk_period_ns);
+        uvm_config_db#(bit)::set(null, "*", "cov_is_csr_top", 1'b0);
+
         run_test();
     end
 

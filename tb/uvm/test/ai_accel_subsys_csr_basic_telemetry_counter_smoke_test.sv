@@ -11,6 +11,8 @@
 //   - Proves the telemetry version / reset-disabled / enable / clear policy.
 //   - Runs a two-command queue drain and checks basic queue, CQ consume,
 //     event/IRQ, and cycle telemetry counters.
+//   - Runs a second live queue session, issues an accepted STOP_QUEUE, and
+//     proves STOP_QUEUE request telemetry increments.
 //   - Confirms telemetry clear does not clear queue/event state or change
 //     GEMM / DMA / descriptor / completion behavior.
 //
@@ -221,6 +223,7 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
         logic [31:0] irq_eligible;
         logic [31:0] cq_update;
         logic [31:0] cq_consumed;
+        logic [31:0] stop_request;
         logic [31:0] queue_busy_cycles;
     begin
         p29d_read_telem(CSR_TELEM_QUEUE_START_COUNT,      "queue_start_count",      q_start);
@@ -231,6 +234,7 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
         p29d_read_telem(CSR_TELEM_IRQ_ELIGIBLE_COUNT,     "irq_eligible_count",     irq_eligible);
         p29d_read_telem(CSR_TELEM_CQ_HEAD_UPDATE_COUNT,   "cq_head_update_count",   cq_update);
         p29d_read_telem(CSR_TELEM_CQ_CONSUMED_COUNT,      "cq_consumed_count",      cq_consumed);
+        p29d_read_telem(CSR_TELEM_STOP_QUEUE_REQUEST_COUNT,"stop_queue_request_count", stop_request);
         p29d_read_telem(CSR_TELEM_QUEUE_BUSY_CYCLES,      "queue_busy_cycles",      queue_busy_cycles);
 
         p29d_expect_zero($sformatf("%s: queue_start_count", label),    q_start);
@@ -241,6 +245,7 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
         p29d_expect_zero($sformatf("%s: irq_eligible_count", label),   irq_eligible);
         p29d_expect_zero($sformatf("%s: cq_head_update_count", label), cq_update);
         p29d_expect_zero($sformatf("%s: cq_consumed_count", label),    cq_consumed);
+        p29d_expect_zero($sformatf("%s: stop_queue_request_count", label), stop_request);
         p29d_expect_zero($sformatf("%s: queue_busy_cycles", label),    queue_busy_cycles);
 
         `uvm_info("P29D_TELEM/ZERO_PASS",
@@ -278,6 +283,166 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
             $sformatf("Telemetry enable-all PASS: status=0x%08h control=0x%08h",
                 status,
                 control),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+    function automatic bit p29d_queue_service_active(input logic [31:0] status);
+    begin
+        // Match the validated P26 live-service interpretation.  Lower
+        // queue-service sub-engine busy bits are sufficient to prove that
+        // STOP_QUEUE is issued against a live queue session even if the
+        // top-level QUEUE_BUSY bit briefly deasserts during a handoff.
+        p29d_queue_service_active = status[0]  ||  // QUEUE_BUSY
+                                     status[8]  ||  // CMD_FETCH_BUSY
+                                     status[9]  ||  // DESC_FETCH_BUSY
+                                     status[10] ||  // RECIPE_BUSY
+                                     status[11] ||  // COMP_BUSY
+                                     status[12];    // UNDERLYING_BUSY
+    end
+    endfunction
+
+    task automatic p29d_wait_queue_service_active(input int unsigned timeout_cycles);
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_tail;
+        int unsigned cnt;
+    begin
+        cnt = 0;
+
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS,        status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS,   done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS,  error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,       sq_head);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,       sq_tail);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,       cq_tail);
+
+            if ((error_status != 32'h0000_0000) ||
+                (reject_status != 32'h0000_0000)) begin
+                `uvm_fatal("P29D_TELEM/STOP_PRECHECK_ERROR",
+                    $sformatf("Queue failed before STOP_QUEUE telemetry request: status=0x%08h done=0x%08h error=0x%08h reject=0x%08h SQ_HEAD=%0d SQ_TAIL=%0d CQ_TAIL=%0d",
+                        status,
+                        done_status,
+                        error_status,
+                        reject_status,
+                        sq_head,
+                        sq_tail,
+                        cq_tail))
+            end
+
+            if (p29d_queue_service_active(status) &&
+                (sq_head == 32'h0000_0000) &&
+                (sq_tail == 32'h0000_0001) &&
+                (cq_tail == 32'h0000_0000)) begin
+                `uvm_info("P29D_TELEM/STOP_ACTIVE",
+                    $sformatf("Queue service active before STOP_QUEUE telemetry request: status=0x%08h done=0x%08h SQ_HEAD=%0d SQ_TAIL=%0d CQ_TAIL=%0d",
+                        status,
+                        done_status,
+                        sq_head,
+                        sq_tail,
+                        cq_tail),
+                    UVM_MEDIUM)
+                return;
+            end
+
+            @(posedge p17d_ctrl_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("P29D_TELEM/STOP_ACTIVE_TIMEOUT",
+                    $sformatf("Timeout waiting for live queue before STOP_QUEUE telemetry request: status=0x%08h done=0x%08h error=0x%08h reject=0x%08h SQ_HEAD=%0d SQ_TAIL=%0d CQ_TAIL=%0d",
+                        status,
+                        done_status,
+                        error_status,
+                        reject_status,
+                        sq_head,
+                        sq_tail,
+                        cq_tail))
+            end
+        end
+    end
+    endtask
+
+    task automatic p29d_run_stop_request_telemetry_phase(
+        input ai_accel_event_driven_host_runtime_helper rt,
+        input ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t cfg,
+        input ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t cmd
+    );
+        ai_accel_event_driven_host_runtime_helper::p23_cq_record_t rec;
+        ai_accel_event_driven_host_runtime_helper::p23_event_snapshot_t event_snap;
+        logic [31:0] completion_mask;
+        logic [31:0] ack_mask;
+        logic [31:0] stop_request;
+        logic [31:0] reject_status;
+    begin
+        completion_mask = rt.queue_completion_event_mask();
+
+        // Start a clean second queue epoch without clearing telemetry.  This
+        // isolates an accepted live STOP_QUEUE request while preserving the
+        // already-observed basic counter activity from the first epoch.
+        rt.initialize_runtime(cfg, completion_mask, 1'b1);
+        csr_check_recipe_idle_ready("before P29D STOP_QUEUE telemetry phase");
+
+        rt.write_sq_command(cfg, 0, cmd, 1'b1);
+        rt.ring_sq_tail(32'h0000_0001);
+        rt.start_queue();
+
+        p29d_wait_queue_service_active(done_timeout_cycles * 4);
+        rt.stop_queue();
+
+        rt.wait_events(
+            completion_mask,
+            event_snap,
+            done_timeout_cycles * 8,
+            1'b1
+        );
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS,
+            reject_status
+        );
+        if (reject_status != 32'h0000_0000) begin
+            `uvm_fatal("P29D_TELEM/STOP_REJECTED",
+                $sformatf("Live STOP_QUEUE request was rejected: reject_status=0x%08h pending=0x%08h",
+                    reject_status,
+                    event_snap.pending))
+        end
+
+        rt.wait_cq_commit(cfg, 0, rec, done_timeout_cycles * 4);
+        if (!rec.commit_word[0]) begin
+            `uvm_fatal("P29D_TELEM/STOP_CQ_NOT_COMMITTED",
+                $sformatf("STOP_QUEUE telemetry phase CQ[0] did not commit: commit=0x%08h status=0x%08h",
+                    rec.commit_word,
+                    rec.status_flags))
+        end
+
+        rt.consume_cq_entry(cfg, 0, 1'b1);
+        ack_mask = event_snap.pending & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        rt.ack_events(ack_mask);
+
+        repeat (4) @(posedge p17d_ctrl_vif.clk);
+        p29d_read_telem(
+            CSR_TELEM_STOP_QUEUE_REQUEST_COUNT,
+            "stop_queue_request_count after accepted STOP_QUEUE",
+            stop_request
+        );
+
+        p29d_expect_nonzero("stop_queue_request_count", stop_request);
+
+        rt.clear_queue_sticky();
+        rt.clear_event_state();
+
+        `uvm_info("P29D_TELEM/STOP_COUNTER_PASS",
+            $sformatf("Accepted live STOP_QUEUE telemetry PASS: stop_request=%0d reject=0x%08h ack_mask=0x%08h",
+                stop_request,
+                reject_status,
+                ack_mask),
             UVM_MEDIUM)
     end
     endtask
@@ -548,6 +713,8 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
 
+        p29d_run_stop_request_telemetry_phase(rt, cfg, cmd0);
+
         // Prove the P29 clear command is observational: disable telemetry,
         // clear only telemetry counters, then verify representative counters
         // are zero while the completed datapath result has already passed.
@@ -557,7 +724,7 @@ class ai_accel_subsys_csr_basic_telemetry_counter_smoke_test
         p29d_check_selected_counters_zero("P29D after post-run clear");
 
         `uvm_info("P29D_TELEM/PASS",
-            $sformatf("P29D basic telemetry counter smoke PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d SQ_entries=2 CQ_entries=2 ack_mask=0x%08h",
+            $sformatf("P29D basic telemetry counter smoke PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d SQ_entries=2 CQ_entries=2 stop_telemetry=1 ack_mask=0x%08h",
                 selected_case_id,
                 a_flat.size(),
                 b_flat.size(),

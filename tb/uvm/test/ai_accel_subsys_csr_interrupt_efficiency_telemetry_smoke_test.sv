@@ -12,6 +12,8 @@
 //     notification releases when threshold moderation is enabled.
 //   - Confirms telemetry observes coalesced / threshold releases and the
 //     host batch CQ consume size.
+//   - Runs a sparse second session with timer fallback enabled and proves
+//     CSR_TELEM_TIMER_RELEASE_COUNT increments.
 //
 // P29E does not change RTL, SQ/CQ entry format, descriptor format,
 // completion record format, BRAM, GEMM, DMA, AXI-Stream, or Direct Stream
@@ -37,6 +39,9 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
     localparam logic [31:0] P29E_DESC0_TAG1  = 32'hD29E_1001;
     localparam logic [31:0] P29E_DESC1_TAG0  = 32'hD29E_2000;
     localparam logic [31:0] P29E_DESC1_TAG1  = 32'hD29E_2001;
+
+    localparam logic [31:0] P29E_TIMER_CQ_THRESHOLD = 32'h0000_0003;
+    localparam logic [31:0] P29E_TIMER_LIMIT        = 32'h0000_0200;
 
     localparam logic [11:0] CSR_TELEM_VERSION                  = 12'h6C0;
     localparam logic [11:0] CSR_TELEM_COMMAND                  = 12'h6C4;
@@ -266,6 +271,7 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
         logic [31:0] cq_commit;
         logic [31:0] coalesced_release;
         logic [31:0] threshold_release;
+        logic [31:0] timer_release;
         logic [31:0] irq_eligible;
         logic [31:0] max_batch;
     begin
@@ -275,6 +281,7 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
         p29e_read_telem(CSR_TELEM_CQ_COMMIT_COUNT,         "cq_commit_count",         cq_commit);
         p29e_read_telem(CSR_TELEM_COALESCED_RELEASE_COUNT, "coalesced_release_count", coalesced_release);
         p29e_read_telem(CSR_TELEM_THRESHOLD_RELEASE_COUNT, "threshold_release_count", threshold_release);
+        p29e_read_telem(CSR_TELEM_TIMER_RELEASE_COUNT,     "timer_release_count",     timer_release);
         p29e_read_telem(CSR_TELEM_IRQ_ELIGIBLE_COUNT,      "irq_eligible_count",      irq_eligible);
         p29e_read_telem(CSR_TELEM_MAX_CQ_BATCH_SIZE,       "max_cq_batch_size",       max_batch);
 
@@ -284,6 +291,7 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
         p29e_expect_zero($sformatf("%s: cq_commit_count",         label), cq_commit);
         p29e_expect_zero($sformatf("%s: coalesced_release_count", label), coalesced_release);
         p29e_expect_zero($sformatf("%s: threshold_release_count", label), threshold_release);
+        p29e_expect_zero($sformatf("%s: timer_release_count",     label), timer_release);
         p29e_expect_zero($sformatf("%s: irq_eligible_count",      label), irq_eligible);
         p29e_expect_zero($sformatf("%s: max_cq_batch_size",       label), max_batch);
 
@@ -418,6 +426,209 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
                 irq_eligible,
                 max_batch,
                 threshold_release),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+    task automatic p29e_run_timer_release_telemetry_phase(
+        input ai_accel_event_driven_host_runtime_stress_helper rt,
+        input ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t cmd
+    );
+        ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t timer_cfg;
+        ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_cfg_t mod_cfg;
+        ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t timer_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t rearm_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p28_cq_batch_result_t batch_result;
+        logic [31:0] completion_event_mask;
+        logic [31:0] timer_required_mask;
+        logic [31:0] threshold_forbidden_mask;
+        logic [31:0] ack_mask;
+        logic [31:0] telemetry_timer_release;
+        logic [31:0] telemetry_threshold_release;
+        logic [31:0] telemetry_queue_start;
+        logic [7:0]  mod_timer_release_count;
+        logic [7:0]  mod_threshold_release_count;
+    begin
+        rt.make_default_queue_cfg(
+            timer_cfg,
+            32'(P29E_SQ_BASE),
+            32'(P29E_CQ_BASE),
+            32'(P29E_QUEUE_DEPTH),
+            1'b0
+        );
+
+        completion_event_mask = rt.host_rt_event_mod_completion_mask(
+            1'b1, // QUEUE_COMMAND_COMPLETED_EVENT
+            1'b1, // CQ_NOT_EMPTY_EVENT
+            1'b1, // CQ_THRESHOLD_EVENT enabled but not expected
+            1'b1  // CQ_MODERATION_TIMER_EVENT
+        );
+
+        timer_required_mask = rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_CQ_NOT_EMPTY) |
+                              rt.event_bit(ai_accel_csr_access_helper::P28_EVENT_CQ_MOD_TIMER);
+        threshold_forbidden_mask =
+            rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_CQ_THRESHOLD);
+
+        // Isolate the timer telemetry subphase.  Telemetry remains enabled,
+        // while counter clear guarantees TIMER_RELEASE_COUNT is attributable
+        // to the sparse timer-fallback session below.
+        p29e_clear_telem_counters("P29E timer phase pre-clear");
+        p29e_check_counters_zero("P29E timer phase after clear");
+
+        rt.host_rt_lifecycle_init_session(
+            timer_cfg,
+            completion_event_mask,
+            1'b1,
+            1'b1,
+            "P29E timer telemetry init"
+        );
+
+        rt.host_rt_event_mod_default_cfg(
+            mod_cfg,
+            1'b1, // moderation_enable
+            1'b1, // cq_threshold_enable
+            1'b1, // moderation_timer_enable
+            1'b1, // retrigger_on_nonempty
+            P29E_TIMER_CQ_THRESHOLD,
+            P29E_TIMER_LIMIT,
+            completion_event_mask,
+            1'b1,
+            1'b1
+        );
+        rt.host_rt_event_mod_program(mod_cfg, "P29E timer telemetry moderation cfg");
+
+        rt.write_sq_command(timer_cfg, 0, cmd, 1'b1);
+        rt.ring_sq_tail(32'h0000_0001);
+        rt.start_queue();
+
+        rt.host_rt_event_mod_wait_notification(
+            timer_required_mask,
+            timer_snap,
+            "P29E wait timer telemetry notification",
+            done_timeout_cycles * 8,
+            1'b1
+        );
+
+        rt.host_rt_event_mod_expect_pending(
+            timer_snap,
+            timer_required_mask,
+            threshold_forbidden_mask,
+            "P29E timer telemetry pending check"
+        );
+
+        mod_threshold_release_count =
+            rt.host_rt_event_mod_debug_threshold_count(timer_snap.mod_debug);
+        mod_timer_release_count =
+            rt.host_rt_event_mod_debug_timer_count(timer_snap.mod_debug);
+
+        if (mod_threshold_release_count != 0) begin
+            `uvm_fatal("P29E_TELEM/TIMER_UNEXPECTED_THRESHOLD",
+                $sformatf("Threshold release occurred in sparse timer telemetry phase: threshold_count=%0d mod_debug=0x%08h",
+                    mod_threshold_release_count,
+                    timer_snap.mod_debug))
+        end
+
+        if (mod_timer_release_count == 0) begin
+            `uvm_fatal("P29E_TELEM/TIMER_DEBUG_ZERO",
+                $sformatf("Moderation timer debug release counter is zero: mod_debug=0x%08h mod_status=0x%08h",
+                    timer_snap.mod_debug,
+                    timer_snap.mod_status))
+        end
+
+        rt.host_rt_event_mod_expect_release_cause(
+            timer_snap,
+            ai_accel_csr_access_helper::P28_MOD_RELEASE_TIMER,
+            "P29E timer telemetry release cause"
+        );
+
+        rt.host_rt_event_mod_expect_cq_occupancy(
+            timer_snap,
+            1,
+            1,
+            "P29E timer telemetry CQ occupancy"
+        );
+
+        rt.host_rt_event_mod_consume_cq_batch(
+            timer_cfg,
+            timer_snap,
+            0,
+            batch_result,
+            1,
+            1'b1,
+            "P29E timer telemetry batch consume",
+            done_timeout_cycles * 4
+        );
+
+        if (batch_result.first_user_tag !== P29E_DESC0_TAG0) begin
+            `uvm_fatal("P29E_TELEM/TIMER_BATCH_FIRST_TAG",
+                $sformatf("Timer telemetry CQ first_user_tag mismatch actual=0x%08h expected=0x%08h",
+                    batch_result.first_user_tag,
+                    P29E_DESC0_TAG0))
+        end
+        if (batch_result.last_user_tag !== P29E_DESC0_TAG1) begin
+            `uvm_fatal("P29E_TELEM/TIMER_BATCH_LAST_TAG",
+                $sformatf("Timer telemetry CQ last_user_tag mismatch actual=0x%08h expected=0x%08h",
+                    batch_result.last_user_tag,
+                    P29E_DESC0_TAG1))
+        end
+
+        ack_mask = timer_snap.event_pending & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        rt.host_rt_event_mod_ack_and_rearm(
+            ack_mask,
+            completion_event_mask,
+            P29E_TIMER_CQ_THRESHOLD,
+            1'b1,
+            1'b1,
+            "P29E timer telemetry ack/rearm"
+        );
+        rt.host_rt_event_mod_capture_snapshot(rearm_snap);
+        rt.host_rt_event_mod_log_snapshot(
+            "P29E timer telemetry post-rearm",
+            rearm_snap,
+            UVM_MEDIUM
+        );
+        p28d_check_rearm_clean(
+            rearm_snap,
+            ack_mask,
+            "P29E timer telemetry rearm clean"
+        );
+
+        repeat (4) @(posedge p17d_ctrl_vif.clk);
+        p29e_read_telem(
+            CSR_TELEM_TIMER_RELEASE_COUNT,
+            "timer_release_count after timer fallback",
+            telemetry_timer_release
+        );
+        p29e_read_telem(
+            CSR_TELEM_THRESHOLD_RELEASE_COUNT,
+            "threshold_release_count after sparse timer fallback",
+            telemetry_threshold_release
+        );
+        p29e_read_telem(
+            CSR_TELEM_QUEUE_START_COUNT,
+            "queue_start_count in timer phase",
+            telemetry_queue_start
+        );
+
+        p29e_expect_nonzero("timer_release_count", telemetry_timer_release);
+        p29e_expect_zero(
+            "threshold_release_count in sparse timer phase",
+            telemetry_threshold_release
+        );
+        p29e_expect_eq(
+            "queue_start_count in timer phase",
+            telemetry_queue_start,
+            32'h0000_0001
+        );
+
+        `uvm_info("P29E_TELEM/TIMER_COUNTER_PASS",
+            $sformatf("Timer fallback telemetry PASS: timer_release=%0d threshold_release=%0d mod_timer_count=%0d consumed=%0d ack_mask=0x%08h",
+                telemetry_timer_release,
+                telemetry_threshold_release,
+                mod_timer_release_count,
+                batch_result.consumed_count,
+                ack_mask),
             UVM_MEDIUM)
     end
     endtask
@@ -639,6 +850,8 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
 
         p29e_check_interrupt_efficiency(batch_result, threshold_snap);
 
+        p29e_run_timer_release_telemetry_phase(rt, cmd0);
+
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
 
@@ -647,7 +860,7 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
         csr.write32_expect_okay(CSR_TELEM_CONTROL, 32'h0000_0000);
 
         `uvm_info("P29E_TELEM/PASS",
-            $sformatf("P29E interrupt efficiency / coalescing telemetry PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d threshold=2 batch_consumed=%0d ack_mask=0x%08h",
+            $sformatf("P29E interrupt efficiency / coalescing telemetry PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d threshold=2 timer_fallback=1 batch_consumed=%0d ack_mask=0x%08h",
                 selected_case_id,
                 a_flat.size(),
                 b_flat.size(),

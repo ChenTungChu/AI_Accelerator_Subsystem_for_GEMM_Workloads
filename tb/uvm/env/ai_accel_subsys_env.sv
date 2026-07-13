@@ -24,6 +24,7 @@ class ai_accel_subsys_env extends uvm_env;
     ai_accel_subsys_scoreboard           scoreboard;
     ai_accel_subsys_result_bridge        result_bridge;
     ai_accel_subsys_host_traffic_checker host_traffic_checker;
+    ai_accel_subsys_functional_coverage   functional_coverage;
 
     // ------------------------------------------------------------
     // Virtual interfaces
@@ -159,6 +160,7 @@ class ai_accel_subsys_env extends uvm_env;
         scoreboard           = ai_accel_subsys_scoreboard          ::type_id::create("scoreboard",           this);
         result_bridge        = ai_accel_subsys_result_bridge       ::type_id::create("result_bridge",        this);
         host_traffic_checker = ai_accel_subsys_host_traffic_checker::type_id::create("host_traffic_checker", this);
+        functional_coverage   = ai_accel_subsys_functional_coverage  ::type_id::create("functional_coverage",   this);
 
         if (enable_log) begin
             `uvm_info("ENV",
@@ -186,6 +188,7 @@ class ai_accel_subsys_env extends uvm_env;
         // --------------------------------------------------------
         agent.monitor.ap.connect(scoreboard.ctrl_analysis_export);
         agent.monitor.ap.connect(host_traffic_checker.ctrl_imp);
+        agent.monitor.ap.connect(functional_coverage.analysis_export);
 
         // --------------------------------------------------------
         // Result compare path

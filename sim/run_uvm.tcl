@@ -948,6 +948,33 @@ if {![info exists EXTRA_PLUSARGS]} {
 }
 
 # --------------------------------------------------
+# Functional coverage database collection
+#
+# Manual run:
+#   set ENABLE_COVERAGE 1
+#   do run_uvm.tcl
+#
+# Full regression:
+#   run_full_uvm_regression.tcl enables this automatically
+#   and assigns one compact UCDB tag per regression item.
+# --------------------------------------------------
+if {![info exists ENABLE_COVERAGE]} {
+    set ENABLE_COVERAGE 0
+}
+
+if {($ENABLE_COVERAGE != 0) && ($ENABLE_COVERAGE != 1)} {
+    error "Unsupported ENABLE_COVERAGE='$ENABLE_COVERAGE'. Supported values: 0, 1"
+}
+
+if {![info exists COVERAGE_OUTPUT_DIR]} {
+    set COVERAGE_OUTPUT_DIR coverage/rc_cov/manual
+}
+
+if {![info exists COVERAGE_RUN_TAG]} {
+    set COVERAGE_RUN_TAG ""
+}
+
+# --------------------------------------------------
 # Transcript log naming
 #
 # Format:
@@ -1096,6 +1123,29 @@ if {$UVM_TOP ne "ai_accel_csr_regs_uvm_top"} {
 
 set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 
+# --------------------------------------------------
+# Coverage file naming
+#
+# Regression runs provide a compact numeric COVERAGE_RUN_TAG so
+# Windows command lines and paths remain short.  Manual runs fall
+# back to the timestamped compact log basename.
+# --------------------------------------------------
+set COVERAGE_FILE ""
+set VSIM_COVERAGE_ARGS [list]
+
+if {$ENABLE_COVERAGE} {
+    if {$COVERAGE_RUN_TAG eq ""} {
+        set COVERAGE_RUN_TAG "${LOG_DATE_PREFIX}_[file rootname $LOG_BASENAME]"
+    }
+
+    file mkdir $COVERAGE_OUTPUT_DIR
+    set COVERAGE_FILE [file join $COVERAGE_OUTPUT_DIR "${COVERAGE_RUN_TAG}.ucdb"]
+    lappend VSIM_COVERAGE_ARGS -coverage
+
+    puts "\[run_uvm\] Functional coverage collection enabled"
+    puts "\[run_uvm\] COVERAGE_FILE=$COVERAGE_FILE"
+}
+
 # Defensive: keep this close to transcript file in case the script is
 # invoked from a clean working directory or logs/ was deleted mid-session.
 file mkdir [file dirname $LOG_FILE]
@@ -1112,6 +1162,7 @@ transcript on
 # --------------------------------------------------
 if {$UVM_TOP eq "ai_accel_csr_regs_uvm_top"} {
     vsim -L uvm12 \
+      {*}$VSIM_COVERAGE_ARGS \
       -voptargs=+acc \
       work.$UVM_TOP \
       -uvmcontrol=all \
@@ -1119,6 +1170,7 @@ if {$UVM_TOP eq "ai_accel_csr_regs_uvm_top"} {
       {*}$EXTRA_PLUSARGS
 } else {
     vsim -L uvm12 \
+      {*}$VSIM_COVERAGE_ARGS \
       -voptargs=+acc \
       -gGEMM_MAC_LANES=$GEMM_MAC_LANES \
       -gGEMM_ENABLE_B_CACHE=$GEMM_ENABLE_B_CACHE \
@@ -1165,6 +1217,28 @@ onfinish stop
 
 add wave -r sim:/*
 run -all
+
+# --------------------------------------------------
+# Save one UCDB after the UVM test has reached report_phase.
+#
+# onfinish stop keeps the simulator alive after the test calls
+# $finish, allowing this Tcl command to save the completed
+# functional coverage database deterministically.
+# --------------------------------------------------
+if {$ENABLE_COVERAGE} {
+    set coverage_save_status [catch {
+        coverage save $COVERAGE_FILE
+    } coverage_save_msg]
+
+    if {$coverage_save_status != 0} {
+        puts "\[run_uvm\]\[COVERAGE\]\[FAIL\] Unable to save UCDB: $COVERAGE_FILE"
+        puts $coverage_save_msg
+        transcript off
+        error "\[run_uvm\] Coverage save failed"
+    }
+
+    puts "\[run_uvm\]\[COVERAGE\]\[PASS\] Saved UCDB: $COVERAGE_FILE"
+}
 
 transcript off
 
