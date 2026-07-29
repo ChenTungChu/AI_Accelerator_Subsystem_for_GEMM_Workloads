@@ -42,6 +42,14 @@ class ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
     localparam logic [31:0] P27F_DESC1_TAG0 = 32'hD27F_2000;
     localparam logic [31:0] P27F_DESC1_TAG1 = 32'hD27F_2001;
 
+    // CODE-COV-B5 V4: final deterministic CONFIG_BUSY closure.
+    // This phase runs only after the original P27F functional flow is complete.
+    localparam int unsigned P27F_B5_EVENT_TIMEOUT_CYCLES = 20000;
+    localparam int unsigned P27F_B5_WATCHDOG_CYCLES     = 200000;
+
+    localparam logic [31:0] P27F_B5_CMD0_TAG = 32'hD27F_B500;
+    localparam logic [31:0] P27F_B5_CMD1_TAG = 32'hD27F_B510;
+
     function new(string name = "ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test",
                  uvm_component parent = null);
         super.new(name, parent);
@@ -256,6 +264,418 @@ class ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
     end
     endtask
 
+
+    task automatic p27f_b5_expect_reg_unchanged(
+        input logic [31:0] addr,
+        input logic [31:0] expected,
+        input string       name
+    );
+        logic [31:0] actual;
+    begin
+        csr.read32_expect_okay(addr, actual);
+        if (actual !== expected) begin
+            `uvm_fatal("CODE_COV_B5_V4/MUTATION",
+                $sformatf("%s changed during CONFIG_BUSY reject: expected=0x%08h actual=0x%08h",
+                    name, expected, actual))
+        end
+
+        `uvm_info("CODE_COV_B5_V4/UNCHANGED_PASS",
+            $sformatf("%s unchanged at 0x%08h", name, actual),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p27f_b5_issue_busy_matrix(
+        input ai_accel_event_driven_host_runtime_stress_helper::p27_guard_cfg_t guard_cfg
+    );
+        logic [31:0] reject_status;
+        logic [31:0] queue_status;
+        logic [31:0] sq_occ;
+        logic [31:0] cq_occ;
+        logic [31:0] cq_space;
+        logic [31:0] config_busy_mask;
+    begin
+        config_busy_mask =
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_REJ_CONFIG_BUSY);
+
+        // Start from a clean guard reject register. Do not clear it again
+        // until all 11 writes have been attempted.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_REJECT_STATUS,
+            ai_accel_csr_access_helper::MEM_GUARD_ALL_REJECT_MASK
+        );
+
+        `uvm_info("CODE_COV_B5_V4/MATRIX_BEGIN",
+            "Issuing all 11 Memory Guard configuration writes under one uninterrupted CQ-full queue_busy hold",
+            UVM_MEDIUM)
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL,
+            guard_cfg.control ^ 32'h0000_0001
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_BASE,
+            guard_cfg.sq_base ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_LIMIT,
+            guard_cfg.sq_limit ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_BASE,
+            guard_cfg.cq_base ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_LIMIT,
+            guard_cfg.cq_limit ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_BASE,
+            guard_cfg.desc_base ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_LIMIT,
+            guard_cfg.desc_limit ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_BASE,
+            guard_cfg.src_base ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_LIMIT,
+            guard_cfg.src_limit ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_BASE,
+            guard_cfg.dst_base ^ 32'h0000_0040
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_LIMIT,
+            guard_cfg.dst_limit ^ 32'h0000_0040
+        );
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_REJECT_STATUS,
+            reject_status
+        );
+        if ((reject_status & config_busy_mask) == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_B5_V4/NO_CONFIG_BUSY",
+                $sformatf("CONFIG_BUSY reject bit was not set after 11 busy writes: reject=0x%08h",
+                    reject_status))
+        end
+
+        // CQ_HEAD has not moved, therefore queue_busy must still be held.
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_STATUS,
+            queue_status
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_SQ_OCCUPANCY,
+            sq_occ
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CQ_OCCUPANCY,
+            cq_occ
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CQ_SPACE,
+            cq_space
+        );
+
+        if (!queue_status[0] ||
+            (sq_occ   != 32'h0000_0001) ||
+            (cq_occ   != 32'h0000_0001) ||
+            (cq_space != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_B5_V4/HOLD_LOST",
+                $sformatf("CQ-full ownership hold lost during matrix: q_status=0x%08h SQ_OCC=%0d CQ_OCC=%0d CQ_SPACE=%0d",
+                    queue_status, sq_occ, cq_occ, cq_space))
+        end
+
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL,
+            guard_cfg.control,
+            "MEM_GUARD_CONTROL"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_BASE,
+            guard_cfg.sq_base,
+            "MEM_GUARD_SQ_BASE"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SQ_LIMIT,
+            guard_cfg.sq_limit,
+            "MEM_GUARD_SQ_LIMIT"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_BASE,
+            guard_cfg.cq_base,
+            "MEM_GUARD_CQ_BASE"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CQ_LIMIT,
+            guard_cfg.cq_limit,
+            "MEM_GUARD_CQ_LIMIT"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_BASE,
+            guard_cfg.desc_base,
+            "MEM_GUARD_DESC_BASE"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DESC_LIMIT,
+            guard_cfg.desc_limit,
+            "MEM_GUARD_DESC_LIMIT"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_BASE,
+            guard_cfg.src_base,
+            "MEM_GUARD_SRC_BASE"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_SRC_LIMIT,
+            guard_cfg.src_limit,
+            "MEM_GUARD_SRC_LIMIT"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_BASE,
+            guard_cfg.dst_base,
+            "MEM_GUARD_DST_BASE"
+        );
+        p27f_b5_expect_reg_unchanged(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_DST_LIMIT,
+            guard_cfg.dst_limit,
+            "MEM_GUARD_DST_LIMIT"
+        );
+
+        `uvm_info("CODE_COV_B5_V4/MATRIX_PASS",
+            $sformatf("All 11 CONFIG_BUSY writes rejected without mutation; reject=0x%08h",
+                reject_status),
+            UVM_LOW)
+    end
+    endtask
+
+    task automatic p27f_run_config_busy_matrix_v4(
+        input ai_accel_event_driven_host_runtime_stress_helper rt
+    );
+        ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t entry_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t stall_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t recovered_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t drained_snap;
+
+        ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t busy_cfg;
+        ai_accel_event_driven_host_runtime_stress_helper::p27_guard_cfg_t busy_guard_cfg;
+
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t cmd0;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t cmd1;
+
+        ai_accel_event_driven_host_runtime_helper::p23_cq_record_t cq0;
+        ai_accel_event_driven_host_runtime_helper::p23_cq_record_t cq1;
+
+        logic [31:0] stall_mask;
+        logic [31:0] recovered_mask;
+        logic [31:0] drained_mask;
+        logic [31:0] event_mask;
+        logic [31:0] config_busy_mask;
+
+        int unsigned sq_idx0;
+        int unsigned sq_idx1;
+        int unsigned cq_idx0;
+        int unsigned cq_idx1;
+        logic [31:0] new_sq_tail;
+    begin
+        `uvm_info("CODE_COV_B5_V4/START",
+            "Starting B5 with the P30-proven CQ-full recovery sequence after original P27F completion",
+            UVM_LOW)
+
+        // Use the already-proven P27F terminal state as the next monotonic
+        // pointer epoch. No RESET_QUEUE_POINTERS is used in this B5 phase.
+        rt.read_runtime_snapshot(entry_snap);
+
+        p27f_make_cfg(rt, busy_cfg);
+        busy_cfg.sq_depth = 32'h0000_0004;
+        busy_cfg.cq_depth = 32'h0000_0001;
+        busy_cfg.sq_head  = entry_snap.sq_head;
+        busy_cfg.sq_tail  = entry_snap.sq_head;
+        busy_cfg.cq_head  = entry_snap.cq_head;
+        busy_cfg.cq_tail  = entry_snap.cq_head;
+
+        sq_idx0     = int'(entry_snap.sq_head);
+        sq_idx1     = int'(entry_snap.sq_head + 32'h0000_0001);
+        cq_idx0     = int'(entry_snap.cq_head);
+        cq_idx1     = int'(entry_snap.cq_head + 32'h0000_0001);
+        new_sq_tail = entry_snap.sq_head + 32'h0000_0002;
+
+        p27f_make_guard_cfg(rt, busy_cfg, 32'h0000_0000, busy_guard_cfg);
+        busy_guard_cfg.control = 32'h0000_0000;
+
+        p27f_make_cmd(rt, cmd0, 32'(P27F_DESC_BASE0), P27F_B5_CMD0_TAG);
+        p27f_make_cmd(rt, cmd1, 32'(P27F_DESC_BASE1), P27F_B5_CMD1_TAG);
+
+        stall_mask = rt.event_bit(
+            ai_accel_csr_access_helper::P22_EVENT_CQ_FULL_STALL
+        );
+        recovered_mask = rt.event_bit(
+            ai_accel_csr_access_helper::P22_EVENT_CQ_SPACE_RECOVERED
+        );
+        drained_mask = rt.event_bit(
+            ai_accel_csr_access_helper::P22_EVENT_QUEUE_DRAINED
+        );
+        event_mask =
+            rt.queue_completion_event_mask() |
+            stall_mask |
+            recovered_mask |
+            drained_mask;
+
+        rt.host_rt_mem_guard_clear_all("CODE-COV-B5 V4 preclear");
+        rt.host_rt_mem_guard_program_regions(
+            busy_guard_cfg,
+            "CODE-COV-B5 V4 programmed regions / guard disabled"
+        );
+
+        rt.host_rt_lifecycle_init_session(
+            busy_cfg,
+            event_mask,
+            1'b1,
+            1'b1,
+            "CODE-COV-B5 V4 session init"
+        );
+
+        `uvm_info("CODE_COV_B5_V4/EPOCH",
+            $sformatf("B5 epoch SQ=%0d CQ=%0d; submit SQ[%0d:%0d], expect CQ[%0d:%0d]",
+                busy_cfg.sq_head,
+                busy_cfg.cq_head,
+                sq_idx0,
+                sq_idx1,
+                cq_idx0,
+                cq_idx1),
+            UVM_MEDIUM)
+
+        rt.write_sq_command(busy_cfg, sq_idx0, cmd0);
+        rt.write_sq_command(busy_cfg, sq_idx1, cmd1);
+        rt.ring_sq_tail(new_sq_tail);
+        rt.start_queue();
+
+        `uvm_info("CODE_COV_B5_V4/WAIT_STALL",
+            "Waiting for validated CQ_FULL_STALL event before CONFIG_BUSY matrix",
+            UVM_MEDIUM)
+
+        rt.wait_for_progress_event(
+            stall_mask,
+            stall_snap,
+            "CODE-COV-B5 V4 CQ-full stall",
+            P27F_B5_EVENT_TIMEOUT_CYCLES,
+            1'b1
+        );
+        p25c_check_event_snapshot(
+            "CODE-COV-B5 V4 CQ-full stall",
+            stall_snap,
+            stall_mask
+        );
+
+        if (!stall_snap.queue_status[0] ||
+            (stall_snap.sq_occupancy != 32'h0000_0001) ||
+            (stall_snap.cq_occupancy != 32'h0000_0001) ||
+            (stall_snap.cq_space     != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_B5_V4/BAD_STALL_STATE",
+                $sformatf("Unexpected CQ-full state: q_status=0x%08h SQ(h/t/occ)=%0d/%0d/%0d CQ(h/t/occ/space)=%0d/%0d/%0d/%0d",
+                    stall_snap.queue_status,
+                    stall_snap.sq_head,
+                    stall_snap.sq_tail,
+                    stall_snap.sq_occupancy,
+                    stall_snap.cq_head,
+                    stall_snap.cq_tail,
+                    stall_snap.cq_occupancy,
+                    stall_snap.cq_space))
+        end
+
+        rt.wait_and_check_cq_record(
+            busy_cfg,
+            cq_idx0,
+            32'(P27F_DESC0_TAG0),
+            32'(P27F_DESC0_TAG1),
+            cq0,
+            "CODE-COV-B5 V4 first CQ",
+            P27F_B5_EVENT_TIMEOUT_CYCLES
+        );
+
+        `uvm_info("CODE_COV_B5_V4/HOLD_REACHED",
+            $sformatf("Hold reached: SQ(h/t/occ)=%0d/%0d/%0d CQ(h/t/occ/space)=%0d/%0d/%0d/%0d",
+                stall_snap.sq_head,
+                stall_snap.sq_tail,
+                stall_snap.sq_occupancy,
+                stall_snap.cq_head,
+                stall_snap.cq_tail,
+                stall_snap.cq_occupancy,
+                stall_snap.cq_space),
+            UVM_LOW)
+
+        p27f_b5_issue_busy_matrix(busy_guard_cfg);
+
+        config_busy_mask =
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_REJ_CONFIG_BUSY);
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_REJECT_STATUS,
+            config_busy_mask
+        );
+
+        rt.consume_cq_entry(busy_cfg, cq_idx0, 1'b1);
+
+        rt.wait_for_progress_event(
+            recovered_mask,
+            recovered_snap,
+            "CODE-COV-B5 V4 CQ-space recovered",
+            P27F_B5_EVENT_TIMEOUT_CYCLES,
+            1'b1
+        );
+        p25c_check_event_snapshot(
+            "CODE-COV-B5 V4 CQ-space recovered",
+            recovered_snap,
+            recovered_mask
+        );
+
+        rt.wait_for_progress_event(
+            drained_mask,
+            drained_snap,
+            "CODE-COV-B5 V4 second command drained",
+            P27F_B5_EVENT_TIMEOUT_CYCLES,
+            1'b1
+        );
+        p25c_check_event_snapshot(
+            "CODE-COV-B5 V4 second command drained",
+            drained_snap,
+            drained_mask
+        );
+
+        rt.wait_and_check_cq_record(
+            busy_cfg,
+            cq_idx1,
+            32'(P27F_DESC1_TAG0),
+            32'(P27F_DESC1_TAG1),
+            cq1,
+            "CODE-COV-B5 V4 second CQ",
+            P27F_B5_EVENT_TIMEOUT_CYCLES
+        );
+        rt.consume_cq_entry(busy_cfg, cq_idx1, 1'b1);
+
+        rt.host_rt_lifecycle_cleanup_drained(
+            busy_cfg,
+            event_mask,
+            1'b0,
+            1'b0,
+            1'b1,
+            "CODE-COV-B5 V4 final drained cleanup"
+        );
+
+        rt.host_rt_mem_guard_clear_all("CODE-COV-B5 V4 final guard clear");
+
+        `uvm_info("CODE_COV_B5_V4/PASS",
+            $sformatf("B5 CONFIG_BUSY matrix PASS: all 11 writes covered; starting SQ/CQ epoch=%0d/%0d",
+                entry_snap.sq_head,
+                entry_snap.cq_head),
+            UVM_LOW)
+    end
+    endtask
+
     task run_phase(uvm_phase phase);
         ai_accel_subsys_seq_item profile_item;
         int signed               a_flat[];
@@ -266,6 +686,7 @@ class ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
         int unsigned             c_bytes;
 
         ai_accel_event_driven_host_runtime_stress_helper rt;
+        bit code_cov_b5_v4_done;
         ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t cfg;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t baseline_cmd;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t bad_cq_cmd;
@@ -434,6 +855,30 @@ class ai_accel_subsys_csr_mem_guard_cq_recovery_smoke_test
         `uvm_info("P27F_GUARD/RECOVERY_PASS",
             "P27F known-good command completed after CQ guard reject and suppressed unsafe CQ writeback",
             UVM_MEDIUM)
+
+        // ------------------------------------------------------------
+        // CODE-COV-B5 final subphase.
+        //
+        // Run only after the original P27F verification has already passed.
+        // The watchdog is independent of helper polling loops, so this phase
+        // can no longer look like an infinite simulation.
+        // ------------------------------------------------------------
+        code_cov_b5_v4_done = 1'b0;
+        fork : code_cov_b5_v4_watchdog_fork
+            begin : code_cov_b5_v4_body
+                p27f_run_config_busy_matrix_v4(rt);
+                code_cov_b5_v4_done = 1'b1;
+            end
+            begin : code_cov_b5_v4_watchdog
+                repeat (P27F_B5_WATCHDOG_CYCLES) @(posedge p17d_ctrl_vif.clk);
+                if (!code_cov_b5_v4_done) begin
+                    `uvm_fatal("CODE_COV_B5_V4/WATCHDOG",
+                        $sformatf("B5 exceeded absolute watchdog of %0d ctrl-clock cycles",
+                            P27F_B5_WATCHDOG_CYCLES))
+                end
+            end
+        join_any
+        disable code_cov_b5_v4_watchdog_fork;
 
         `uvm_info("P27F_GUARD/PASS",
             $sformatf("P27F CQ / completion writeback memory guard validation PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d",

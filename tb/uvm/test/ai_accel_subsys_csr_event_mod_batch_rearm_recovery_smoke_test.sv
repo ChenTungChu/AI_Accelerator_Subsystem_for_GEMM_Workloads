@@ -9,10 +9,13 @@
 //   - Reuses the validated P23 event-driven SQ/CQ host runtime path.
 //   - Enables the P28 event moderation CSR policy with CQ threshold = 2.
 //   - Runs two consecutive two-command batches in one queue pointer epoch.
-//   - Host consumes each visible CQ batch, publishes CQ_HEAD, W1C-acks the
-//     handled event bits, and re-arms the event path before appending the
-//     next batch.
-//   - Proves a second coalesced notification is not lost after W1C/re-arm.
+//   - On the first batch, W1C-acks the threshold notification while CQ
+//     occupancy is still 2 and proves RETRIGGER_ON_STILL_NONEMPTY produces
+//     a REARM_NONEMPTY moderation release before CQ_HEAD advances.
+//   - Host then consumes each visible CQ batch, publishes CQ_HEAD, performs
+//     the normal clean W1C/re-arm, and appends the next batch.
+//   - Proves both the still-nonempty re-arm path and the second coalesced
+//     notification are not lost after W1C/re-arm.
 //   - Confirms terminal queue events remain visible while completion-style
 //     CQ notification is moderated.
 //
@@ -123,6 +126,70 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
                 snap.cq_head,
                 snap.cq_tail,
                 snap.cq_occupancy),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p28f_check_nonempty_rearm(
+        input ai_accel_event_driven_host_runtime_stress_helper rt,
+        input ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t snap,
+        input logic [31:0] required_mask,
+        input logic [31:0] expected_cq_head,
+        input logic [31:0] expected_cq_occupancy,
+        input string label
+    );
+    begin
+        if ((snap.event_pending & required_mask) != required_mask) begin
+            `uvm_fatal("P28F_MOD/NONEMPTY_REARM_PENDING",
+                $sformatf("%s: expected re-armed completion-style pending bits required=0x%08h pending=0x%08h",
+                    label,
+                    required_mask,
+                    snap.event_pending))
+        end
+
+        if (snap.cq_head != expected_cq_head) begin
+            `uvm_fatal("P28F_MOD/NONEMPTY_REARM_HEAD",
+                $sformatf("%s: CQ_HEAD changed before host consume actual=%0d expected=%0d",
+                    label,
+                    snap.cq_head,
+                    expected_cq_head))
+        end
+
+        if (snap.cq_occupancy != expected_cq_occupancy) begin
+            `uvm_fatal("P28F_MOD/NONEMPTY_REARM_OCC",
+                $sformatf("%s: CQ occupancy changed before host consume actual=%0d expected=%0d head=%0d tail=%0d",
+                    label,
+                    snap.cq_occupancy,
+                    expected_cq_occupancy,
+                    snap.cq_head,
+                    snap.cq_tail))
+        end
+
+        if (snap.event_status[ai_accel_csr_access_helper::EVENT_STATUS_EVENT_IRQ_OUT] !== 1'b1) begin
+            `uvm_fatal("P28F_MOD/NONEMPTY_REARM_IRQ",
+                $sformatf("%s: re-armed completion notification did not reassert IRQ status=0x%08h pending=0x%08h",
+                    label,
+                    snap.event_status,
+                    snap.event_pending))
+        end
+
+        rt.host_rt_event_mod_expect_release_cause(
+            snap,
+            ai_accel_csr_access_helper::P28_MOD_RELEASE_REARM,
+            {label, " release cause"}
+        );
+
+        `uvm_info("P28F_MOD/NONEMPTY_REARM_PASS",
+            $sformatf("%s: still-nonempty W1C/re-arm PASS pending=0x%08h status=0x%08h CQ(h/t/occ)=%0d/%0d/%0d release=%s(0x%02h)",
+                label,
+                snap.event_pending,
+                snap.event_status,
+                snap.cq_head,
+                snap.cq_tail,
+                snap.cq_occupancy,
+                rt.host_rt_event_mod_release_name(
+                    rt.host_rt_event_mod_debug_release_cause(snap.mod_debug)),
+                rt.host_rt_event_mod_debug_release_cause(snap.mod_debug)),
             UVM_MEDIUM)
     end
     endtask
@@ -266,6 +333,7 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t cmd3;
         ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_cfg_t mod_cfg;
         ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t first_snap;
+        ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t first_nonempty_rearm_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t first_rearm_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t second_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p28_event_mod_snapshot_t second_rearm_snap;
@@ -274,8 +342,10 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
 
         logic [31:0] event_enable_mask;
         logic [31:0] threshold_required_mask;
+        logic [31:0] nonempty_rearm_required_mask;
         logic [31:0] urgent_bypass_mask;
         logic [31:0] ack_mask0;
+        logic [31:0] ack_mask0_cleanup;
         logic [31:0] ack_mask1;
         logic [7:0]  threshold_count0;
         logic [7:0]  threshold_count1;
@@ -365,6 +435,9 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
 
         threshold_required_mask = rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_CQ_NOT_EMPTY) |
                                   rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_CQ_THRESHOLD);
+        nonempty_rearm_required_mask =
+            rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_COMPLETED) |
+            rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_CQ_NOT_EMPTY);
         urgent_bypass_mask = rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_DRAINED) |
                              rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_STOPPED);
 
@@ -424,14 +497,44 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
         p28f_check_threshold_release_delta(rt, first_snap, 8'h00, "P28F first batch threshold release", threshold_count0);
         rt.host_rt_event_mod_expect_cq_occupancy(first_snap, 2, 2, "P28F first batch CQ occupancy");
 
+        // CODE-COV-D3:
+        // ACK the first threshold notification before CQ consumption.  CQ is
+        // deliberately still non-empty (occupancy=2), so the enabled
+        // RETRIGGER_ON_STILL_NONEMPTY policy must generate a REARM release.
+        ack_mask0 = first_snap.event_pending & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        rt.host_rt_event_mod_ack_and_rearm(
+            ack_mask0,
+            event_enable_mask,
+            P28F_CQ_THRESHOLD,
+            1'b1,
+            1'b1,
+            "P28F first batch still-nonempty ack/rearm"
+        );
+        rt.host_rt_event_mod_capture_snapshot(first_nonempty_rearm_snap);
+        rt.host_rt_event_mod_log_snapshot(
+            "P28F after first still-nonempty rearm",
+            first_nonempty_rearm_snap,
+            UVM_MEDIUM
+        );
+        p28f_check_nonempty_rearm(
+            rt,
+            first_nonempty_rearm_snap,
+            nonempty_rearm_required_mask,
+            first_snap.cq_head,
+            32'h0000_0002,
+            "P28F first still-nonempty rearm"
+        );
+
+        // Only after proving the REARM_NONEMPTY notification do we consume
+        // CQ[0:1].  This preserves the original batch result checking.
         rt.host_rt_event_mod_consume_cq_batch(
             cfg,
-            first_snap,
+            first_nonempty_rearm_snap,
             0,
             first_batch,
             2,
             1'b1,
-            "P28F first batch consume",
+            "P28F first batch consume after nonempty rearm",
             done_timeout_cycles * 4
         );
         p28f_check_batch_result(
@@ -445,18 +548,26 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
             "P28F_MOD/BATCH1_PASS"
         );
 
-        ack_mask0 = first_snap.event_pending & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        // CQ is now empty.  Clear the reasserted completion-style event and
+        // perform the existing clean re-arm check before appending batch 1.
+        ack_mask0_cleanup =
+            first_nonempty_rearm_snap.event_pending &
+            ai_accel_csr_access_helper::EVENT_VALID_MASK;
         rt.host_rt_event_mod_ack_and_rearm(
-            ack_mask0,
+            ack_mask0_cleanup,
             event_enable_mask,
             P28F_CQ_THRESHOLD,
             1'b1,
             1'b1,
-            "P28F first batch ack/rearm"
+            "P28F first batch post-consume cleanup ack/rearm"
         );
         rt.host_rt_event_mod_capture_snapshot(first_rearm_snap);
-        rt.host_rt_event_mod_log_snapshot("P28F after first rearm", first_rearm_snap, UVM_MEDIUM);
-        p28f_check_rearm_clean(first_rearm_snap, ack_mask0, "P28F first rearm clean");
+        rt.host_rt_event_mod_log_snapshot("P28F after first clean rearm", first_rearm_snap, UVM_MEDIUM);
+        p28f_check_rearm_clean(
+            first_rearm_snap,
+            ack_mask0_cleanup,
+            "P28F first post-consume rearm clean"
+        );
         `uvm_info("P28F_MOD/RECOVERY_READY_PASS",
             $sformatf("P28F first rearm completed: SQ(h/t)=%0d/%0d CQ(h/t/occ)=%0d/%0d/%0d threshold_count=%0d",
                 first_rearm_snap.sq_head,
@@ -538,12 +649,13 @@ class ai_accel_subsys_csr_event_mod_batch_rearm_recovery_smoke_test
         end
 
         `uvm_info("P28F_MOD/RECOVERY_PASS",
-            $sformatf("P28F re-arm recovery PASS: threshold_count %0d->%0d, CQ_HEAD %0d->%0d, ack0=0x%08h ack1=0x%08h",
+            $sformatf("P28F re-arm recovery PASS: threshold_count %0d->%0d, CQ_HEAD %0d->%0d, nonempty_ack0=0x%08h cleanup_ack0=0x%08h ack1=0x%08h",
                 threshold_count0,
                 threshold_count1,
                 first_batch.start_cq_head,
                 second_batch.final_cq_head,
                 ack_mask0,
+                ack_mask0_cleanup,
                 ack_mask1),
             UVM_MEDIUM)
 

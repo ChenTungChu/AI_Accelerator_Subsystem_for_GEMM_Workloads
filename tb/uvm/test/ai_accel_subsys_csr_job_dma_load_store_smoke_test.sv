@@ -23,6 +23,19 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
     `uvm_component_utils(ai_accel_subsys_csr_job_dma_load_store_smoke_test)
 
     localparam logic [31:0] JOB_MODE_DMA_LOAD_DMA_STORE = 32'h0000_0005;
+    localparam logic [31:0] JOB_MODE_AXIS_DMA_STORE     = 32'h0000_0006;
+    localparam logic [31:0] JOB_MODE_DS_DMA_STORE       = 32'h0000_0007;
+
+    localparam int unsigned C1D2_P14_ERR_AXIS_LOAD  = 1;
+    localparam int unsigned C1D2_P14_ERR_DS_LOAD    = 2;
+    localparam int unsigned C1D2_P14_ERR_DMA_STORE  = 3;
+    localparam int unsigned C1D2_JOB_ERR_AXIS_LOAD  = 1;
+    localparam int unsigned C1D2_JOB_ERR_DS_LOAD    = 2;
+    localparam int unsigned C1D2_JOB_ERR_DMA_STORE  = 3;
+
+    localparam int unsigned C1D2_P14_STATUS_AXIS_LOAD_BUSY = 2;
+    localparam int unsigned C1D2_P14_STATUS_DS_LOAD_BUSY   = 3;
+    localparam int unsigned C1D2_P14_STATUS_DMA_STORE_BUSY = 4;
 
     localparam logic [3:0] JOB_STATE_DONE  = 4'd13;
     localparam logic [3:0] JOB_STATE_ERROR = 4'd14;
@@ -96,11 +109,12 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
     // ------------------------------------------------------------
     // Job descriptor programming
     // ------------------------------------------------------------
-    task automatic csr_write_job_descriptor(
+    task automatic csr_write_job_descriptor_mode(
         input ai_accel_subsys_seq_item profile_item,
         input int unsigned             a_bytes,
         input int unsigned             b_bytes,
-        input int unsigned             c_bytes
+        input int unsigned             c_bytes,
+        input logic [31:0]             job_mode_value
     );
         int unsigned a_beats;
         int unsigned b_beats;
@@ -110,7 +124,7 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
 
         csr.write32_expect_okay(
             ai_accel_csr_access_helper::CSR_JOB_MODE,
-            JOB_MODE_DMA_LOAD_DMA_STORE
+            job_mode_value
         );
 
         csr.write32_expect_okay(
@@ -190,7 +204,7 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
 
         csr.expect_read32(
             ai_accel_csr_access_helper::CSR_JOB_MODE,
-            JOB_MODE_DMA_LOAD_DMA_STORE,
+            job_mode_value,
             "CSR_JOB_MODE"
         );
 
@@ -251,7 +265,7 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
         `uvm_info("CSR_JOB_DMA_SMOKE",
             $sformatf("Programmed CSR job descriptor: case_id=%0d mode=0x%08h A src=0x%08h dst=0x%08h beats=%0d B src=0x%08h dst=0x%08h beats=%0d C src=0x%08h dst=0x%08h bytes=%0d dim=(%0d,%0d,%0d)",
                 profile_item.case_id,
-                JOB_MODE_DMA_LOAD_DMA_STORE,
+                job_mode_value,
                 DMA_SRC_A_BASE,
                 profile_item.base_addr_a,
                 a_beats,
@@ -265,6 +279,25 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
                 profile_item.dim_n,
                 profile_item.dim_k),
             UVM_MEDIUM)
+    end
+    endtask
+
+
+    // Preserve the original test API for all existing derived users.
+    task automatic csr_write_job_descriptor(
+        input ai_accel_subsys_seq_item profile_item,
+        input int unsigned             a_bytes,
+        input int unsigned             b_bytes,
+        input int unsigned             c_bytes
+    );
+    begin
+        csr_write_job_descriptor_mode(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            JOB_MODE_DMA_LOAD_DMA_STORE
+        );
     end
     endtask
 
@@ -382,6 +415,543 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-D2 P15 genuine worker-error propagation
+    // ------------------------------------------------------------
+    task automatic csr_poll_d2_job_error(
+        input int unsigned timeout_cycles,
+        input int unsigned job_error_bit,
+        input int unsigned p14_error_bit,
+        input string       tag,
+        output logic [31:0] observed_job_error,
+        output logic [31:0] observed_p14_error
+    );
+        logic [31:0] job_status;
+        logic [31:0] job_reject;
+        logic [31:0] job_state;
+        logic [31:0] p14_reject;
+        logic [31:0] expected_job_error;
+        logic [31:0] expected_p14_error;
+        int unsigned cnt;
+    begin
+        expected_job_error = 32'h0000_0001 << job_error_bit;
+        expected_p14_error = 32'h0000_0001 << p14_error_bit;
+        observed_job_error = 32'h0000_0000;
+        observed_p14_error = 32'h0000_0000;
+        cnt = 0;
+
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATUS, job_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, observed_job_error);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATE, job_state);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, observed_p14_error);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+
+            if ((job_reject != 32'h0000_0000) || (p14_reject != 32'h0000_0000)) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_UNEXPECTED_REJECT",
+                    $sformatf("%s: unexpected reject during genuine worker error: job_reject=0x%08h p14_reject=0x%08h state=0x%08h",
+                        tag, job_reject, p14_reject, job_state))
+            end
+
+            if ((observed_job_error != 32'h0000_0000) &&
+                (observed_job_error != expected_job_error)) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_BAD_JOB_ERROR",
+                    $sformatf("%s: unexpected JOB_ERROR_STATUS: expected=0x%08h actual=0x%08h state=0x%08h",
+                        tag, expected_job_error, observed_job_error, job_state))
+            end
+
+            if ((observed_p14_error != 32'h0000_0000) &&
+                (observed_p14_error != expected_p14_error)) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_BAD_P14_ERROR",
+                    $sformatf("%s: unexpected P14 ERROR_STATUS: expected=0x%08h actual=0x%08h state=0x%08h",
+                        tag, expected_p14_error, observed_p14_error, job_state))
+            end
+
+            if ((observed_job_error == expected_job_error) &&
+                (observed_p14_error == expected_p14_error)) begin
+                if (job_state[3:0] != JOB_STATE_ERROR) begin
+                    `uvm_fatal("CODE_COV_C1D2/P15_BAD_ERROR_STATE",
+                        $sformatf("%s: sticky worker error observed but JOB_STATE is not ERROR: state=0x%08h status=0x%08h",
+                            tag, job_state, job_status))
+                end
+                if (job_status[0]) begin
+                    `uvm_fatal("CODE_COV_C1D2/P15_BUSY_IN_ERROR",
+                        $sformatf("%s: JOB_STATUS.BUSY remained set in ERROR state: status=0x%08h state=0x%08h",
+                            tag, job_status, job_state))
+                end
+                return;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_ERROR_TIMEOUT",
+                    $sformatf("%s: timeout waiting for job/P14 error propagation after %0d cycles; job_error=0x%08h p14_error=0x%08h state=0x%08h",
+                        tag, timeout_cycles, observed_job_error, observed_p14_error, job_state))
+            end
+        end
+    end
+    endtask
+
+    task automatic csr_wait_d2_job_idle_ready(
+        input int unsigned timeout_cycles,
+        input string       tag
+    );
+        logic [31:0] job_status;
+        logic [31:0] job_error;
+        logic [31:0] job_reject;
+        int unsigned cnt;
+    begin
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATUS, job_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, job_error);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject);
+
+            if ((job_error != 32'h0000_0000) || (job_reject != 32'h0000_0000)) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_IDLE_STICKY",
+                    $sformatf("%s: sticky job status remained while waiting for JOB_ACCEPT_READY: error=0x%08h reject=0x%08h status=0x%08h",
+                        tag, job_error, job_reject, job_status))
+            end
+
+            if (job_status[3]) begin
+                return;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_IDLE_TIMEOUT",
+                    $sformatf("%s: timeout waiting for JOB_ACCEPT_READY after %0d cycles; status=0x%08h",
+                        tag, timeout_cycles, job_status))
+            end
+        end
+    end
+    endtask
+
+    task automatic csr_clear_d2_job_error_for_recovery(
+        input string       tag,
+        input logic [31:0] expected_p14_error
+    );
+        logic [31:0] job_error;
+        logic [31:0] job_reject;
+        logic [31:0] p14_error;
+        logic [31:0] p14_reject;
+    begin
+        // The P15 error outputs are one-cycle pulses and JOB_CLEAR_ERROR also
+        // moves the sequencer from ERROR back to IDLE.  The underlying P14
+        // worker error, however, is level-held until that worker is started
+        // again, so do not require P14 ERROR_STATUS to clear yet.
+        csr_job_clear_sticky_status();
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, job_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, p14_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+
+        if ((job_error != 32'h0000_0000) || (job_reject != 32'h0000_0000) ||
+            (p14_reject != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P15_JOB_CLEAR",
+                $sformatf("%s: P15 cleanup failed before recovery: job_error=0x%08h job_reject=0x%08h p14_reject=0x%08h",
+                    tag, job_error, job_reject, p14_reject))
+        end
+
+        if (p14_error != expected_p14_error) begin
+            `uvm_fatal("CODE_COV_C1D2/P15_P14_HOLD",
+                $sformatf("%s: expected underlying P14 worker error to remain level-held until re-arm: expected=0x%08h actual=0x%08h",
+                    tag, expected_p14_error, p14_error))
+        end
+
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " post-job-clear"});
+    end
+    endtask
+
+    task automatic run_d2_p14_worker_rearm(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int unsigned             c_bytes,
+        input int unsigned             p14_error_bit,
+        input int unsigned             worker_busy_bit,
+        input string                   tag
+    );
+        int unsigned a_beats;
+        int unsigned cnt;
+        logic [31:0] cmd;
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] p14_error;
+        logic [31:0] p14_reject;
+        logic [31:0] expected_p14_error;
+    begin
+        a_beats            = bytes_to_beats(a_flat.size());
+        expected_p14_error = 32'h0000_0001 << p14_error_bit;
+
+        // A worker-level P14 error remains asserted until that worker accepts
+        // a new start.  Starting the same worker through P15 is not a safe
+        // re-arm path: on the first WAIT cycle the job sequencer can sample
+        // the old level-held error in the same cycle that the worker consumes
+        // its start pulse.  Re-arm the worker through the existing idle P14
+        // debug/control path first, then launch the clean P15 recovery job.
+        //
+        // Clear only stale DONE/REJECT state before the P14 re-arm.  Keep the
+        // genuine P14 ERROR sticky set until after the worker has accepted the
+        // new start so the test proves source-drain/re-arm semantics.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            32'hFFFF_FFFF
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            32'hFFFF_FFFF
+        );
+        repeat (2) @(posedge csr_vif.clk);
+
+        case (worker_busy_bit)
+            C1D2_P14_STATUS_AXIS_LOAD_BUSY: begin
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_AXIS_SRC_BASE,
+                    DMA_SRC_A_BASE
+                );
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_AXIS_DST_BASE,
+                    profile_item.base_addr_a
+                );
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_AXIS_LOAD_BEATS,
+                    32'(a_beats)
+                );
+
+                cmd = 32'h0000_0000;
+                cmd[ai_accel_csr_access_helper::CMD_START_AXIS_LOAD] = 1'b1;
+                csr.issue_command(cmd);
+            end
+
+            C1D2_P14_STATUS_DS_LOAD_BUSY: begin
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_DS_SRC_BASE,
+                    DMA_SRC_A_BASE
+                );
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_DS_DST_BASE,
+                    profile_item.base_addr_a
+                );
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_DS_LOAD_BEATS,
+                    32'(a_beats)
+                );
+                csr.write32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_DS_CONTROL,
+                    32'h0000_0000
+                );
+
+                cmd = 32'h0000_0000;
+                cmd[ai_accel_csr_access_helper::CMD_START_DS_LOAD] = 1'b1;
+                csr.issue_command(cmd);
+            end
+
+            C1D2_P14_STATUS_DMA_STORE_BUSY: begin
+                csr_write_dma_store_config(
+                    profile_item.base_addr_c,
+                    DMA_DST_C_BASE,
+                    c_bytes
+                );
+                csr_start_dma_store();
+            end
+
+            default: begin
+                `uvm_fatal("CODE_COV_C1D2/P15_BAD_REARM_WORKER",
+                    $sformatf("%s: unsupported P14 worker busy bit %0d for recovery re-arm",
+                        tag, worker_busy_bit))
+            end
+        endcase
+
+        // The P14 re-arm command must be accepted.  Since one-beat AXIS/DS
+        // operations may finish before software observes BUSY, accept either
+        // BUSY or the matching DONE bit as proof that the worker consumed the
+        // new start.  DONE and BUSY use the same P14 bit number for these
+        // three workers (AXIS=2, DS=3, DMA-store=4).
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+
+            if (p14_reject != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_P14_REARM_REJECT",
+                    $sformatf("%s: P14 worker re-arm command rejected: status=0x%08h done=0x%08h reject=0x%08h",
+                        tag, status, done_status, p14_reject))
+            end
+
+            if (status[worker_busy_bit] || done_status[worker_busy_bit]) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P15_P14_REARM_TIMEOUT",
+                    $sformatf("%s: timeout waiting for P14 worker %0d to consume recovery start",
+                        tag, worker_busy_bit))
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        // The accepted P14 start has now cleared the worker-level source error.
+        // Clear the matching CSR sticky bit and prove it stays low.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_p14_error
+        );
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, p14_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+        if ((p14_error != 32'h0000_0000) || (p14_reject != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P15_P14_REARM_CLEAR",
+                $sformatf("%s: P14 sticky error did not clear after standalone worker re-arm: error=0x%08h reject=0x%08h",
+                    tag, p14_error, p14_reject))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            worker_busy_bit,
+            {tag, " P14_REARM"}
+        );
+
+        // Drain the temporary P14 DONE state before the actual P15 recovery
+        // job so the recovery starts from a clean architectural baseline.
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, p14_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+        if ((p14_error != 32'h0000_0000) || (p14_reject != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P15_P14_REARM_FINAL",
+                $sformatf("%s: P14 state not clean after standalone worker re-arm: error=0x%08h reject=0x%08h",
+                    tag, p14_error, p14_reject))
+        end
+
+        `uvm_info("CODE_COV_C1D2/P15_P14_REARM_PASS",
+            $sformatf("%s: standalone P14 worker re-arm PASS for worker bit %0d, cleared error=0x%08h",
+                tag, worker_busy_bit, expected_p14_error),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_d2_recovery_job(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[],
+        input int signed               expected_c[],
+        input int unsigned             c_bytes,
+        input logic [31:0]             job_mode_value,
+        input int unsigned             p14_error_bit,
+        input int unsigned             worker_busy_bit,
+        input string                   tag
+    );
+        int signed   actual_c[];
+        int unsigned c_elems;
+        logic [31:0] job_error;
+        logic [31:0] job_reject;
+        logic [31:0] p14_error;
+        logic [31:0] p14_reject;
+    begin
+        c_elems = c_word_count(profile_item);
+
+        prepare_dma_source_and_destination(a_flat, b_flat);
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " recovery pre-rearm"});
+
+        // First clear the level-held lower worker error through the idle P14
+        // control path.  Only after that source is clean is it safe to start a
+        // new P15 job using the same worker.
+        run_d2_p14_worker_rearm(
+            profile_item,
+            a_flat,
+            c_bytes,
+            p14_error_bit,
+            worker_busy_bit,
+            tag
+        );
+
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " recovery prestart"});
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, job_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, p14_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, p14_reject);
+        if ((job_error != 32'h0000_0000) || (job_reject != 32'h0000_0000) ||
+            (p14_error != 32'h0000_0000) || (p14_reject != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P15_RECOVERY_PRESTART",
+                $sformatf("%s: sticky state not clean before P15 recovery job: job_error=0x%08h job_reject=0x%08h p14_error=0x%08h p14_reject=0x%08h",
+                    tag, job_error, job_reject, p14_error, p14_reject))
+        end
+
+        csr_write_job_descriptor_mode(
+            profile_item,
+            a_flat.size(),
+            b_flat.size(),
+            c_bytes,
+            job_mode_value
+        );
+        csr_start_job();
+        csr_poll_job_done(done_timeout_cycles);
+        csr_check_job_perf_snapshot(profile_item);
+
+        repeat (5) @(posedge csr_vif.clk);
+        collect_dma_destination_c(c_elems, actual_c);
+        compare_result_vectors(expected_c, actual_c);
+
+        csr_job_clear_sticky_status();
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " recovery complete"});
+    end
+    endtask
+
+    task automatic run_d2_job_error_probe(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[],
+        input int signed               expected_c[],
+        input int unsigned             c_bytes,
+        input logic [31:0]             job_mode_value,
+        input int unsigned             job_error_bit,
+        input int unsigned             p14_error_bit,
+        input int unsigned             fault_kind,
+        input string                   tag
+    );
+        logic [31:0] observed_job_error;
+        logic [31:0] observed_p14_error;
+        logic [31:0] expected_p14_error;
+        int unsigned worker_busy_bit;
+    begin
+        expected_p14_error = 32'h0000_0001 << p14_error_bit;
+
+        prepare_dma_source_and_destination(a_flat, b_flat);
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " prestart"});
+
+        csr_write_job_descriptor_mode(
+            profile_item,
+            a_flat.size(),
+            b_flat.size(),
+            c_bytes,
+            job_mode_value
+        );
+
+        case (fault_kind)
+            0: begin
+                vif.axis_src_set_rresp_error(1'b1, 0);
+                worker_busy_bit = C1D2_P14_STATUS_AXIS_LOAD_BUSY;
+            end
+            1: begin
+                vif.ds_src_set_rresp_error(1'b1, 0);
+                worker_busy_bit = C1D2_P14_STATUS_DS_LOAD_BUSY;
+            end
+            2: begin
+                vif.dma_dst_set_bresp_error(1'b1, 0);
+                worker_busy_bit = C1D2_P14_STATUS_DMA_STORE_BUSY;
+            end
+            default: `uvm_fatal("CODE_COV_C1D2/P15_BAD_FAULT_KIND",
+                $sformatf("%s: unsupported D2 fault_kind=%0d", tag, fault_kind))
+        endcase
+
+        csr_start_job();
+        csr_poll_d2_job_error(
+            done_timeout_cycles,
+            job_error_bit,
+            p14_error_bit,
+            tag,
+            observed_job_error,
+            observed_p14_error
+        );
+
+        case (fault_kind)
+            0: vif.axis_src_set_rresp_error(1'b0, -1);
+            1: vif.ds_src_set_rresp_error(1'b0, -1);
+            2: vif.dma_dst_set_bresp_error(1'b0, -1);
+            default: begin end
+        endcase
+
+        csr_clear_d2_job_error_for_recovery(tag, expected_p14_error);
+        run_d2_recovery_job(
+            profile_item,
+            a_flat,
+            b_flat,
+            expected_c,
+            c_bytes,
+            job_mode_value,
+            p14_error_bit,
+            worker_busy_bit,
+            tag
+        );
+
+        case (fault_kind)
+            0: `uvm_info("CODE_COV_C1D2/P15_AXIS_ERROR_PASS",
+                    $sformatf("Genuine AXI-Stream worker error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error), UVM_MEDIUM)
+            1: `uvm_info("CODE_COV_C1D2/P15_DS_ERROR_PASS",
+                    $sformatf("Genuine Direct-Stream worker error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error), UVM_MEDIUM)
+            2: `uvm_info("CODE_COV_C1D2/P15_DMA_STORE_ERROR_PASS",
+                    $sformatf("Genuine DMA-store worker error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error), UVM_MEDIUM)
+            default: begin end
+        endcase
+    end
+    endtask
+
+    task automatic run_d2_genuine_error_probes(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[],
+        input int signed               expected_c[],
+        input int unsigned             c_bytes
+    );
+    begin
+        run_d2_job_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_AXIS_DMA_STORE,
+            C1D2_JOB_ERR_AXIS_LOAD,
+            C1D2_P14_ERR_AXIS_LOAD,
+            0,
+            "D2_JOB_AXIS_ERROR"
+        );
+
+        run_d2_job_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_DS_DMA_STORE,
+            C1D2_JOB_ERR_DS_LOAD,
+            C1D2_P14_ERR_DS_LOAD,
+            1,
+            "D2_JOB_DS_ERROR"
+        );
+
+        run_d2_job_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_DMA_LOAD_DMA_STORE,
+            C1D2_JOB_ERR_DMA_STORE,
+            C1D2_P14_ERR_DMA_STORE,
+            2,
+            "D2_JOB_DMA_STORE_ERROR"
+        );
+
+        // Restore the exact original smoke-test memory/fault baseline before
+        // running the unchanged representative DMA job below.
+        prepare_dma_source_and_destination(a_flat, b_flat);
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1D2/P15_GENUINE_ERROR_SUITE_PASS",
+            "P15 AXI-Stream, Direct-Stream, and DMA-store genuine worker-error propagation/recovery probes PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic csr_check_job_perf_snapshot(
         input ai_accel_subsys_seq_item profile_item
     );
@@ -472,6 +1042,17 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
         end
 
         prepare_dma_source_and_destination(a_flat, b_flat);
+
+        if ((get_type_name() == "ai_accel_subsys_csr_job_dma_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_d2_genuine_error_probes(
+                profile_item,
+                a_flat,
+                b_flat,
+                expected_c,
+                c_bytes
+            );
+        end
 
         csr_clear_sticky_status();
         csr_job_clear_sticky_status();

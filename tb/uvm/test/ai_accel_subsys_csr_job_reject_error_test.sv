@@ -29,6 +29,9 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
     localparam logic [3:0] P15D_JOB_STATE_DONE  = 4'd13;
     localparam logic [3:0] P15D_JOB_STATE_ERROR = 4'd14;
 
+    localparam int unsigned C1D1_JOB_REJ_MICRO_OP_BUSY = 1;
+    localparam int unsigned C1D1_RECIPE_REJ_JOB_BUSY   = 1;
+
     // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
@@ -352,6 +355,116 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.1-C direct P15 W1C helper
+    // ------------------------------------------------------------
+    task automatic csr_direct_job_w1c_expect_clear(
+        input logic [11:0] addr,
+        input string       tag
+    );
+        logic [31:0] before_status;
+        logic [31:0] after_status;
+    begin
+        csr.read32_expect_okay(addr, before_status);
+        if (before_status == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P15_W1C_PRE",
+                $sformatf("%s: expected nonzero P15 sticky status at addr=0x%03h",
+                    tag, addr))
+        end
+
+        csr.write32_expect_okay(addr, before_status);
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(addr, after_status);
+
+        if ((after_status & before_status) != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P15_W1C",
+                $sformatf("%s: direct W1C failed addr=0x%03h before=0x%08h after=0x%08h",
+                    tag, addr, before_status, after_status))
+        end
+
+        `uvm_info("CODE_COV_C1C/P15_W1C_PASS",
+            $sformatf("%s: direct W1C PASS addr=0x%03h before=0x%08h after=0x%08h",
+                tag, addr, before_status, after_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-D1 ownership reject probes
+    // ------------------------------------------------------------
+    task automatic run_d1_job_micro_op_busy_reject(
+        input ai_accel_subsys_seq_item profile_item
+    );
+        logic [31:0] cmd;
+    begin
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_write_gemm_config(profile_item);
+        csr_start_gemm();
+        csr_wait_p14_status_bit(C1D1_P14_STATUS_GEMM_BUSY,
+            done_timeout_cycles, "P14 GEMM ownership before START_JOB reject");
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::JOB_CMD_START] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_COMMAND, cmd);
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_reject_bit(C1D1_JOB_REJ_MICRO_OP_BUSY,
+            "START_JOB while P14 GEMM owns micro-op engine");
+
+        csr_direct_job_w1c_expect_clear(
+            ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            "P15 JOB_REJECT_STATUS after P14 micro-op ownership reject");
+
+        csr_poll_gemm_done(done_timeout_cycles);
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1D1/P15_MICRO_OP_BUSY_PASS",
+            "P15 START_JOB while genuine P14 micro-op busy reject PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p15d_expect_recipe_job_busy_reject();
+        logic [31:0] cmd;
+        logic [31:0] reject_status;
+        logic [31:0] after_status;
+        logic [31:0] job_status;
+    begin
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::RECIPE_CMD_START] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_COMMAND, cmd);
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS, reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATUS, job_status);
+        if (!reject_status[C1D1_RECIPE_REJ_JOB_BUSY]) begin
+            `uvm_fatal("CODE_COV_C1D1/P16_JOB_BUSY_MISSING",
+                $sformatf("Expected recipe JOB_BUSY reject while job active: reject=0x%08h job_status=0x%08h",
+                    reject_status, job_status))
+        end
+        if (!job_status[0]) begin
+            `uvm_fatal("CODE_COV_C1D1/P16_JOB_BUSY_OWNER_LOST",
+                $sformatf("Accepted job was no longer busy during recipe JOB_BUSY reject check: job_status=0x%08h",
+                    job_status))
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS, reject_status);
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS, after_status);
+        if ((after_status & reject_status) != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1D1/P16_JOB_BUSY_CLEAR",
+                $sformatf("Recipe JOB_BUSY reject W1C failed: before=0x%08h after=0x%08h",
+                    reject_status, after_status))
+        end
+
+        `uvm_info("CODE_COV_C1D1/P16_JOB_BUSY_PASS",
+            $sformatf("P16 START_RECIPE while genuine P15 job busy reject PASS: reject=0x%08h",
+                reject_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Descriptor reject recipes
     // ------------------------------------------------------------
     task automatic run_descriptor_reject_checks(
@@ -384,6 +497,11 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
         csr_expect_reject_bit(
             ai_accel_csr_access_helper::JOB_REJ_UNSUPPORTED_COMBO,
             "START_JOB plus CLEAR_ERROR while reject sticky"
+        );
+
+        csr_direct_job_w1c_expect_clear(
+            ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+            "P15 REJECT_STATUS after real descriptor/command rejects"
         );
 
         csr.write32_expect_okay(
@@ -471,6 +589,11 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
         csr_start_job();
         csr_wait_for_job_busy(done_timeout_cycles);
 
+        if ((get_type_name() == "ai_accel_subsys_csr_job_reject_error_test") &&
+            (selected_case_id == 102)) begin
+            p15d_expect_recipe_job_busy_reject();
+        end
+
         cmd = 32'h0000_0000;
         cmd[ai_accel_csr_access_helper::JOB_CMD_START] = 1'b1;
         csr.write32_expect_okay(
@@ -497,6 +620,14 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
 
         csr_poll_job_done_allow_reject(done_timeout_cycles);
         csr_check_job_perf_snapshot(profile_item);
+
+        // The completed job leaves a real DONE sticky while the busy/manual
+        // reject sticky remains set.  Clear only DONE directly; command-based
+        // cleanup below still returns the job sequencer from DONE to IDLE.
+        csr_direct_job_w1c_expect_clear(
+            ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS,
+            "P15 DONE_STATUS after valid completed job"
+        );
 
         repeat (5) @(posedge csr_vif.clk);
         collect_dma_destination_c(c_elems, actual_c);
@@ -548,6 +679,13 @@ class ai_accel_subsys_csr_job_reject_error_test extends ai_accel_subsys_csr_job_
         csr_clear_sticky_status();
         csr_job_clear_sticky_status();
         csr_check_job_idle_ready("initial P15D state");
+
+        if ((get_type_name() == "ai_accel_subsys_csr_job_reject_error_test") &&
+            (selected_case_id == 102)) begin
+            run_d1_job_micro_op_busy_reject(profile_item);
+            prepare_dma_source_and_destination(a_flat, b_flat);
+            csr_check_job_idle_ready("after D1 P14 micro-op ownership reject probe");
+        end
 
         run_descriptor_reject_checks(
             profile_item,

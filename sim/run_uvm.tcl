@@ -975,6 +975,73 @@ if {![info exists COVERAGE_RUN_TAG]} {
 }
 
 # --------------------------------------------------
+# RTL code coverage database collection
+#
+# Manual run:
+#   set CODE_COV_ENABLE 1
+#   do compile_uvm.tcl
+#
+#   set ENABLE_CODE_COVERAGE 1
+#   set CODE_COVERAGE_OUTPUT_DIR coverage/code_cov/manual
+#   set CODE_COVERAGE_RUN_TAG code_cov_manual
+#   do run_uvm.tcl
+#
+# Full regression:
+#   run_full_uvm_regression.tcl enables this automatically
+#   when CODE_COV_ENABLE=1.
+#
+# RC-COV and CODE-COV are intentionally collected in separate
+# simulation runs so their UCDBs and reports remain independent.
+# --------------------------------------------------
+if {![info exists ENABLE_CODE_COVERAGE]} {
+    if {[info exists CODE_COV_ENABLE]} {
+        set ENABLE_CODE_COVERAGE $CODE_COV_ENABLE
+    } else {
+        set ENABLE_CODE_COVERAGE 0
+    }
+}
+
+if {($ENABLE_CODE_COVERAGE != 0) && ($ENABLE_CODE_COVERAGE != 1)} {
+    error "Unsupported ENABLE_CODE_COVERAGE='$ENABLE_CODE_COVERAGE'. Supported values: 0, 1"
+}
+
+if {$ENABLE_COVERAGE && $ENABLE_CODE_COVERAGE} {
+    error "Functional RC-COV and RTL CODE-COV collection must run separately"
+}
+
+if {![info exists CODE_COV_METRICS]} {
+    set CODE_COV_METRICS bcefst
+}
+
+if {![regexp {^[bcefst]+$} $CODE_COV_METRICS]} {
+    error "Unsupported CODE_COV_METRICS='$CODE_COV_METRICS'. Use only b, c, e, f, s, t"
+}
+
+if {![info exists CODE_COVERAGE_OUTPUT_DIR]} {
+    set CODE_COVERAGE_OUTPUT_DIR coverage/code_cov/manual
+}
+
+if {![info exists CODE_COVERAGE_RUN_TAG]} {
+    set CODE_COVERAGE_RUN_TAG ""
+}
+
+if {$ENABLE_CODE_COVERAGE} {
+    set CODE_COV_MARKER_FILE [file join work .code_cov_instrumented]
+
+    if {![file exists $CODE_COV_MARKER_FILE]} {
+        error "CODE-COV requested, but work was not compiled with CODE_COV_ENABLE=1. Re-run compile_uvm.tcl with CODE_COV_ENABLE=1"
+    }
+
+    set marker_fp [open $CODE_COV_MARKER_FILE r]
+    set compiled_code_cov_metrics [string trim [read $marker_fp]]
+    close $marker_fp
+
+    if {$compiled_code_cov_metrics ne $CODE_COV_METRICS} {
+        error "CODE-COV metric mismatch: work='$compiled_code_cov_metrics', run='$CODE_COV_METRICS'. Recompile with matching CODE_COV_METRICS"
+    }
+}
+
+# --------------------------------------------------
 # Transcript log naming
 #
 # Format:
@@ -1131,6 +1198,7 @@ set LOG_FILE logs/${LOG_DATE_PREFIX}_${LOG_BASENAME}
 # back to the timestamped compact log basename.
 # --------------------------------------------------
 set COVERAGE_FILE ""
+set CODE_COVERAGE_FILE ""
 set VSIM_COVERAGE_ARGS [list]
 
 if {$ENABLE_COVERAGE} {
@@ -1140,10 +1208,26 @@ if {$ENABLE_COVERAGE} {
 
     file mkdir $COVERAGE_OUTPUT_DIR
     set COVERAGE_FILE [file join $COVERAGE_OUTPUT_DIR "${COVERAGE_RUN_TAG}.ucdb"]
-    lappend VSIM_COVERAGE_ARGS -coverage
 
     puts "\[run_uvm\] Functional coverage collection enabled"
     puts "\[run_uvm\] COVERAGE_FILE=$COVERAGE_FILE"
+}
+
+if {$ENABLE_CODE_COVERAGE} {
+    if {$CODE_COVERAGE_RUN_TAG eq ""} {
+        set CODE_COVERAGE_RUN_TAG "${LOG_DATE_PREFIX}_[file rootname $LOG_BASENAME]"
+    }
+
+    file mkdir $CODE_COVERAGE_OUTPUT_DIR
+    set CODE_COVERAGE_FILE [file join $CODE_COVERAGE_OUTPUT_DIR "${CODE_COVERAGE_RUN_TAG}.ucdb"]
+
+    puts "\[run_uvm\] RTL code coverage collection enabled"
+    puts "\[run_uvm\] CODE_COV_METRICS=$CODE_COV_METRICS"
+    puts "\[run_uvm\] CODE_COVERAGE_FILE=$CODE_COVERAGE_FILE"
+}
+
+if {$ENABLE_COVERAGE || $ENABLE_CODE_COVERAGE} {
+    lappend VSIM_COVERAGE_ARGS -coverage
 }
 
 # Defensive: keep this close to transcript file in case the script is
@@ -1222,8 +1306,8 @@ run -all
 # Save one UCDB after the UVM test has reached report_phase.
 #
 # onfinish stop keeps the simulator alive after the test calls
-# $finish, allowing this Tcl command to save the completed
-# functional coverage database deterministically.
+# $finish, allowing Tcl to save the completed coverage database
+# deterministically.
 # --------------------------------------------------
 if {$ENABLE_COVERAGE} {
     set coverage_save_status [catch {
@@ -1231,13 +1315,28 @@ if {$ENABLE_COVERAGE} {
     } coverage_save_msg]
 
     if {$coverage_save_status != 0} {
-        puts "\[run_uvm\]\[COVERAGE\]\[FAIL\] Unable to save UCDB: $COVERAGE_FILE"
+        puts "\[run_uvm\]\[RC_COV\]\[FAIL\] Unable to save UCDB: $COVERAGE_FILE"
         puts $coverage_save_msg
         transcript off
-        error "\[run_uvm\] Coverage save failed"
+        error "\[run_uvm\] Functional coverage save failed"
     }
 
-    puts "\[run_uvm\]\[COVERAGE\]\[PASS\] Saved UCDB: $COVERAGE_FILE"
+    puts "\[run_uvm\]\[RC_COV\]\[PASS\] Saved UCDB: $COVERAGE_FILE"
+}
+
+if {$ENABLE_CODE_COVERAGE} {
+    set code_coverage_save_status [catch {
+        coverage save -code $CODE_COV_METRICS $CODE_COVERAGE_FILE
+    } code_coverage_save_msg]
+
+    if {$code_coverage_save_status != 0} {
+        puts "\[run_uvm\]\[CODE_COV\]\[FAIL\] Unable to save UCDB: $CODE_COVERAGE_FILE"
+        puts $code_coverage_save_msg
+        transcript off
+        error "\[run_uvm\] RTL code coverage save failed"
+    }
+
+    puts "\[run_uvm\]\[CODE_COV\]\[PASS\] Saved UCDB: $CODE_COVERAGE_FILE"
 }
 
 transcript off

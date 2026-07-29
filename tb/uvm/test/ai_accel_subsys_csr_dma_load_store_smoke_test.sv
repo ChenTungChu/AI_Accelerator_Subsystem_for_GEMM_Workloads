@@ -379,6 +379,202 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.1-D1 P14 DMA reject probes
+    // ------------------------------------------------------------
+    task automatic run_d1_dma_load_store_reject_probes(
+        input logic [31:0] scratchpad_c_base
+    );
+    begin
+        csr_clear_sticky_status();
+
+        // Zero-length DMA load reject.
+        csr_write_dma_load_config(DMA_SRC_A_BASE, 32'h0000_0000, 0, "D1_ZERO_LOAD");
+        csr_start_dma_load("D1_ZERO_LOAD");
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_ZERO_LENGTH,
+            "START_DMA_LOAD with zero beats");
+        csr_clear_p14_reject_status("after zero-beat DMA load reject");
+
+        // Accepted DMA load remains active while a second START is rejected.
+        csr_write_dma_load_config(DMA_SRC_A_BASE, 32'h0000_0000, 8, "D1_BUSY_LOAD");
+        csr_start_dma_load("D1_BUSY_LOAD");
+        csr_wait_p14_status_bit(C1D1_P14_STATUS_DMA_LOAD_BUSY,
+            done_timeout_cycles, "DMA load before busy-start reject");
+        csr_start_dma_load("D1_BUSY_LOAD_SECOND_START");
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_DMA_LOAD_BUSY,
+            "START_DMA_LOAD while DMA load busy");
+        csr_clear_p14_reject_status("after DMA load busy reject");
+        csr_poll_done_bit(done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DMA_LOAD,
+            "D1_DMA_LOAD_BUSY_OWNER");
+
+        csr_clear_sticky_status();
+
+        // Zero-length DMA store reject.
+        csr_write_dma_store_config(scratchpad_c_base, DMA_DST_C_BASE, 0);
+        csr_start_dma_store();
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_ZERO_LENGTH,
+            "START_DMA_STORE with zero byte count");
+        csr_clear_p14_reject_status("after zero-byte DMA store reject");
+
+        // Accepted DMA store remains active while a second START is rejected.
+        csr_write_dma_store_config(scratchpad_c_base, DMA_DST_C_BASE, 64);
+        csr_start_dma_store();
+        csr_wait_p14_status_bit(C1D1_P14_STATUS_DMA_STORE_BUSY,
+            done_timeout_cycles, "DMA store before busy-start reject");
+        csr_start_dma_store();
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_DMA_STORE_BUSY,
+            "START_DMA_STORE while DMA store busy");
+        csr_clear_p14_reject_status("after DMA store busy reject");
+        csr_poll_done_bit(done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DMA_STORE,
+            "D1_DMA_STORE_BUSY_OWNER");
+
+        csr_clear_sticky_status();
+        `uvm_info("CODE_COV_C1D1/P14_DMA_REJECT_PASS",
+            "P14 DMA load/store zero-length and genuine-busy reject probes PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-D2 P14 genuine DMA-store error propagation
+    // ------------------------------------------------------------
+    task automatic run_d2_dma_store_error_probe(
+        input logic [31:0] scratchpad_c_base,
+        input int unsigned byte_count
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] expected_error;
+        logic [31:0] expected_done;
+        int unsigned cnt;
+    begin
+        expected_error = 32'h0000_0001 << 3;
+        expected_done  = 32'h0000_0001 << ai_accel_csr_access_helper::DONE_DMA_STORE;
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        vif.dma_dst_set_bresp_error(1'b1, 0);
+        csr_write_dma_store_config(scratchpad_c_base, DMA_DST_C_BASE, byte_count);
+        csr_start_dma_store();
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                vif.dma_dst_set_bresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_REJECT",
+                    $sformatf("Unexpected P14 reject during genuine DMA-store BRESP error probe: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if ((error_status != 32'h0000_0000) && (error_status != expected_error)) begin
+                vif.dma_dst_set_bresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_BAD_ERROR",
+                    $sformatf("Unexpected P14 error bits during DMA-store BRESP probe: expected=0x%08h actual=0x%08h",
+                        expected_error, error_status))
+            end
+
+            if (error_status == expected_error) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                vif.dma_dst_set_bresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_TIMEOUT",
+                    $sformatf("Timed out waiting for P14 DMA-store error after %0d cycles", done_timeout_cycles))
+            end
+        end
+
+        vif.dma_dst_set_bresp_error(1'b0, -1);
+
+        cnt = 0;
+        while (status[C1D1_P14_STATUS_DMA_STORE_BUSY]) begin
+            @(posedge csr_vif.clk);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_BUSY_TIMEOUT",
+                    "DMA-store engine remained busy after genuine BRESP error")
+            end
+        end
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            expected_done
+        );
+
+        // dma_store_engine intentionally holds store_error through DONE/IDLE
+        // and clears it only on the next accepted store_start.
+        csr_write_dma_store_config(scratchpad_c_base, DMA_DST_C_BASE, byte_count);
+        csr_start_dma_store();
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_RECOVERY_REJECT",
+                    $sformatf("Recovery DMA-store start was rejected: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if (status[C1D1_P14_STATUS_DMA_STORE_BUSY] ||
+                ((done_status & expected_done) != 32'h0000_0000)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_RECOVERY_START_TIMEOUT",
+                    "Recovery DMA-store operation never became active or completed")
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_error
+        );
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+        if ((error_status != 32'h0000_0000) || (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P14_DMA_STORE_CLEAR",
+                $sformatf("P14 sticky cleanup failed after DMA-store recovery re-arm: error=0x%08h reject=0x%08h",
+                    error_status, reject_status))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DMA_STORE,
+            "D2_DMA_STORE_RECOVERY"
+        );
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1D2/P14_DMA_STORE_ERROR_PASS",
+            $sformatf("Genuine DMA-store BRESP error propagated to P14 ERROR_STATUS and recovered: observed=0x%08h post_rearm_clear=0x%08h",
+                expected_error, error_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Destination-memory result collection
     // ------------------------------------------------------------
     task automatic collect_dma_destination_c(
@@ -438,6 +634,12 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
         end
 
         prepare_dma_source_and_destination(a_flat, b_flat);
+
+        if ((get_type_name() == "ai_accel_subsys_csr_dma_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_d1_dma_load_store_reject_probes(profile_item.base_addr_c);
+            run_d2_dma_store_error_probe(profile_item.base_addr_c, c_bytes);
+        end
 
         run_one_dma_load(
             DMA_SRC_A_BASE,

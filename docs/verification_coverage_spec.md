@@ -41,8 +41,15 @@ Functional coverage:
   vcover errors / warnings   : 0 / 0
 
 RTL code coverage:
-  Status                     : NOT STARTED
-  Next milestone             : CODE-COV
+  Overall campaign status    : IN PROGRESS
+  Closed scope               : CODE-COV-C1.1
+  Primary closure target     : rtl/csr/ai_accel_csr_regs.sv
+  Regression                 : 150 / 150 PASS
+  UCDB merge / report        : PASS
+  Raw statement coverage     : 1172 / 1183 = 99.07%
+  Remaining raw misses       : 11
+  D3 waiver records          : 11 / 11 documented
+  Reachable adjusted coverage: 1172 / 1172 = 100.00%
 ```
 
 The functional coverage claim is intentionally precise:
@@ -653,22 +660,144 @@ CODE-COV-E:
 
 ## 11. RTL Code Coverage Results
 
-Current status:
+### 11.1 CODE-COV-C1.1 scope
+
+CODE-COV-C1.1 closes statement coverage for the integrated CSR register block:
 
 ```text
-NOT STARTED
+rtl/csr/ai_accel_csr_regs.sv
 ```
 
-This section will be updated after CODE-COV-B with:
+This scope was selected because the block concentrates the software-visible AXI-Lite decode, command admission, sticky status, event, memory-guard, telemetry, and W1C behavior.
+
+The broader CODE-COV campaign remains in progress for the rest of the synthesizable RTL scope.  The result in this section must not be interpreted as 99.07% statement coverage for every RTL file.
+
+### 11.2 Full-regression closure result
+
+Final full-regression result:
 
 ```text
-baseline metric results
-uncovered module / line / branch inventory
-gap classifications
-targeted test changes
-approved exclusions
-final metric results
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+CODE-COV: PASS
+
+CODE-COV UCDB MERGE AND REPORT: PASS
 ```
+
+Final merged result for `rtl/csr/ai_accel_csr_regs.sv`:
+
+```text
+Statements              1172 / 1183   99.07%   11 misses
+Branches                 922 / 979    94.17%   57 misses
+FEC Condition Terms       68 / 95     71.57%   27 misses
+FEC Expression Terms     140 / 168    83.33%   28 misses
+Toggle Bins             3360 / 19154  17.54%
+```
+
+The filtered all-file CODE-COV report result is:
+
+```text
+Total Coverage By File: 70.44%
+```
+
+The final tracked evidence is:
+
+```text
+sim/coverage/code_cov/code_cov_summary.txt
+sim/coverage/code_cov/code_cov_details.txt
+```
+
+### 11.3 Statement-closure history
+
+The final CODE-COV-C1.1 statement progression was:
+
+```text
+C1.1-C baseline                  1148 / 1183   97.04%   35 misses
+C1.1-D1 reachable decode/reject   +18 hits
+C1.1-D2-A genuine error paths      +6 hits
+C1.1-D final                    1172 / 1183   99.07%   11 misses
+```
+
+The `+24` statement delta is exactly:
+
+```text
+D1   : 18 / 18 retained in the full merged report
+D2-A :  6 /  6 retained in the full merged report
+```
+
+No RTL change, new test class, new regression item, force, or internal-state injection was used to obtain the D1/D2-A closure.
+
+### 11.4 D3 waiver / exclusion policy
+
+The D3 record is a project review and sign-off record.
+
+It does not modify the simulator database and does not change the raw Questa result:
+
+```text
+Raw simulator-reported statement coverage:
+  1172 / 1183 = 99.07%
+
+Documented current-revision exclusions:
+  11 statements
+
+Waiver-adjusted reachable statement coverage:
+  1172 / (1183 - 11) = 1172 / 1172 = 100.00%
+```
+
+The `100.00%` value above is waiver-adjusted reachable coverage only.  It must not be reported as raw simulator coverage.
+
+Formal Questa exclusions applied to the merged UCDB:
+
+```text
+NONE
+```
+
+Prohibited closure methods:
+
+```text
+forcing internal FSM state or internal error signals
+injecting impossible internal ownership conflicts
+changing RTL only to increase coverage
+performing a zero-state W1C write only to hit a statement
+claiming closure from functional markers without vcover -details evidence
+```
+
+### 11.5 C1.1-D3 waiver / exclusion record
+
+| RTL line | Source construct | Classification | Current-revision rationale | Re-open condition |
+|---:|---|---|---|---|
+| 1305 | `is_power_of_two()` return | Static / elaboration-time | Called only by the fixed `STRB_WIDTH=4` parameter-sanity check. Questa constant folding leaves the function return as an uncovered source statement. An illegal parameter run that intentionally terminates in `$fatal` is not a meaningful runtime coverage obligation. | Re-open if the validated CSR width/strobe parameter matrix expands or the call becomes runtime-variable. |
+| 1428 | `recipe_slot_descriptor_valid()` out-of-range return | Structural defensive guard | All current callers iterate with `0 <= slot_i < P16_RECIPE_QUEUE_DEPTH`; the out-of-range predicate cannot be true through a legal caller. | Re-open if a new caller can pass an unbounded slot index. |
+| 1477 | `recipe_slot_read_data()` out-of-range return | Structural defensive guard | CSR read dispatch calls the helper only after `recipe_slot_addr_is_valid()` proves the slot index is in range. | Re-open if a direct caller bypasses address validation. |
+| 2661 | `EVENT_SRC_RUNTIME_DOORBELL` classification | Current-scope tied-off source | Event ABI positions 8 and 9 are retained, but the current RTL ties `RUNTIME_DOORBELL_EVENT` and `RUNTIME_APPEND_CONSUMED_EVENT` raw producers low. P21 live queue service remains implemented independently of these optional notification sources. | Re-open when either runtime event producer is implemented. |
+| 2669 | `EVENT_SRC_NONE` default | Structural default guard | `build_event_last_cause()` is called only for a non-zero valid event mask; `first_event_index()` therefore returns a valid allocated index instead of the empty-mask sentinel. | Re-open if last-cause construction is allowed for an empty or invalid mask. |
+| 3772 | `JOB_ERR_SEQUENCE` sticky capture | Defensive ownership invariant | P15 admission and P14 manual-command ownership rules prevent legal software from creating the worker-busy / illegal-stage conflicts that assert `job_sequence_error`. | Re-open if concurrent ownership, runtime descriptor mutation, or a software-visible sequence-error path is added. |
+| 3796 | `RECIPE_ERR_SLOT_JOB_REJECT` sticky capture | Reserved / unimplemented producer | The current recipe sequencer has no `job_reject` feedback input and no assignment that asserts `recipe_slot_job_reject`. The signal is only reset/deasserted. | Re-open if P15 reject feedback or an assertion producer is added. |
+| 3800 | `RECIPE_ERR_SEQUENCE` sticky capture | Defensive ownership invariant | P16 owns the P15 worker while a recipe is active, and external `START_JOB` attempts are rejected before they can steal the worker during dispatch. | Re-open if recipe/P15 concurrent ownership policy changes. |
+| 3804 | `RECIPE_ERR_SLOT_RANGE` sticky capture | Admission-masked defensive check | CSR `START_RECIPE` admission rejects an invalid selected range before generating `recipe_start_pulse`; the sequencer cannot receive an invalid range through the legal front door. | Re-open if front-door range validation is removed or runtime range mutation is allowed. |
+| 3808 | `RECIPE_ERR_SLOT_DESCRIPTOR` sticky capture | Admission / snapshot defensive check | Selected descriptors are validated before `recipe_start_pulse` and copied into the accepted recipe snapshot. Later CSR writes do not corrupt the active snapshot. | Re-open if descriptor validation or snapshot immutability changes. |
+| 4616 | `CSR_RECIPE_SLOT_REJECT_MASK` direct W1C | Semantic-dependency waiver | The statement is syntactically writable, but no legal current-revision path creates a genuine non-zero slot-reject mask. Writing W1C data while the mask is zero would be coverage gaming rather than functional validation. | Re-open when a genuine non-zero `recipe_slot_reject_mask_q` producer becomes architecturally reachable. |
+
+### 11.6 D3 closure decision
+
+```text
+D3 candidates reviewed              : 11 / 11
+Legal reachable coverage targets     :  0 / 11
+Current-revision waiver records      : 11 / 11
+Unresolved holds                     :  0
+Unexpected full-merge statement miss :  0
+
+RTL changes                          : NONE
+New tests                            : NONE
+Regression inventory                 : 150 unchanged
+Force / internal-state injection     : NONE
+Formal simulator exclusions applied  : NONE
+```
+
+Closure statement:
+
+> CODE-COV-C1.1 is closed for `rtl/csr/ai_accel_csr_regs.sv` at 99.07% raw statement coverage.  The remaining 11 statements have reviewable current-revision dispositions, yielding 100.00% waiver-adjusted reachable statement coverage without changing the raw simulator result.
 
 ---
 
@@ -730,26 +859,86 @@ Errors: 0, Warnings: 0
 
 ### 13.2 RTL code coverage
 
-The final CODE-COV commands are intentionally deferred until CODE-COV-A freezes the compile, elaboration, simulation, merge, and report switches.
+From `sim/`, use the Questa Transcript Tcl flow below.
+
+Compile with RTL code-coverage instrumentation enabled:
+
+```tcl
+catch {quit -sim}
+
+set CODE_COV_ENABLE 1
+set CODE_COV_METRICS bcefst
+
+do compile_uvm.tcl
+```
+
+Run the existing full regression without recompiling:
+
+```tcl
+set CODE_COV_ENABLE 1
+set CODE_COV_METRICS bcefst
+set DO_COMPILE 0
+set STOP_ON_FIRST_FAIL 0
+
+do run_full_uvm_regression.tcl
+```
+
+Expected result:
+
+```text
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+CODE-COV: PASS
+
+[REGRESSION] ALL TESTS PASSED
+[REGRESSION] CODE-COV UCDB MERGE AND REPORT PASSED
+```
+
+Expected final artifacts:
+
+```text
+sim/coverage/code_cov/code_cov_merged.ucdb
+sim/coverage/code_cov/code_cov_manifest.tsv
+sim/coverage/code_cov/code_cov_summary.txt
+sim/coverage/code_cov/code_cov_details.txt
+```
+
+The merged UCDB and manifest remain generated artifacts.  The summary and detailed text reports are the tracked human-readable evidence.
 
 ---
 
 ## 14. Final Verification Coverage Status
 
 ```text
-RC-COV-A   Functional coverage architecture        PASS
-RC-COV-B   Functional coverage implementation      PASS
-RC-COV-C1  UCDB collection / merge / report        PASS
-RC-COV-C2  Planned-bin refinement                   PASS
-RC-COV-C3  Targeted telemetry closure               PASS
-RC-COV-D   Documentation closure                    PASS
+RC-COV-A   Functional coverage architecture                 PASS
+RC-COV-B   Functional coverage implementation               PASS
+RC-COV-C1  UCDB collection / merge / report                 PASS
+RC-COV-C2  Planned-bin refinement                            PASS
+RC-COV-C3  Targeted telemetry closure                        PASS
+RC-COV-D   Documentation closure                             PASS
+
+CODE-COV-C1.1-B  CSR decode / reject closure                PASS
+CODE-COV-C1.1-C  CSR sticky / W1C closure                   PASS
+CODE-COV-C1.1-D1 Reachable decode / reject closure          PASS
+CODE-COV-C1.1-D2 Genuine error-path closure                 PASS
+CODE-COV-C1.1-D3 Reachability / exclusion record            PASS
+
+Regression:
+  150 / 150 PASS
 
 Planned functional coverage:
   100.00%
   7 / 7 covergroup types covered
   0 missing planned bins
-  150 / 150 regression items PASS
 
-CODE-COV:
-  NEXT
+CSR register-block RTL statement coverage:
+  Raw simulator result              : 1172 / 1183 = 99.07%
+  Documented current-revision misses: 11
+  Waiver-adjusted reachable result  : 1172 / 1172 = 100.00%
+  Formal simulator exclusions       : NONE
+  UCDB merge / report               : PASS
+
+Broader RTL CODE-COV campaign:
+  IN PROGRESS
 ```

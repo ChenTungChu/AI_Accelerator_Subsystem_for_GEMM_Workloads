@@ -1,5 +1,5 @@
 QuestaSim-64 vcover 10.7c Coverage Utility 2018.08 Aug 18 2018
-Start time: 15:00:30 on Jul 12,2026
+Start time: 22:15:29 on Jul 27,2026
 vcover report -details coverage/rc_cov/rc_cov_merged.ucdb 
 COVERGROUP COVERAGE:
 -----------------------------------------------------------------------------------------------
@@ -355,44 +355,44 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                 7          7                      
         missing/total bins:                                 0          7                      
         % Hit:                                        100.00%        100                      
-        bin start_queue                                    78          1    Covered              
+        bin start_queue                                    79          1    Covered              
         bin stop_queue                                      7          1    Covered              
-        bin clear_done                                    127          1    Covered              
-        bin clear_error                                   115          1    Covered              
-        bin clear_counters                                 46          1    Covered              
-        bin sq_doorbell                                   136          1    Covered              
-        bin cq_consume                                    126          1    Covered              
+        bin clear_done                                    129          1    Covered              
+        bin clear_error                                   116          1    Covered              
+        bin clear_counters                                 48          1    Covered              
+        bin sq_doorbell                                   138          1    Covered              
+        bin cq_consume                                    129          1    Covered              
     Coverpoint cg_queue_runtime::cp_state             100.00%        100    Covered              
         covered/total bins:                                 4          4                      
         missing/total bins:                                 0          4                      
         % Hit:                                        100.00%        100                      
-        bin idle                                         1864          1    Covered              
-        bin busy                                           55          1    Covered              
-        bin stalled                                       263          1    Covered              
+        bin idle                                         1873          1    Covered              
+        bin busy                                           57          1    Covered              
+        bin stalled                                       325          1    Covered              
         bin error                                          38          1    Covered              
     Coverpoint cg_queue_runtime::cp_terminal          100.00%        100    Covered              
         covered/total bins:                                 6          6                      
         missing/total bins:                                 0          6                      
         % Hit:                                        100.00%        100                      
-        bin started                                      1475          1    Covered              
-        bin drained                                        86          1    Covered              
-        bin completed                                    1434          1    Covered              
-        bin stopped                                      1426          1    Covered              
-        bin error                                          39          1    Covered              
-        bin reject                                          4          1    Covered              
+        bin started                                      1482          1    Covered              
+        bin drained                                        91          1    Covered              
+        bin completed                                    1440          1    Covered              
+        bin stopped                                      1432          1    Covered              
+        bin error                                          40          1    Covered              
+        bin reject                                          5          1    Covered              
     Coverpoint cg_queue_runtime::cp_sq_occ            100.00%        100    Covered              
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin empty                                        1318          1    Covered              
-        bin partial                                       524          1    Covered              
+        bin empty                                        1325          1    Covered              
+        bin partial                                       528          1    Covered              
     Coverpoint cg_queue_runtime::cp_cq_occ            100.00%        100    Covered              
         covered/total bins:                                 3          3                      
         missing/total bins:                                 0          3                      
         % Hit:                                        100.00%        100                      
-        bin empty                                          15          1    Covered              
-        bin partial                                        61          1    Covered              
-        bin full                                          291          1    Covered              
+        bin empty                                          18          1    Covered              
+        bin partial                                        62          1    Covered              
+        bin full                                          298          1    Covered              
  Covergroup instance \/ai_accel_subsys_uvm_pkg::ai_accel_subsys_functional_coverage::cg_queue_runtime  
                                                       100.00%        100    Covered              
     covered/total bins:                                    22         22                      
@@ -402,44 +402,44 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                 7          7                      
         missing/total bins:                                 0          7                      
         % Hit:                                        100.00%        100                      
-        bin start_queue                                    78          1    Covered              
+        bin start_queue                                    79          1    Covered              
         bin stop_queue                                      7          1    Covered              
-        bin clear_done                                    127          1    Covered              
-        bin clear_error                                   115          1    Covered              
-        bin clear_counters                                 46          1    Covered              
-        bin sq_doorbell                                   136          1    Covered              
-        bin cq_consume                                    126          1    Covered              
+        bin clear_done                                    129          1    Covered              
+        bin clear_error                                   116          1    Covered              
+        bin clear_counters                                 48          1    Covered              
+        bin sq_doorbell                                   138          1    Covered              
+        bin cq_consume                                    129          1    Covered              
     Coverpoint cp_state                               100.00%        100    Covered              
         covered/total bins:                                 4          4                      
         missing/total bins:                                 0          4                      
         % Hit:                                        100.00%        100                      
-        bin idle                                         1864          1    Covered              
-        bin busy                                           55          1    Covered              
-        bin stalled                                       263          1    Covered              
+        bin idle                                         1873          1    Covered              
+        bin busy                                           57          1    Covered              
+        bin stalled                                       325          1    Covered              
         bin error                                          38          1    Covered              
     Coverpoint cp_terminal                            100.00%        100    Covered              
         covered/total bins:                                 6          6                      
         missing/total bins:                                 0          6                      
         % Hit:                                        100.00%        100                      
-        bin started                                      1475          1    Covered              
-        bin drained                                        86          1    Covered              
-        bin completed                                    1434          1    Covered              
-        bin stopped                                      1426          1    Covered              
-        bin error                                          39          1    Covered              
-        bin reject                                          4          1    Covered              
+        bin started                                      1482          1    Covered              
+        bin drained                                        91          1    Covered              
+        bin completed                                    1440          1    Covered              
+        bin stopped                                      1432          1    Covered              
+        bin error                                          40          1    Covered              
+        bin reject                                          5          1    Covered              
     Coverpoint cp_sq_occ                              100.00%        100    Covered              
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin empty                                        1318          1    Covered              
-        bin partial                                       524          1    Covered              
+        bin empty                                        1325          1    Covered              
+        bin partial                                       528          1    Covered              
     Coverpoint cp_cq_occ                              100.00%        100    Covered              
         covered/total bins:                                 3          3                      
         missing/total bins:                                 0          3                      
         % Hit:                                        100.00%        100                      
-        bin empty                                          15          1    Covered              
-        bin partial                                        61          1    Covered              
-        bin full                                          291          1    Covered              
+        bin empty                                          18          1    Covered              
+        bin partial                                        62          1    Covered              
+        bin full                                          298          1    Covered              
  TYPE /ai_accel_subsys_uvm_pkg/ai_accel_subsys_functional_coverage/cg_event_moderation 
                                                       100.00%        100    Covered              
     covered/total bins:                                    22         22                      
@@ -449,46 +449,46 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                12         12                      
         missing/total bins:                                 0         12                      
         % Hit:                                        100.00%        100                      
-        bin command_completed                             615          1    Covered              
-        bin drained                                       184          1    Covered              
-        bin stopped                                      2984          1    Covered              
-        bin queue_error                                   125          1    Covered              
-        bin cq_not_empty                                  615          1    Covered              
-        bin threshold                                      88          1    Covered              
-        bin cq_full_stall                                 263          1    Covered              
-        bin cq_recovered                                  312          1    Covered              
-        bin runtime_doorbell                               76          1    Covered              
-        bin runtime_consumed                               76          1    Covered              
-        bin test_event                                     76          1    Covered              
-        bin moderation_timer                               82          1    Covered              
+        bin command_completed                             679          1    Covered              
+        bin drained                                       190          1    Covered              
+        bin stopped                                      3101          1    Covered              
+        bin queue_error                                   127          1    Covered              
+        bin cq_not_empty                                  679          1    Covered              
+        bin threshold                                      91          1    Covered              
+        bin cq_full_stall                                 325          1    Covered              
+        bin cq_recovered                                  372          1    Covered              
+        bin runtime_doorbell                               78          1    Covered              
+        bin runtime_consumed                               78          1    Covered              
+        bin test_event                                     78          1    Covered              
+        bin moderation_timer                               84          1    Covered              
     Coverpoint cg_event_moderation::cp_policy         100.00%        100    Covered              
         covered/total bins:                                 3          3                      
         missing/total bins:                                 0          3                      
         % Hit:                                        100.00%        100                      
-        bin immediate_compat                                9          1    Covered              
-        bin threshold                                      14          1    Covered              
+        bin immediate_compat                               11          1    Covered              
+        bin threshold                                      15          1    Covered              
         bin threshold_timer                                 8          1    Covered              
     Coverpoint cg_event_moderation::cp_retrigger      100.00%        100    Covered              
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin disabled                                        9          1    Covered              
-        bin enabled                                        22          1    Covered              
+        bin disabled                                       11          1    Covered              
+        bin enabled                                        23          1    Covered              
     Coverpoint cg_event_moderation::cp_release_profile 
                                                       100.00%        100    Covered              
         covered/total bins:                                 4          4                      
         missing/total bins:                                 0          4                      
         % Hit:                                        100.00%        100                      
-        bin immediate_compat                             1188          1    Covered              
-        bin threshold                                      88          1    Covered              
-        bin timer                                          86          1    Covered              
-        bin urgent_bypass                                 476          1    Covered              
+        bin immediate_compat                             1312          1    Covered              
+        bin threshold                                      91          1    Covered              
+        bin timer                                          88          1    Covered              
+        bin urgent_bypass                                 475          1    Covered              
     Coverpoint cg_event_moderation::cp_rearm_action 
                                                       100.00%        100    Covered              
         covered/total bins:                                 1          1                      
         missing/total bins:                                 0          1                      
         % Hit:                                        100.00%        100                      
-        bin ack_rearm                                       9          1    Covered              
+        bin ack_rearm                                      12          1    Covered              
  Covergroup instance \/ai_accel_subsys_uvm_pkg::ai_accel_subsys_functional_coverage::cg_event_moderation  
                                                       100.00%        100    Covered              
     covered/total bins:                                    22         22                      
@@ -498,44 +498,44 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                12         12                      
         missing/total bins:                                 0         12                      
         % Hit:                                        100.00%        100                      
-        bin command_completed                             615          1    Covered              
-        bin drained                                       184          1    Covered              
-        bin stopped                                      2984          1    Covered              
-        bin queue_error                                   125          1    Covered              
-        bin cq_not_empty                                  615          1    Covered              
-        bin threshold                                      88          1    Covered              
-        bin cq_full_stall                                 263          1    Covered              
-        bin cq_recovered                                  312          1    Covered              
-        bin runtime_doorbell                               76          1    Covered              
-        bin runtime_consumed                               76          1    Covered              
-        bin test_event                                     76          1    Covered              
-        bin moderation_timer                               82          1    Covered              
+        bin command_completed                             679          1    Covered              
+        bin drained                                       190          1    Covered              
+        bin stopped                                      3101          1    Covered              
+        bin queue_error                                   127          1    Covered              
+        bin cq_not_empty                                  679          1    Covered              
+        bin threshold                                      91          1    Covered              
+        bin cq_full_stall                                 325          1    Covered              
+        bin cq_recovered                                  372          1    Covered              
+        bin runtime_doorbell                               78          1    Covered              
+        bin runtime_consumed                               78          1    Covered              
+        bin test_event                                     78          1    Covered              
+        bin moderation_timer                               84          1    Covered              
     Coverpoint cp_policy                              100.00%        100    Covered              
         covered/total bins:                                 3          3                      
         missing/total bins:                                 0          3                      
         % Hit:                                        100.00%        100                      
-        bin immediate_compat                                9          1    Covered              
-        bin threshold                                      14          1    Covered              
+        bin immediate_compat                               11          1    Covered              
+        bin threshold                                      15          1    Covered              
         bin threshold_timer                                 8          1    Covered              
     Coverpoint cp_retrigger                           100.00%        100    Covered              
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin disabled                                        9          1    Covered              
-        bin enabled                                        22          1    Covered              
+        bin disabled                                       11          1    Covered              
+        bin enabled                                        23          1    Covered              
     Coverpoint cp_release_profile                     100.00%        100    Covered              
         covered/total bins:                                 4          4                      
         missing/total bins:                                 0          4                      
         % Hit:                                        100.00%        100                      
-        bin immediate_compat                             1188          1    Covered              
-        bin threshold                                      88          1    Covered              
-        bin timer                                          86          1    Covered              
-        bin urgent_bypass                                 476          1    Covered              
+        bin immediate_compat                             1312          1    Covered              
+        bin threshold                                      91          1    Covered              
+        bin timer                                          88          1    Covered              
+        bin urgent_bypass                                 475          1    Covered              
     Coverpoint cp_rearm_action                        100.00%        100    Covered              
         covered/total bins:                                 1          1                      
         missing/total bins:                                 0          1                      
         % Hit:                                        100.00%        100                      
-        bin ack_rearm                                       9          1    Covered              
+        bin ack_rearm                                      12          1    Covered              
  TYPE /ai_accel_subsys_uvm_pkg/ai_accel_subsys_functional_coverage/cg_memory_guard 
                                                       100.00%        100    Covered              
     covered/total bins:                                    20         20                      
@@ -545,8 +545,8 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin disabled                                       18          1    Covered              
-        bin strict                                         38          1    Covered              
+        bin disabled                                       21          1    Covered              
+        bin strict                                         39          1    Covered              
     Coverpoint cg_memory_guard::cp_domain             100.00%        100    Covered              
         covered/total bins:                                 6          6                      
         missing/total bins:                                 0          6                      
@@ -587,8 +587,8 @@ Covergroup                                             Metric       Goal    Stat
         covered/total bins:                                 2          2                      
         missing/total bins:                                 0          2                      
         % Hit:                                        100.00%        100                      
-        bin disabled                                       18          1    Covered              
-        bin strict                                         38          1    Covered              
+        bin disabled                                       21          1    Covered              
+        bin strict                                         39          1    Covered              
     Coverpoint cp_domain                              100.00%        100    Covered              
         covered/total bins:                                 6          6                      
         missing/total bins:                                 0          6                      
@@ -733,5 +733,5 @@ Covergroup                                             Metric       Goal    Stat
         bin stalled_cycles                                  2          1    Covered              
 
 TOTAL COVERGROUP COVERAGE: 100.00%  COVERGROUP TYPES: 7
-End time: 15:00:30 on Jul 12,2026, Elapsed time: 0:00:00
+End time: 22:15:29 on Jul 27,2026, Elapsed time: 0:00:00
 Errors: 0, Warnings: 0

@@ -622,6 +622,21 @@ hardware later accepts the appended command at a command boundary
     -> P22 may set RUNTIME_APPEND_CONSUMED_EVENT
 ```
 
+Current implementation status:
+
+```text
+P21 runtime SQ_TAIL append / live queue service:
+  implemented and validated
+
+P22 RUNTIME_DOORBELL_EVENT producer:
+  reserved by the ABI but tied low in the current RTL revision
+
+P22 RUNTIME_APPEND_CONSUMED_EVENT producer:
+  reserved by the ABI but tied low in the current RTL revision
+```
+
+Bits 8 and 9 retain their frozen CSR positions for forward compatibility.  In the current RTL revision they read zero in `CSR_EVENT_PENDING`, do not contribute to `event_irq`, and do not generate `EVENT_SRC_RUNTIME_DOORBELL` last-cause classification.  A future implementation may connect these sources without changing the P22 CSR map.
+
 #### 9.3.4 Interrupt-Lite Output Policy
 
 The P22 notification layer may expose one wrapper-level interrupt output:
@@ -1345,6 +1360,14 @@ Sticky pending bits are set by hardware event sources and cleared by W1C writes 
 | 10 | `TEST_EVENT` | RO/W1C | Software-generated test event. |
 | 11 | `CQ_MODERATION_TIMER_EVENT` | RO/W1C | P28 moderation timer fallback released a coalesced CQ notification. |
 | 31:12 | `RSVD` | RO/W1C | Reserved. |
+
+Current implementation note:
+
+```text
+Bits 8 and 9 keep their software-visible ABI allocation, but their hardware
+set producers are tied low in the current RTL revision.  They therefore read
+zero until a future runtime-event producer is integrated.
+```
 
 Reserved pending bits should read zero.  W1C writes to reserved bits are ignored.
 

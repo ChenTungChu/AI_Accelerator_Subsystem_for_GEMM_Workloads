@@ -47,6 +47,7 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     localparam int ERROR_ENGINE_BIT     = 0;
     localparam int REJECT_BUSY_BIT      = 0;
     localparam int REJECT_ALIGN_BIT     = 1;
+    localparam int C1D1_REJECT_UNSUPPORTED_BIT = 8;
 
     function new(string name = "ai_accel_subsys_csr_completion_wb_error_busy_clear_test",
                  uvm_component parent = null);
@@ -309,6 +310,45 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     end
     endtask
 
+    // CODE-COV-C1.1-C: direct W1C of a real completion-WB DONE sticky.
+    task automatic p18g_direct_done_w1c_preserve_reject();
+        logic [31:0] done_before;
+        logic [31:0] done_after;
+        logic [31:0] reject_before;
+        logic [31:0] reject_after;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_DONE_STATUS, done_before);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, reject_before);
+
+        if (done_before == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P18_DONE_PRE",
+                "Expected nonzero completion-WB DONE_STATUS before direct W1C")
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_DONE_STATUS, done_before);
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_DONE_STATUS, done_after);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, reject_after);
+
+        if ((done_after & done_before) != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P18_DONE_W1C",
+                $sformatf("Completion-WB DONE direct W1C failed: before=0x%08h after=0x%08h",
+                    done_before, done_after))
+        end
+        if (reject_after !== reject_before) begin
+            `uvm_fatal("CODE_COV_C1C/P18_DONE_ISOLATION",
+                $sformatf("Completion-WB DONE direct W1C disturbed REJECT_STATUS: before=0x%08h after=0x%08h",
+                    reject_before, reject_after))
+        end
+
+        `uvm_info("CODE_COV_C1C/P18_DONE_W1C_PASS",
+            $sformatf("Completion-WB DONE direct W1C PASS: done 0x%08h->0x%08h reject preserved=0x%08h",
+                done_before, done_after, reject_after),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic run_busy_reject_case();
     begin
         `uvm_info("P18G_COMP_WB/BUSY_CASE", "Starting busy-start reject case", UVM_MEDIUM)
@@ -326,6 +366,7 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
         expect_done_status(bit_mask(DONE_WRITE_BIT), "busy case accepted writeback still completed");
         expect_reject_has(bit_mask(REJECT_BUSY_BIT), "busy-start reject");
 
+        p18g_direct_done_w1c_preserve_reject();
         csr_comp_wb_clear_all();
     end
     endtask
@@ -349,6 +390,45 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     end
     endtask
 
+    task automatic p18g_run_d1_unsupported_combo_on_real_error();
+        logic [31:0] cmd;
+        logic [31:0] error_before;
+        logic [31:0] error_after;
+        logic [31:0] reject_status;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, error_before);
+        if (error_before == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1D1/P18_UNSUPPORTED_PRE",
+                "Expected genuine completion-WB error sticky before START+CLEAR_ERROR unsupported-combo probe")
+        end
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::COMP_WB_CMD_START]       = 1'b1;
+        cmd[ai_accel_csr_access_helper::COMP_WB_CMD_CLEAR_ERROR] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_COMMAND, cmd);
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, error_after);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, reject_status);
+
+        if (error_after !== error_before) begin
+            `uvm_fatal("CODE_COV_C1D1/P18_UNSUPPORTED_ERROR_PRESERVE",
+                $sformatf("Unsupported START+CLEAR_ERROR disturbed genuine ERROR_STATUS: before=0x%08h after=0x%08h",
+                    error_before, error_after))
+        end
+        if (!reject_status[C1D1_REJECT_UNSUPPORTED_BIT]) begin
+            `uvm_fatal("CODE_COV_C1D1/P18_UNSUPPORTED_MISSING",
+                $sformatf("Expected completion-WB unsupported-command reject bit %0d, reject=0x%08h",
+                    C1D1_REJECT_UNSUPPORTED_BIT, reject_status))
+        end
+
+        `uvm_info("CODE_COV_C1D1/P18_UNSUPPORTED_PASS",
+            $sformatf("Completion-WB START+CLEAR_ERROR on genuine error rejected and error preserved: error=0x%08h reject=0x%08h",
+                error_after, reject_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic run_bresp_error_case();
     begin
         `uvm_info("P18G_COMP_WB/BRESP_CASE", "Starting completion-memory BRESP error case", UVM_MEDIUM)
@@ -361,6 +441,8 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
         wait_for_error();
         expect_error_has(bit_mask(ERROR_ENGINE_BIT), "BRESP error propagation");
         expect_done_status(32'h0000_0000, "BRESP error must not set done");
+
+        p18g_run_d1_unsupported_combo_on_real_error();
 
         comp_wb_inject_vif.clear();
 

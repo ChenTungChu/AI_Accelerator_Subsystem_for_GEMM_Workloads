@@ -579,7 +579,8 @@ class ai_accel_csr_access_helper extends uvm_object;
     localparam int RECIPE_REJ_MANUAL_CMD    = 7;
     localparam int RECIPE_REJ_UNSUPPORTED_COMBO = 8;
 
-    localparam int unsigned DEFAULT_TIMEOUT_CYCLES = 2000;
+    localparam int unsigned DEFAULT_TIMEOUT_CYCLES    = 2000;
+    localparam int unsigned SPLIT_WRITE_GAP_CYCLES   = 2;
 
     csr_vif_t vif;
 
@@ -716,6 +717,206 @@ class ai_accel_csr_access_helper extends uvm_object;
         vif.awprot  <= '0;
         vif.wdata   <= '0;
         vif.wstrb   <= '0;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // AXI-Lite split-channel write
+    //
+    // These targeted APIs preserve write32() as the default helper
+    // behavior while allowing protocol tests to exercise legal AW/W
+    // independent arrival.  BVALID is not allowed before both write
+    // channels have completed their handshakes.
+    // ------------------------------------------------------------
+    task automatic write32_split_channels(
+        input  logic [11:0] addr,
+        input  logic [31:0] data,
+        input  logic [3:0]  strb,
+        input  bit          aw_first,
+        output logic [1:0]  resp
+    );
+        bit first_done;
+        bit second_done;
+        bit b_done;
+        int unsigned cnt;
+        int unsigned gap_cnt;
+    begin
+        wait_reset_release();
+
+        first_done  = 1'b0;
+        second_done = 1'b0;
+        b_done      = 1'b0;
+        cnt         = 0;
+        resp        = AXI_RESP_OKAY;
+
+        @(posedge vif.clk);
+
+        vif.awaddr  <= aw_first ? addr : '0;
+        vif.awprot  <= 3'b000;
+        vif.awvalid <= aw_first ? 1'b1 : 1'b0;
+
+        vif.wdata   <= aw_first ? '0 : data;
+        vif.wstrb   <= aw_first ? '0 : strb;
+        vif.wvalid  <= aw_first ? 1'b0 : 1'b1;
+
+        vif.bready  <= 1'b1;
+
+        // First channel handshake.  No write response is legal yet.
+        while (!first_done) begin
+            @(posedge vif.clk);
+
+            if (vif.bvalid) begin
+                `uvm_fatal("CSR_HELPER/EARLY_BVALID",
+                    $sformatf("BVALID asserted before both write channels were accepted: addr=0x%03h aw_first=%0d",
+                        addr, aw_first))
+            end
+
+            if (aw_first) begin
+                if (vif.awvalid && vif.awready) begin
+                    first_done  = 1'b1;
+                    vif.awvalid <= 1'b0;
+                end
+            end else begin
+                if (vif.wvalid && vif.wready) begin
+                    first_done = 1'b1;
+                    vif.wvalid <= 1'b0;
+                end
+            end
+
+            cnt++;
+            if (cnt > DEFAULT_TIMEOUT_CYCLES) begin
+                `uvm_fatal("CSR_HELPER/SPLIT_FIRST_TIMEOUT",
+                    $sformatf("AXI-Lite split write first-channel timeout: addr=0x%03h aw_first=%0d",
+                        addr, aw_first))
+            end
+        end
+
+        // Leave a deterministic interval with only the first channel
+        // accepted.  This makes the buffered-address / buffered-data RTL
+        // paths observable and checks that no premature B response occurs.
+        for (gap_cnt = 0; gap_cnt < SPLIT_WRITE_GAP_CYCLES; gap_cnt++) begin
+            @(posedge vif.clk);
+
+            if (vif.bvalid) begin
+                `uvm_fatal("CSR_HELPER/EARLY_BVALID",
+                    $sformatf("BVALID asserted during split write channel gap: addr=0x%03h aw_first=%0d gap_cycle=%0d",
+                        addr, aw_first, gap_cnt))
+            end
+
+            cnt++;
+            if (cnt > DEFAULT_TIMEOUT_CYCLES) begin
+                `uvm_fatal("CSR_HELPER/SPLIT_GAP_TIMEOUT",
+                    $sformatf("AXI-Lite split write channel-gap timeout: addr=0x%03h aw_first=%0d",
+                        addr, aw_first))
+            end
+        end
+
+        // Present the second channel only after the first channel has been
+        // accepted and held independently for the requested gap.
+        if (aw_first) begin
+            vif.wdata  <= data;
+            vif.wstrb  <= strb;
+            vif.wvalid <= 1'b1;
+        end else begin
+            vif.awaddr  <= addr;
+            vif.awprot  <= 3'b000;
+            vif.awvalid <= 1'b1;
+        end
+
+        while (!second_done) begin
+            @(posedge vif.clk);
+
+            if (aw_first) begin
+                if (vif.wvalid && vif.wready) begin
+                    second_done = 1'b1;
+                    vif.wvalid  <= 1'b0;
+                end
+            end else begin
+                if (vif.awvalid && vif.awready) begin
+                    second_done = 1'b1;
+                    vif.awvalid <= 1'b0;
+                end
+            end
+
+            // A response may legally become visible on the same sampled
+            // edge that completes the second channel handshake, but not
+            // before that handshake.
+            if (vif.bvalid && vif.bready) begin
+                if (!second_done) begin
+                    `uvm_fatal("CSR_HELPER/EARLY_BVALID",
+                        $sformatf("BVALID asserted before second write-channel handshake: addr=0x%03h aw_first=%0d",
+                            addr, aw_first))
+                end
+
+                resp       = vif.bresp;
+                b_done     = 1'b1;
+                vif.bready <= 1'b0;
+            end
+
+            cnt++;
+            if (cnt > DEFAULT_TIMEOUT_CYCLES) begin
+                `uvm_fatal("CSR_HELPER/SPLIT_SECOND_TIMEOUT",
+                    $sformatf("AXI-Lite split write second-channel timeout: addr=0x%03h aw_first=%0d",
+                        addr, aw_first))
+            end
+        end
+
+        while (!b_done) begin
+            @(posedge vif.clk);
+
+            if (vif.bvalid && vif.bready) begin
+                resp       = vif.bresp;
+                b_done     = 1'b1;
+                vif.bready <= 1'b0;
+            end
+
+            cnt++;
+            if (cnt > DEFAULT_TIMEOUT_CYCLES) begin
+                `uvm_fatal("CSR_HELPER/SPLIT_B_TIMEOUT",
+                    $sformatf("AXI-Lite split write response timeout: addr=0x%03h aw_first=%0d",
+                        addr, aw_first))
+            end
+        end
+
+        @(posedge vif.clk);
+        vif.awaddr  <= '0;
+        vif.awprot  <= '0;
+        vif.awvalid <= 1'b0;
+        vif.wdata   <= '0;
+        vif.wstrb   <= '0;
+        vif.wvalid  <= 1'b0;
+    end
+    endtask
+
+    task automatic write32_aw_first_expect_okay(
+        input logic [11:0] addr,
+        input logic [31:0] data,
+        input logic [3:0]  strb = 4'hF
+    );
+        logic [1:0] resp;
+    begin
+        write32_split_channels(addr, data, strb, 1'b1, resp);
+        if (resp != AXI_RESP_OKAY) begin
+            `uvm_fatal("CSR_HELPER/WRITE_RESP",
+                $sformatf("Expected OKAY AW-first write response at addr=0x%03h, got resp=%0b",
+                    addr, resp))
+        end
+    end
+    endtask
+
+    task automatic write32_w_first_expect_okay(
+        input logic [11:0] addr,
+        input logic [31:0] data,
+        input logic [3:0]  strb = 4'hF
+    );
+        logic [1:0] resp;
+    begin
+        write32_split_channels(addr, data, strb, 1'b0, resp);
+        if (resp != AXI_RESP_OKAY) begin
+            `uvm_fatal("CSR_HELPER/WRITE_RESP",
+                $sformatf("Expected OKAY W-first write response at addr=0x%03h, got resp=%0b",
+                    addr, resp))
+        end
     end
     endtask
 

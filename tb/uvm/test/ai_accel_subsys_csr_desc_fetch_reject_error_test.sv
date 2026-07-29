@@ -235,6 +235,87 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-C direct status-clear helpers
+    // ------------------------------------------------------------
+    task automatic p17g_direct_status_clear_expect_zero(
+        input logic [11:0] addr,
+        input string       tag
+    );
+        logic [31:0] before_status;
+        logic [31:0] after_status;
+        logic [31:0] expected_after;
+    begin
+        csr.read32_expect_okay(addr, before_status);
+        if (before_status == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P17_CLEAR_PRE",
+                $sformatf("%s: expected nonzero descriptor-fetch status at addr=0x%03h",
+                    tag, addr))
+        end
+
+        // P17 direct DONE/ERROR/REJECT status writes are architectural clear
+        // requests; use the observed nonzero value rather than a coverage-only
+        // arbitrary pattern.
+        //
+        // DESC_FETCH_DONE_STATUS is a composite readback:
+        //   bit[0] = fetch_done
+        //   bit[1] = fetched_snapshot_valid
+        // CLEAR_DONE intentionally clears only fetch_done.  The fetched
+        // snapshot remains valid until a new accepted fetch invalidates it.
+        expected_after = 32'h0000_0000;
+        if (addr == ai_accel_csr_access_helper::CSR_DESC_FETCH_DONE_STATUS) begin
+            if (!before_status[0]) begin
+                `uvm_fatal("CODE_COV_C1C/P17_CLEAR_PRE",
+                    $sformatf("%s: expected DONE bit set before direct DONE clear, before=0x%08h",
+                        tag, before_status))
+            end
+            expected_after = before_status & 32'hFFFF_FFFE;
+        end
+
+        csr.write32_expect_okay(addr, before_status);
+        repeat (4) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(addr, after_status);
+
+        if (after_status != expected_after) begin
+            `uvm_fatal("CODE_COV_C1C/P17_CLEAR",
+                $sformatf("%s: direct status clear failed addr=0x%03h before=0x%08h after=0x%08h expected_after=0x%08h",
+                    tag, addr, before_status, after_status, expected_after))
+        end
+
+        `uvm_info("CODE_COV_C1C/P17_DIRECT_CLEAR_PASS",
+            $sformatf("%s: direct status clear PASS addr=0x%03h before=0x%08h after=0x%08h",
+                tag, addr, before_status, after_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p17g_direct_p14_reject_w1c_expect_zero(input string tag);
+        logic [31:0] before_status;
+        logic [31:0] after_status;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, before_status);
+        if (before_status == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P14_REJECT_PRE",
+                $sformatf("%s: expected nonzero P14 CMD_REJECT_STATUS", tag))
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, before_status);
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, after_status);
+
+        if ((after_status & before_status) != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P14_REJECT_W1C",
+                $sformatf("%s: P14 CMD_REJECT direct W1C failed before=0x%08h after=0x%08h",
+                    tag, before_status, after_status))
+        end
+
+        `uvm_info("CODE_COV_C1C/P14_REJECT_W1C_PASS",
+            $sformatf("%s: P14 CMD_REJECT direct W1C PASS before=0x%08h after=0x%08h",
+                tag, before_status, after_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic program_good_two_slot_descriptors(
         input ai_accel_subsys_seq_item profile_item,
         input int unsigned             a_bytes,
@@ -290,12 +371,19 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         input int unsigned desc_base,
         input int unsigned desc_count,
         input int unsigned desc_stride,
-        input logic [31:0] expected_reject_mask
+        input logic [31:0] expected_reject_mask,
+        input bit          use_direct_clear = 1'b0
     );
     begin
         csr_desc_fetch_clear_sticky_status();
         csr_start_desc_fetch_raw(desc_base, desc_count, desc_stride);
         expect_desc_fetch_reject(tag, expected_reject_mask);
+        if (use_direct_clear) begin
+            p17g_direct_status_clear_expect_zero(
+                ai_accel_csr_access_helper::CSR_DESC_FETCH_REJECT_STATUS,
+                $sformatf("%s direct REJECT clear", tag)
+            );
+        end
         csr_desc_fetch_clear_sticky_status();
     end
     endtask
@@ -309,7 +397,8 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         input int unsigned             c_bytes,
         input int unsigned             override_word_idx,
         input logic [31:0]             override_value,
-        input logic [31:0]             expected_error_mask
+        input logic [31:0]             expected_error_mask,
+        input bit                      use_direct_clear = 1'b0
     );
     begin
         csr_desc_fetch_clear_sticky_status();
@@ -318,6 +407,12 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
 
         csr_start_desc_fetch_raw(P17G_BAD_DESC_BASE, 1, P17G_DESC_STRIDE);
         expect_desc_fetch_error(tag, expected_error_mask);
+        if (use_direct_clear) begin
+            p17g_direct_status_clear_expect_zero(
+                ai_accel_csr_access_helper::CSR_DESC_FETCH_ERROR_STATUS,
+                $sformatf("%s direct ERROR clear", tag)
+            );
+        end
         csr_desc_fetch_clear_sticky_status();
     end
     endtask
@@ -404,6 +499,10 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         expect_nonzero_csr(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS,
             "P16 START_RECIPE while fetch_busy reject");
 
+        p17g_direct_p14_reject_w1c_expect_zero(
+            "P14 START_GEMM while descriptor fetch busy"
+        );
+
         // Clear manual-command rejects so the accepted descriptor-fetch recipe
         // can be checked using the existing strict P16 recipe checker.
         csr_clear_sticky_status();
@@ -483,7 +582,8 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
             P17G_DESC_BASE,
             0,
             P17G_DESC_STRIDE,
-            bit_mask(ai_accel_csr_access_helper::DESC_FETCH_REJ_ZERO_COUNT)
+            bit_mask(ai_accel_csr_access_helper::DESC_FETCH_REJ_ZERO_COUNT),
+            1'b1
         );
 
         run_start_reject_case(
@@ -532,7 +632,8 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
             c_bytes,
             DESC_WORD_CONTROL,
             32'h0000_0002,
-            desc_invalid_mask | bit_mask(ai_accel_csr_access_helper::DESC_FETCH_DESCERR_VALID)
+            desc_invalid_mask | bit_mask(ai_accel_csr_access_helper::DESC_FETCH_DESCERR_VALID),
+            1'b1
         );
 
         run_malformed_descriptor_case(
@@ -616,6 +717,10 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         csr_start_desc_fetch_raw(P17G_DESC_BASE, 2, P17G_DESC_STRIDE);
         csr_poll_desc_fetch_done(done_timeout_cycles);
         csr_poll_recipe_done(done_timeout_cycles * 2);
+        p17g_direct_status_clear_expect_zero(
+            ai_accel_csr_access_helper::CSR_DESC_FETCH_DONE_STATUS,
+            "final valid descriptor fetch DONE clear"
+        );
         csr_check_recipe_perf_snapshot(profile_item);
 
         repeat (5) @(posedge csr_vif.clk);

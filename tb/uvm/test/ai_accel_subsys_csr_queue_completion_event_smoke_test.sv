@@ -8,8 +8,11 @@
 // Scope:
 //   - Reuses the existing P19E queue -> descriptor fetch -> CQ
 //     completion writeback path.
-//   - Enables the P22 event CSR bits for queue command completion
-//     and CQ-not-empty notification.
+//   - Enables the P22 event CSR bits for queue command completion,
+//     CQ-not-empty notification, and CQ-threshold compatibility.
+//   - Keeps P28 event moderation explicitly disabled and programs
+//     CQ_THRESHOLD=1 so one completion commit exercises the original
+//     P22 immediate threshold behavior.
 //   - Verifies a real queue completion commit raises event pending,
 //     event status / irq summary, last-cause, and event counters.
 //
@@ -24,10 +27,13 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
 
     localparam logic [31:0] P22D_EVENT_QUEUE_COMPLETED_MASK = 32'h0000_0001;
     localparam logic [31:0] P22D_EVENT_CQ_NOT_EMPTY_MASK    = 32'h0000_0010;
-    localparam logic [31:0] P22D_EVENT_EXPECT_MASK          = 32'h0000_0011;
+    localparam logic [31:0] P22D_EVENT_CQ_THRESHOLD_MASK    = 32'h0000_0020;
+    localparam logic [31:0] P22D_EVENT_EXPECT_MASK          = 32'h0000_0031;
 
     localparam logic [31:0] P22D_EVENT_CMD_CLEAR_ALL        = 32'h0000_0101;
     localparam logic [31:0] P22D_EVENT_CONTROL_IRQ_SNAPSHOT = 32'h0000_0005;
+    localparam logic [31:0] P22D_EVENT_CQ_THRESHOLD         = 32'h0000_0001;
+    localparam logic [31:0] P22D_EVENT_MOD_DISABLED         = 32'h0000_0000;
 
     function new(string name = "ai_accel_subsys_csr_queue_completion_event_smoke_test",
                  uvm_component parent = null);
@@ -66,9 +72,19 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
             P22D_EVENT_CMD_CLEAR_ALL
         );
 
+        // CODE-COV-D2:
+        // Keep P28 moderation explicitly disabled and set CQ_THRESHOLD=1.
+        // A single completion commit must therefore preserve the original
+        // P22 immediate behavior and raise QUEUE_COMPLETED, CQ_NOT_EMPTY,
+        // and CQ_THRESHOLD together.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_EVENT_MOD_CONTROL,
+            P22D_EVENT_MOD_DISABLED
+        );
+
         csr.write32_expect_okay(
             ai_accel_csr_access_helper::CSR_EVENT_CQ_THRESHOLD,
-            32'h0000_0000
+            P22D_EVENT_CQ_THRESHOLD
         );
 
         csr.write32_expect_okay(
@@ -82,9 +98,11 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
         );
 
         `uvm_info("P22D_EVENT/CFG",
-            $sformatf("Enabled queue completion events: enable_mask=0x%08h control=0x%08h",
+            $sformatf("Enabled queue completion events: enable_mask=0x%08h control=0x%08h cq_threshold=%0d mod_control=0x%08h",
                 P22D_EVENT_EXPECT_MASK,
-                P22D_EVENT_CONTROL_IRQ_SNAPSHOT),
+                P22D_EVENT_CONTROL_IRQ_SNAPSHOT,
+                P22D_EVENT_CQ_THRESHOLD,
+                P22D_EVENT_MOD_DISABLED),
             UVM_MEDIUM)
     end
     endtask
@@ -139,6 +157,8 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
         logic [31:0] irq_count;
         logic [31:0] snapshot0;
         logic [31:0] snapshot1;
+        logic [31:0] cq_threshold;
+        logic [31:0] mod_control;
     begin
         csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_PENDING, pending);
         csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_STATUS, status);
@@ -147,6 +167,21 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
         csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_IRQ_COUNT, irq_count);
         csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_SNAPSHOT0, snapshot0);
         csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_SNAPSHOT1, snapshot1);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_CQ_THRESHOLD, cq_threshold);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_EVENT_MOD_CONTROL, mod_control);
+
+        if (cq_threshold !== P22D_EVENT_CQ_THRESHOLD) begin
+            `uvm_fatal("P22D_EVENT/CQ_THRESHOLD_CFG",
+                $sformatf("Expected CQ_THRESHOLD=%0d, got 0x%08h",
+                    P22D_EVENT_CQ_THRESHOLD,
+                    cq_threshold))
+        end
+
+        if (mod_control !== P22D_EVENT_MOD_DISABLED) begin
+            `uvm_fatal("P22D_EVENT/MOD_NOT_DISABLED",
+                $sformatf("Expected EVENT_MOD_CONTROL=0 for P22 compatibility mode, got 0x%08h",
+                    mod_control))
+        end
 
         expect_event_mask_set(
             pending,
@@ -158,6 +193,12 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
             pending,
             P22D_EVENT_CQ_NOT_EMPTY_MASK,
             "CQ_NOT_EMPTY_EVENT pending"
+        );
+
+        expect_event_mask_set(
+            pending,
+            P22D_EVENT_CQ_THRESHOLD_MASK,
+            "CQ_THRESHOLD_EVENT pending in moderation-disabled compatibility mode"
         );
 
         // CSR_EVENT_STATUS bits:
@@ -188,14 +229,17 @@ class ai_accel_subsys_csr_queue_completion_event_smoke_test
         end
 
         `uvm_info("P22D_EVENT/CHECK",
-            $sformatf("Queue completion event summary PASS: pending=0x%08h status=0x%08h last_cause=0x%08h event_count=%0d irq_count=%0d snapshot0=0x%08h snapshot1=0x%08h",
+            $sformatf("Queue completion event summary PASS: pending=0x%08h expected=0x%08h status=0x%08h last_cause=0x%08h event_count=%0d irq_count=%0d snapshot0=0x%08h snapshot1=0x%08h cq_threshold=%0d mod_control=0x%08h",
                 pending,
+                P22D_EVENT_EXPECT_MASK,
                 status,
                 last_cause,
                 event_count,
                 irq_count,
                 snapshot0,
-                snapshot1),
+                snapshot1,
+                cq_threshold,
+                mod_control),
             UVM_MEDIUM)
     end
     endtask

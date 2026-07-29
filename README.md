@@ -20,22 +20,29 @@ The current focus is subsystem integration, DMA load/store behavior, AXI-Stream 
 Current milestone:
 
 ```text
-Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
+Verification Coverage CODE-COV-C1.1-D3:
+CSR Register-Block Reachability / Exclusion Closure Completed
 
 Regression:
   TOTAL : 150
   PASS  : 150
   FAIL  : 0
+  CODE-COV: PASS
 
 Planned functional coverage:
   TOTAL COVERGROUP COVERAGE : 100.00%
   COVERGROUP TYPES          : 7 / 7 covered
   MISSING PLANNED BINS      : 0
-  UCDB MERGE / REPORT       : PASS
-  VCOVER ERRORS / WARNINGS  : 0 / 0
 
-Next milestone:
-  CODE-COV: RTL Code Coverage Baseline, Gap Analysis, and Closure
+CSR register-block RTL statement coverage:
+  TARGET                     : rtl/csr/ai_accel_csr_regs.sv
+  RAW COVERAGE               : 1172 / 1183 = 99.07%
+  DOCUMENTED D3 WAIVERS      : 11 / 11
+  WAIVER-ADJUSTED REACHABLE  : 1172 / 1172 = 100.00%
+  UCDB MERGE / REPORT        : PASS
+
+Broader RTL CODE-COV:
+  IN PROGRESS
 ```
 
 The current optimized baseline includes:
@@ -1070,7 +1077,38 @@ memory access guard behavior
 runtime telemetry counter observation and non-zero activity
 ```
 
-The 100% result means closure of the defined and validated planned functional coverage scope.  It does not claim exhaustive coverage of every theoretical input, parameter combination, or RTL implementation path.
+The 100% functional-coverage result means closure of the defined and validated planned functional coverage scope.  It does not claim exhaustive coverage of every theoretical input, parameter combination, or RTL implementation path.
+
+CODE-COV-C1.1 closes statement coverage for:
+
+```text
+rtl/csr/ai_accel_csr_regs.sv
+```
+
+Final full-regression and merged-report result:
+
+```text
+TOTAL : 150
+PASS  : 150
+FAIL  : 0
+CODE-COV: PASS
+
+Statements:
+  1172 / 1183 = 99.07% raw simulator coverage
+
+Remaining statements:
+  11 / 11 reviewed and documented as current-revision static,
+  structural, tied-off, defensive-invariant, unimplemented-producer,
+  or semantically non-actionable paths
+
+Waiver-adjusted reachable statement coverage:
+  1172 / 1172 = 100.00%
+
+Formal simulator exclusions:
+  NONE
+```
+
+The raw RTL statement coverage is **99.07%**.  The waiver-adjusted value is a review/accounting result and does not replace the raw Questa result.
 
 Coverage specification:
 
@@ -1083,6 +1121,8 @@ Tracked human-readable reports:
 ```text
 sim/coverage/rc_cov/rc_cov_summary.txt
 sim/coverage/rc_cov/rc_cov_details.txt
+sim/coverage/code_cov/code_cov_summary.txt
+sim/coverage/code_cov/code_cov_details.txt
 ```
 
 Generated UCDB databases, per-test coverage databases, manual coverage runs, and manifests are intentionally excluded from version control.
@@ -1097,7 +1137,23 @@ set STOP_ON_FIRST_FAIL 0
 do run_full_uvm_regression.tcl
 ```
 
-The next and final technical milestone is RTL code coverage baseline collection, uncovered-code classification, targeted closure where justified, and documented exclusions.
+RTL code coverage reproduction from the `sim/` directory:
+
+```tcl
+catch {quit -sim}
+
+set CODE_COV_ENABLE 1
+set CODE_COV_METRICS bcefst
+do compile_uvm.tcl
+
+set CODE_COV_ENABLE 1
+set CODE_COV_METRICS bcefst
+set DO_COMPILE 0
+set STOP_ON_FIRST_FAIL 0
+do run_full_uvm_regression.tcl
+```
+
+The broader synthesizable-RTL CODE-COV campaign remains in progress beyond the closed CSR register-block scope.
 
 ## Current Regression Baseline
 
@@ -1944,7 +2000,7 @@ Full functional regression remains 150/150 PASS.
 ## Current Milestone Summary
 
 ```text
-Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
+Verification Coverage CODE-COV-C1.1-D3: CSR Register-Block Closure Completed
 
 Completed:
   P0: GEMM performance counter smoke                         PASS
@@ -1992,14 +2048,29 @@ Completed:
   RC-COV-C3: targeted telemetry closure                      PASS
   RC-COV-D: documentation closure                            PASS
 
+  CODE-COV-C1.1-B: CSR decode / reject closure              PASS
+  CODE-COV-C1.1-C: CSR sticky / W1C closure                 PASS
+  CODE-COV-C1.1-D1: reachable decode / reject closure       PASS
+  CODE-COV-C1.1-D2: genuine error-path closure              PASS
+  CODE-COV-C1.1-D3: reachability / exclusion record         PASS
+
 Regression:
   150/150 PASS
 
 Planned functional coverage:
   100.00% across 7 / 7 covergroup types
 
-Next:
-  CODE-COV: RTL code coverage baseline / gap analysis / closure
+CSR register-block raw statement coverage:
+  1172 / 1183 = 99.07%
+
+Documented current-revision D3 waivers:
+  11 / 11
+
+Waiver-adjusted reachable statement coverage:
+  1172 / 1172 = 100.00%
+
+Broader RTL CODE-COV:
+  IN PROGRESS
 ```
 
 
@@ -2007,7 +2078,7 @@ Next:
 
 ## Summary
 
-This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, event coalescing / interrupt moderation, runtime telemetry, and a driver-facing runtime ABI / software bring-up contract.  The current verification baseline also includes a reproducible UCDB collection / merge / report flow and 100% closure of the defined and validated planned functional coverage scope across seven covergroup domains.
+This repository currently contains a working GEMM-oriented AI accelerator subsystem with stable scratchpad-backed RTL integration, DMA and frontend data movement, Direct Stream operand-buffer input, scoreboard-based verification, cache-backed multi-lane GEMM compute, scaled cache8 larger-dimension support, K-dimension tiling, N-dimension output-column tiling, M-dimension multi-row output tile scheduling, C read-modify-write partial accumulation, an AXI-Lite CSR control-plane wrapper, a CSR job descriptor / hardware sequencer, a CSR recipe sequencer, memory-backed descriptor fetch, completion writeback, host command/completion queues, multi-entry in-order queue drain behavior, runtime doorbell / live queue service behavior, event notification / interrupt-lite behavior, queue lifecycle recovery, memory access guard / address range validation, event coalescing / interrupt moderation, runtime telemetry, and a driver-facing runtime ABI / software bring-up contract.  The current verification baseline also includes reproducible RC-COV and CODE-COV UCDB collection / merge / report flows, 100% closure of the defined and validated planned functional coverage scope across seven covergroup domains, and CODE-COV-C1.1 closure of `rtl/csr/ai_accel_csr_regs.sv` at 99.07% raw statement coverage with 11 documented current-revision waivers.
 
 P13 proves that the 4-lane cache-backed GEMM path can compose K/N/M tiling with external partial-K accumulation. The validated recipe writes the first partial C directly, reads old C for later partial jobs, accumulates the new partial sum, and preserves compatibility across host-primary, DMA load-store, AXI-Stream load-store, and Direct Stream load-store paths.
 

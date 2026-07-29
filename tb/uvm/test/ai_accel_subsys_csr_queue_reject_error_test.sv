@@ -86,6 +86,92 @@ class ai_accel_subsys_csr_queue_reject_error_test
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-C direct queue status clear helpers
+    // ------------------------------------------------------------
+    task automatic p19f_direct_queue_done_clear(input string tag);
+        logic [31:0] before_status;
+        logic [31:0] after_status;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS, before_status);
+        if (before_status == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P19_DONE_PRE",
+                $sformatf("%s: expected nonzero queue DONE_STATUS", tag))
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS, before_status);
+        repeat (3) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS, after_status);
+        if (after_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P19_DONE_CLEAR",
+                $sformatf("%s: queue DONE direct clear failed before=0x%08h after=0x%08h",
+                    tag, before_status, after_status))
+        end
+
+        `uvm_info("CODE_COV_C1C/P19_DONE_CLEAR_PASS",
+            $sformatf("%s: queue DONE direct clear PASS before=0x%08h", tag, before_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p19f_direct_queue_reject_clear(input string tag);
+        logic [31:0] reject_before;
+        logic [31:0] reject_after;
+        logic [31:0] error_after;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_before);
+        if (reject_before == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P19_REJECT_PRE",
+                $sformatf("%s: expected nonzero queue REJECT_STATUS", tag))
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_before);
+        repeat (3) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_after);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_after);
+
+        if ((reject_after != 32'h0000_0000) || (error_after != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1C/P19_REJECT_CLEAR",
+                $sformatf("%s: queue REJECT direct clear failed reject 0x%08h->0x%08h error_after=0x%08h",
+                    tag, reject_before, reject_after, error_after))
+        end
+
+        `uvm_info("CODE_COV_C1C/P19_REJECT_CLEAR_PASS",
+            $sformatf("%s: queue REJECT direct clear PASS before=0x%08h", tag, reject_before),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p19f_direct_queue_error_clear(input string tag);
+        logic [31:0] error_before;
+        logic [31:0] error_after;
+        logic [31:0] reject_after;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_before);
+        if (error_before == 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1C/P19_ERROR_PRE",
+                $sformatf("%s: expected nonzero queue ERROR_STATUS", tag))
+        end
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_before);
+        repeat (3) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_after);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_after);
+
+        // ERROR_STATUS and REJECT_STATUS share the architectural queue error
+        // clear pulse, so both must be drained by this direct status write.
+        if ((error_after != 32'h0000_0000) || (reject_after != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1C/P19_ERROR_CLEAR",
+                $sformatf("%s: queue ERROR direct clear failed error 0x%08h->0x%08h reject_after=0x%08h",
+                    tag, error_before, error_after, reject_after))
+        end
+
+        `uvm_info("CODE_COV_C1C/P19_ERROR_CLEAR_PASS",
+            $sformatf("%s: queue ERROR direct clear PASS before=0x%08h", tag, error_before),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic p19f_program_base_queue(input logic [31:0] sq_head,
                                            input logic [31:0] sq_tail,
                                            input logic [31:0] cq_head,
@@ -221,6 +307,7 @@ class ai_accel_subsys_csr_queue_reject_error_test
                                   ERR_DISABLED,
                                   1'b0,
                                   0);
+        p19f_direct_queue_reject_clear("disabled queue reject");
         p19f_clear_queue_sticky_and_wait_idle();
     end
     endtask
@@ -278,6 +365,7 @@ class ai_accel_subsys_csr_queue_reject_error_test
                 `uvm_info("P19F_QUEUE/EMPTY_PASS",
                     $sformatf("empty SQ drain PASS: status=0x%08h done=0x%08h", status, done_status),
                     UVM_MEDIUM)
+                p19f_direct_queue_done_clear("empty SQ drained");
                 p19f_clear_queue_sticky_and_wait_idle();
                 return;
             end
@@ -308,6 +396,7 @@ class ai_accel_subsys_csr_queue_reject_error_test
                                   ERR_BAD_POINTER,
                                   1'b1,
                                   Q_ERR_BAD_POINTER);
+        p19f_direct_queue_error_clear("bad SQ pointer reject");
         p19f_clear_queue_sticky_and_wait_idle();
 
         // CQ occupancy = CQ_TAIL - CQ_HEAD = 3, but CQ_DEPTH = 2.

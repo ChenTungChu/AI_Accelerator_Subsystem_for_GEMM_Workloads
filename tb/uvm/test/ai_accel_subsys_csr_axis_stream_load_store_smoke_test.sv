@@ -298,6 +298,185 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.1-D1 P14 AXI-Stream reject probes
+    // ------------------------------------------------------------
+    task automatic run_d1_axis_reject_probes(
+        input logic [31:0] dst_base
+    );
+    begin
+        csr_clear_sticky_status();
+
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, 0, "D1_ZERO_AXIS");
+        csr_start_axis_load("D1_ZERO_AXIS");
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_ZERO_LENGTH,
+            "START_AXIS_LOAD with zero beats");
+        csr_clear_p14_reject_status("after zero-beat AXIS load reject");
+
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, 8, "D1_BUSY_AXIS");
+        csr_start_axis_load("D1_BUSY_AXIS");
+        csr_wait_p14_status_bit(C1D1_P14_STATUS_AXIS_LOAD_BUSY,
+            done_timeout_cycles, "AXIS load before busy-start reject");
+        csr_start_axis_load("D1_BUSY_AXIS_SECOND_START");
+        repeat (2) @(posedge csr_vif.clk);
+        csr_expect_p14_reject_bit(C1D1_P14_REJ_AXIS_BUSY,
+            "START_AXIS_LOAD while AXIS load busy");
+        csr_clear_p14_reject_status("after AXIS load busy reject");
+        csr_poll_done_bit(done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+            "D1_AXIS_BUSY_OWNER");
+
+        csr_clear_sticky_status();
+        `uvm_info("CODE_COV_C1D1/P14_AXIS_REJECT_PASS",
+            "P14 AXI-Stream zero-length and genuine-busy reject probes PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.1-D2 P14 genuine AXI-Stream source error propagation
+    // ------------------------------------------------------------
+    task automatic run_d2_axis_error_probe(
+        input logic [31:0] dst_base,
+        input int unsigned byte_count
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] expected_error;
+        logic [31:0] expected_done;
+        int unsigned beats;
+        int unsigned cnt;
+    begin
+        beats          = bytes_to_beats(byte_count);
+        expected_error = 32'h0000_0001 << 1;
+        expected_done  = 32'h0000_0001 << ai_accel_csr_access_helper::DONE_AXIS_LOAD;
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        vif.axis_src_set_rresp_error(1'b1, 0);
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, beats, "D2_AXIS_ERROR");
+        csr_start_axis_load("D2_AXIS_ERROR");
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                vif.axis_src_set_rresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_REJECT",
+                    $sformatf("Unexpected P14 reject during genuine AXI-Stream RRESP error probe: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if ((error_status != 32'h0000_0000) && (error_status != expected_error)) begin
+                vif.axis_src_set_rresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_BAD_ERROR",
+                    $sformatf("Unexpected P14 error bits during AXI-Stream RRESP probe: expected=0x%08h actual=0x%08h",
+                        expected_error, error_status))
+            end
+
+            if (error_status == expected_error) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                vif.axis_src_set_rresp_error(1'b0, -1);
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_TIMEOUT",
+                    $sformatf("Timed out waiting for P14 AXI-Stream error after %0d cycles", done_timeout_cycles))
+            end
+        end
+
+        vif.axis_src_set_rresp_error(1'b0, -1);
+
+        // AXI-Stream engine error is level-held until the next accepted
+        // AXIS start.  Wait for the failed owner to drain first.
+        cnt = 0;
+        while (status[C1D1_P14_STATUS_AXIS_LOAD_BUSY]) begin
+            @(posedge csr_vif.clk);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_BUSY_TIMEOUT",
+                    "AXI-Stream load engine remained busy after genuine RRESP error")
+            end
+        end
+
+        // Remove any DONE left by the terminal failed operation without
+        // attempting to clear ERROR while the engine still drives it high.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            expected_done
+        );
+
+        // Re-arm the engine with a genuine legal start.  The engine clears
+        // its level-held dma_error_q on this accepted start.
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, beats, "D2_AXIS_RECOVERY");
+        csr_start_axis_load("D2_AXIS_RECOVERY");
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_RECOVERY_REJECT",
+                    $sformatf("Recovery AXI-Stream start was rejected: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if (status[C1D1_P14_STATUS_AXIS_LOAD_BUSY] ||
+                ((done_status & expected_done) != 32'h0000_0000)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1D2/P14_AXIS_RECOVERY_START_TIMEOUT",
+                    "Recovery AXI-Stream operation never became active or completed")
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        // Now the source engine is deasserting axis_load_error.  Direct W1C
+        // can clear the CSR sticky bit without it being immediately re-latched.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_error
+        );
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+        if ((error_status != 32'h0000_0000) || (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1D2/P14_AXIS_CLEAR",
+                $sformatf("P14 sticky cleanup failed after AXI-Stream recovery re-arm: error=0x%08h reject=0x%08h",
+                    error_status, reject_status))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+            "D2_AXIS_RECOVERY"
+        );
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1D2/P14_AXIS_ERROR_PASS",
+            $sformatf("Genuine AXI-Stream source RRESP error propagated to P14 ERROR_STATUS and recovered: observed=0x%08h post_rearm_clear=0x%08h",
+                expected_error, error_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // CSR DMA store command sequence
     // ------------------------------------------------------------
     task automatic csr_write_dma_store_config(
@@ -438,6 +617,12 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
         end
 
         prepare_axis_source_and_destination(a_flat, b_flat);
+
+        if ((get_type_name() == "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_d1_axis_reject_probes(profile_item.base_addr_a);
+            run_d2_axis_error_probe(profile_item.base_addr_a, a_flat.size());
+        end
 
         run_one_axis_load(
             AXIS_SRC_A_BASE,
