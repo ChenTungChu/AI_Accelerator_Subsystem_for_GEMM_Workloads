@@ -34,6 +34,12 @@ class ai_accel_subsys_csr_recipe_reject_error_test extends ai_accel_subsys_csr_r
     localparam logic [31:0] C1D1_SLOT0_CONTROL_DMA_UNSUPPORTED_OUTPUT = 32'h0000_0013;
     localparam int unsigned C1D1_RECIPE_REJ_MICRO_OP_BUSY = 2;
 
+    // CODE-COV-C1.2-D2-A1 prevalidation probes.
+    // Policy bits [10:8] remain aligned with the existing P16F recipe controls.
+    localparam logic [31:0] C1_2D2_A1_RECIPE_CONTROL_WRAP_RANGE = 32'h0000_071F;
+    localparam logic [31:0] C1_2D2_A1_RECIPE_CONTROL_ONE_SLOT   = 32'h0000_0701;
+    localparam logic [31:0] C1_2D2_A1_EFFECTIVE_ZERO_DIM       = 32'h0000_0100;
+
     localparam logic [3:0] P16F_RECIPE_STATE_IDLE  = 4'd0;
     localparam logic [3:0] P16F_RECIPE_STATE_DONE  = 4'd8;
     localparam logic [3:0] P16F_RECIPE_STATE_ERROR = 4'd9;
@@ -529,6 +535,169 @@ class ai_accel_subsys_csr_recipe_reject_error_test extends ai_accel_subsys_csr_r
         csr_start_recipe();
         repeat (3) @(posedge csr_vif.clk);
         csr_expect_recipe_reject_bit(expected_reject_bit, tag);
+    end
+    endtask
+
+    task automatic c1_2d2_a1_expect_prevalidation_reject(
+        input int unsigned expected_reject_bit,
+        input string       tag
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] state;
+        logic [31:0] current_slot;
+        logic [31:0] completed_count;
+        logic [31:0] slot_done_mask;
+        logic [31:0] slot_error_mask;
+        logic [31:0] slot_reject_mask;
+    begin
+        csr_start_recipe();
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr_read_recipe_sticky(
+            status,
+            done_status,
+            error_status,
+            reject_status,
+            state,
+            current_slot,
+            completed_count,
+            slot_done_mask,
+            slot_error_mask,
+            slot_reject_mask
+        );
+
+        if (!reject_status[expected_reject_bit]) begin
+            `uvm_fatal("CODE_COV_C1_2D2_A1/REJECT_MISSING",
+                $sformatf("%s: expected reject bit %0d, status=0x%08h done=0x%08h error=0x%08h reject=0x%08h state=0x%08h",
+                    tag,
+                    expected_reject_bit,
+                    status,
+                    done_status,
+                    error_status,
+                    reject_status,
+                    state))
+        end
+
+        if (status[0] || (state[3:0] != P16F_RECIPE_STATE_IDLE)) begin
+            `uvm_fatal("CODE_COV_C1_2D2_A1/LAUNCH_NOT_BLOCKED",
+                $sformatf("%s: prevalidation reject did not keep recipe idle: status=0x%08h state=0x%08h reject=0x%08h",
+                    tag,
+                    status,
+                    state,
+                    reject_status))
+        end
+
+        if ((done_status != 32'h0000_0000) ||
+            (error_status != 32'h0000_0000) ||
+            (slot_done_mask != 32'h0000_0000) ||
+            (slot_error_mask != 32'h0000_0000) ||
+            (slot_reject_mask != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2D2_A1/UNEXPECTED_SEQUENCER_STATE",
+                $sformatf("%s: command reached sequencer-visible sticky state: done=0x%08h error=0x%08h masks(done/error/reject)=0x%08h/0x%08h/0x%08h",
+                    tag,
+                    done_status,
+                    error_status,
+                    slot_done_mask,
+                    slot_error_mask,
+                    slot_reject_mask))
+        end
+
+        `uvm_info("CODE_COV_C1_2D2_A1/PREVALIDATION_REJECT_PASS",
+            $sformatf("%s: launch blocked in IDLE with reject=0x%08h",
+                tag,
+                reject_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_c1_2d2_a1_width_range_rejects(
+        input ai_accel_subsys_seq_item profile_item,
+        input int unsigned             a_bytes,
+        input int unsigned             b_bytes,
+        input int unsigned             c_bytes
+    );
+        logic [11:0] slot0;
+    begin
+        slot0 = csr.recipe_slot_addr(0, 7'h00);
+
+        csr_clear_recipe_job_and_p14_sticky(
+            "before C1.2-D2-A1 wrapped-range probe"
+        );
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1D20
+        );
+        csr_write_recipe_control_value(
+            C1_2D2_A1_RECIPE_CONTROL_WRAP_RANGE,
+            "C1.2-D2-A1 widened wrapped-range control"
+        );
+        c1_2d2_a1_expect_prevalidation_reject(
+            ai_accel_csr_access_helper::RECIPE_REJ_SLOT_RANGE,
+            "start_slot=1 count=15 widened range reject"
+        );
+        csr_clear_recipe_job_and_p14_sticky(
+            "after C1.2-D2-A1 wrapped-range probe"
+        );
+
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1D22
+        );
+        csr.write32_expect_okay(
+            slot0 + ai_accel_csr_access_helper::SLOT_DIM_M,
+            C1_2D2_A1_EFFECTIVE_ZERO_DIM
+        );
+        csr.expect_read32(
+            slot0 + ai_accel_csr_access_helper::SLOT_DIM_M,
+            C1_2D2_A1_EFFECTIVE_ZERO_DIM,
+            "C1.2-D2-A1 effective-zero DIM_M readback"
+        );
+        csr_write_recipe_control_value(
+            C1_2D2_A1_RECIPE_CONTROL_ONE_SLOT,
+            "C1.2-D2-A1 one-slot effective-dimension control"
+        );
+        c1_2d2_a1_expect_prevalidation_reject(
+            ai_accel_csr_access_helper::RECIPE_REJ_SLOT_DESC,
+            "DIM_M=0x00000100 effective-width zero descriptor reject"
+        );
+        csr_clear_recipe_job_and_p14_sticky(
+            "after C1.2-D2-A1 effective-dimension probe"
+        );
+
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1D24
+        );
+        csr_check_recipe_idle_ready(
+            "before C1.2-D2-A1 valid recovery recipe"
+        );
+        csr_start_recipe();
+        csr_poll_recipe_done(done_timeout_cycles * 2);
+        csr_check_recipe_perf_snapshot(profile_item);
+
+        `uvm_info("CODE_COV_C1_2D2_A1/RECOVERY_PASS",
+            "Valid two-slot recipe completed after widened-range and effective-dimension rejects",
+            UVM_MEDIUM)
+
+        csr_clear_recipe_job_and_p14_sticky(
+            "after C1.2-D2-A1 valid recovery recipe"
+        );
+
+        `uvm_info("CODE_COV_C1_2D2_A1/SUITE_PASS",
+            "Manual recipe width/range prevalidation fix probes PASS",
+            UVM_MEDIUM)
     end
     endtask
 
@@ -1322,6 +1491,15 @@ class ai_accel_subsys_csr_recipe_reject_error_test extends ai_accel_subsys_csr_r
             run_d1_recipe_micro_op_busy_reject(profile_item);
             prepare_dma_source_and_destination(a_flat, b_flat);
             csr_check_recipe_idle_ready("after D1 P14 micro-op ownership reject probe");
+
+            run_c1_2d2_a1_width_range_rejects(
+                profile_item,
+                a_flat.size(),
+                b_flat.size(),
+                c_bytes
+            );
+            prepare_dma_source_and_destination(a_flat, b_flat);
+            csr_check_recipe_idle_ready("after C1.2-D2-A1 width/range probes");
         end
 
         run_immediate_reject_checks(

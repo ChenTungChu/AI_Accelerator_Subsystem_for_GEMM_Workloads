@@ -38,7 +38,9 @@ class ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
     localparam logic [31:0] P27D_BASELINE_CMD_TAG = 32'hD27D_0000;
     localparam logic [31:0] P27D_BAD_SQ_CMD_TAG   = 32'hD27D_0001;
     localparam logic [31:0] P27D_BAD_DESC_CMD_TAG = 32'hD27D_0002;
-    localparam logic [31:0] P27D_RECOVERY_CMD_TAG = 32'hD27D_0003;
+    localparam logic [31:0] P27D_RECOVERY_CMD_TAG       = 32'hD27D_0003;
+    localparam logic [31:0] P27D_ADDR_OVERFLOW_CMD_TAG  = 32'hD27D_00A1;
+    localparam logic [31:0] P27D_SPAN_OVERFLOW_CMD_TAG  = 32'hD27D_00A2;
 
     localparam logic [31:0] P27D_DESC0_TAG0 = 32'hD27D_1000;
     localparam logic [31:0] P27D_DESC0_TAG1 = 32'hD27D_1001;
@@ -253,6 +255,8 @@ class ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t bad_sq_cmd;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t bad_desc_cmd;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t recovery_cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t addr_overflow_cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t span_overflow_cmd;
         ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t baseline_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t recovery_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p27_guard_cfg_t guard_cfg;
@@ -308,6 +312,16 @@ class ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
         p27d_make_cmd(rt, bad_sq_cmd,   32'(P27D_DESC_BASE0), P27D_BAD_SQ_CMD_TAG);
         p27d_make_cmd(rt, bad_desc_cmd, 32'(P27D_DESC_BASE1), P27D_BAD_DESC_CMD_TAG);
         p27d_make_cmd(rt, recovery_cmd, 32'(P27D_DESC_BASE1), P27D_RECOVERY_CMD_TAG);
+        p27d_make_cmd(rt, addr_overflow_cmd, 32'hFFFF_FF80, P27D_ADDR_OVERFLOW_CMD_TAG);
+        p27d_make_cmd(rt, span_overflow_cmd, 32'(P27D_DESC_BASE0), P27D_SPAN_OVERFLOW_CMD_TAG);
+
+        // Keep both commands architecturally valid so the memory guard,
+        // rather than the SQ validation chain, owns the disposition.
+        addr_overflow_cmd.desc_count  = 32'h0000_0002;
+        addr_overflow_cmd.desc_stride = 32'h0000_0080;
+
+        span_overflow_cmd.desc_count  = 32'h0000_0004;
+        span_overflow_cmd.desc_stride = 32'h4000_0000;
 
         event_mask = rt.queue_completion_event_mask() |
                      rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_DRAINED);
@@ -402,7 +416,70 @@ class ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
             "P27D descriptor range reject"
         );
 
-        // Known-good recovery after two independent guard rejects.
+        // Address/end-address overflow: the descriptor base is aligned
+        // and the command validates, but base + span exceeds 32 bits.
+        p27d_make_guard_cfg(
+            rt,
+            cfg,
+            32'h0000_0000,
+            32'hFFFF_F000,
+            32'hFFFF_FFFF,
+            guard_cfg
+        );
+        rt.host_rt_mem_guard_program_regions(
+            guard_cfg,
+            "P27D descriptor address overflow guard cfg"
+        );
+
+        p27d_run_guard_negative_case(
+            rt,
+            cfg,
+            addr_overflow_cmd,
+            1,
+            32'h0000_0002,
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_DESC_RANGE) |
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_ADDR_OVERFLOW),
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_DESC,
+            ai_accel_csr_access_helper::P27_DETAIL_ADDR_OVERFLOW,
+            "CODE_COV_C1_2G7_A2/DESC_ADDR_OVERFLOW_PASS",
+            "P27D descriptor address overflow"
+        );
+
+        // 4 * 0x40000000 overflows the 32-bit descriptor span.  The lower
+        // word is zero, and the explicit 64-bit overflow override must
+        // classify the failure as ADDR_OVERFLOW rather than SPAN_CONFIG.
+        p27d_make_guard_cfg(
+            rt,
+            cfg,
+            32'h0000_0000,
+            32'h0000_0000,
+            32'hFFFF_FFFF,
+            guard_cfg
+        );
+        rt.host_rt_mem_guard_program_regions(
+            guard_cfg,
+            "P27D descriptor span multiplication overflow guard cfg"
+        );
+
+        p27d_run_guard_negative_case(
+            rt,
+            cfg,
+            span_overflow_cmd,
+            1,
+            32'h0000_0002,
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_DESC_RANGE) |
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_ADDR_OVERFLOW),
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_DESC,
+            ai_accel_csr_access_helper::P27_DETAIL_ADDR_OVERFLOW,
+            "CODE_COV_C1_2G7_A2/DESC_SPAN_OVERFLOW_PASS",
+            "P27D descriptor span multiplication overflow"
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_A2/GUARD_OVERFLOW_MATRIX_PASS",
+            "Descriptor address-end and 64-bit span multiplication overflow vectors PASS",
+            UVM_MEDIUM)
+
+        // Known-good recovery after the range and overflow guard rejects.
         p27d_make_guard_cfg(rt, cfg, 32'h0000_0000, 32'(P27D_DESC_BASE0), valid_desc_limit, guard_cfg);
         rt.host_rt_mem_guard_program_regions(guard_cfg, "P27D recovery valid guard cfg");
         rt.host_rt_mem_guard_check_clean("P27D recovery guard clean", 1'b1, 1'b1);
@@ -441,7 +518,7 @@ class ai_accel_subsys_csr_mem_guard_sq_desc_range_smoke_test
         rt.host_rt_lifecycle_check_clean_idle("P27D final lifecycle clean idle", 1'b0, 1'b1, 1'b0);
 
         `uvm_info("P27D_GUARD/RECOVERY_PASS",
-            "P27D known-good command completed after SQ and descriptor guard rejects",
+            "P27D known-good command completed after SQ, descriptor-range, and descriptor-overflow guard rejects",
             UVM_MEDIUM)
 
         `uvm_info("P27D_GUARD/PASS",

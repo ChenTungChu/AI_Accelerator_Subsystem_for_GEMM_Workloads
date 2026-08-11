@@ -721,6 +721,174 @@ class ai_accel_csr_access_helper extends uvm_object;
     endtask
 
     // ------------------------------------------------------------
+    // AXI-Lite no-gap write pair
+    //
+    // The second AW/W pair is presented immediately after the sampled
+    // first B handshake, so it is accepted on the next legal write cycle
+    // without an additional helper-inserted idle edge.  This is used for
+    // cycle-sensitive architectural CSR sequences such as Q_DRAINED
+    // restart coverage.
+    // ------------------------------------------------------------
+    task automatic write32_pair_no_gap(
+        input  logic [11:0] first_addr,
+        input  logic [31:0] first_data,
+        input  logic [3:0]  first_strb,
+        input  logic [11:0] second_addr,
+        input  logic [31:0] second_data,
+        input  logic [3:0]  second_strb,
+        output logic [1:0]  first_resp,
+        output logic [1:0]  second_resp
+    );
+        bit first_aw_done;
+        bit first_w_done;
+        bit first_b_done;
+        bit second_aw_done;
+        bit second_w_done;
+        bit second_b_done;
+        int unsigned cnt;
+    begin
+        wait_reset_release();
+
+        first_aw_done  = 1'b0;
+        first_w_done   = 1'b0;
+        first_b_done   = 1'b0;
+        second_aw_done = 1'b0;
+        second_w_done  = 1'b0;
+        second_b_done  = 1'b0;
+        first_resp     = AXI_RESP_OKAY;
+        second_resp    = AXI_RESP_OKAY;
+        cnt            = 0;
+
+        @(posedge vif.clk);
+        vif.awaddr  <= first_addr;
+        vif.awprot  <= 3'b000;
+        vif.awvalid <= 1'b1;
+        vif.wdata   <= first_data;
+        vif.wstrb   <= first_strb;
+        vif.wvalid  <= 1'b1;
+        vif.bready  <= 1'b1;
+
+        while (!first_b_done) begin
+            @(posedge vif.clk);
+
+            if (!first_aw_done && vif.awvalid && vif.awready) begin
+                first_aw_done = 1'b1;
+                vif.awvalid  <= 1'b0;
+            end
+
+            if (!first_w_done && vif.wvalid && vif.wready) begin
+                first_w_done = 1'b1;
+                vif.wvalid  <= 1'b0;
+            end
+
+            if (vif.bvalid && vif.bready) begin
+                if (!first_aw_done || !first_w_done) begin
+                    `uvm_fatal("CSR_HELPER/PAIR_EARLY_BVALID",
+                        $sformatf("First BVALID preceded complete AW/W acceptance: addr=0x%03h aw_done=%0d w_done=%0d",
+                            first_addr, first_aw_done, first_w_done))
+                end
+
+                first_resp   = vif.bresp;
+                first_b_done = 1'b1;
+
+                // Schedule the second transaction immediately after this
+                // sampled B handshake.  These values are active throughout
+                // the next cycle and can handshake at the next posedge.
+                vif.awaddr  <= second_addr;
+                vif.awprot  <= 3'b000;
+                vif.awvalid <= 1'b1;
+                vif.wdata   <= second_data;
+                vif.wstrb   <= second_strb;
+                vif.wvalid  <= 1'b1;
+            end
+
+            cnt++;
+            if (cnt > DEFAULT_TIMEOUT_CYCLES) begin
+                `uvm_fatal("CSR_HELPER/PAIR_FIRST_TIMEOUT",
+                    $sformatf("First no-gap AXI-Lite write timeout: addr=0x%03h data=0x%08h",
+                        first_addr, first_data))
+            end
+        end
+
+        while (!second_b_done) begin
+            @(posedge vif.clk);
+
+            if (!second_aw_done && vif.awvalid && vif.awready) begin
+                second_aw_done = 1'b1;
+                vif.awvalid   <= 1'b0;
+            end
+
+            if (!second_w_done && vif.wvalid && vif.wready) begin
+                second_w_done = 1'b1;
+                vif.wvalid   <= 1'b0;
+            end
+
+            if (vif.bvalid && vif.bready) begin
+                if (!second_aw_done || !second_w_done) begin
+                    `uvm_fatal("CSR_HELPER/PAIR_EARLY_BVALID",
+                        $sformatf("Second BVALID preceded complete AW/W acceptance: addr=0x%03h aw_done=%0d w_done=%0d",
+                            second_addr, second_aw_done, second_w_done))
+                end
+
+                second_resp   = vif.bresp;
+                second_b_done = 1'b1;
+                vif.bready   <= 1'b0;
+            end
+
+            cnt++;
+            if (cnt > (2 * DEFAULT_TIMEOUT_CYCLES)) begin
+                `uvm_fatal("CSR_HELPER/PAIR_SECOND_TIMEOUT",
+                    $sformatf("Second no-gap AXI-Lite write timeout: addr=0x%03h data=0x%08h",
+                        second_addr, second_data))
+            end
+        end
+
+        @(posedge vif.clk);
+        vif.awaddr  <= '0;
+        vif.awprot  <= '0;
+        vif.awvalid <= 1'b0;
+        vif.wdata   <= '0;
+        vif.wstrb   <= '0;
+        vif.wvalid  <= 1'b0;
+    end
+    endtask
+
+    task automatic write32_pair_no_gap_expect_okay(
+        input logic [11:0] first_addr,
+        input logic [31:0] first_data,
+        input logic [11:0] second_addr,
+        input logic [31:0] second_data,
+        input logic [3:0]  first_strb = 4'hF,
+        input logic [3:0]  second_strb = 4'hF
+    );
+        logic [1:0] first_resp;
+        logic [1:0] second_resp;
+    begin
+        write32_pair_no_gap(
+            first_addr,
+            first_data,
+            first_strb,
+            second_addr,
+            second_data,
+            second_strb,
+            first_resp,
+            second_resp
+        );
+
+        if (first_resp != AXI_RESP_OKAY) begin
+            `uvm_fatal("CSR_HELPER/PAIR_FIRST_RESP",
+                $sformatf("Expected OKAY for first no-gap write addr=0x%03h, got resp=%0b",
+                    first_addr, first_resp))
+        end
+        if (second_resp != AXI_RESP_OKAY) begin
+            `uvm_fatal("CSR_HELPER/PAIR_SECOND_RESP",
+                $sformatf("Expected OKAY for second no-gap write addr=0x%03h, got resp=%0b",
+                    second_addr, second_resp))
+        end
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // AXI-Lite split-channel write
     //
     // These targeted APIs preserve write32() as the default helper

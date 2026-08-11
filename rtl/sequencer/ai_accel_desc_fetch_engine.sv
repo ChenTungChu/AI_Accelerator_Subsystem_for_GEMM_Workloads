@@ -21,6 +21,7 @@
 module ai_accel_desc_fetch_engine #(
     parameter int ADDR_WIDTH          = 32,
     parameter int DATA_WIDTH          = 64,
+    parameter int GEMM_DIM_WIDTH      = 8,
     parameter int AXI_ID_WIDTH        = 4,
     parameter int RECIPE_QUEUE_DEPTH  = 4
 )(
@@ -104,6 +105,13 @@ module ai_accel_desc_fetch_engine #(
     localparam int DESC_WORD_BITS       = 32;
     localparam int DATA_BYTES           = DATA_WIDTH / 8;
     localparam int WORDS_PER_BEAT       = DATA_WIDTH / DESC_WORD_BITS;
+
+    // Clamp only for compilation safety when an invalid parameter is supplied.
+    // The initial sanity checks below still report values outside 1..32.
+    localparam int EFFECTIVE_GEMM_DIM_WIDTH =
+        (GEMM_DIM_WIDTH < 1)  ? 1  :
+        (GEMM_DIM_WIDTH > 32) ? 32 :
+                                GEMM_DIM_WIDTH;
 
     // Descriptor word offsets.  These mirror the P16 slot layout.
     localparam int DESC_WORD_CONTROL          = 0;
@@ -213,6 +221,9 @@ module ai_accel_desc_fetch_engine #(
         if ((DATA_WIDTH % 32) != 0) begin
             $error("ai_accel_desc_fetch_engine: DATA_WIDTH must be a multiple of 32");
         end
+        if ((GEMM_DIM_WIDTH < 1) || (GEMM_DIM_WIDTH > 32)) begin
+            $error("ai_accel_desc_fetch_engine: GEMM_DIM_WIDTH must be in the range 1..32");
+        end
         if (RECIPE_QUEUE_DEPTH <= 0) begin
             $error("ai_accel_desc_fetch_engine: RECIPE_QUEUE_DEPTH must be > 0");
         end
@@ -281,9 +292,11 @@ module ai_accel_desc_fetch_engine #(
             bits[DESCERR_OUTPUT_MODE_BIT] = 1'b1;
         end
 
-        if ((dim_m == 32'h0000_0000) ||
-            (dim_n == 32'h0000_0000) ||
-            (dim_k == 32'h0000_0000)) begin
+        // Validate the effective dimensions delivered through the
+        // descriptor-to-recipe bridge, not unused upper descriptor bits.
+        if ((dim_m[EFFECTIVE_GEMM_DIM_WIDTH-1:0] == '0) ||
+            (dim_n[EFFECTIVE_GEMM_DIM_WIDTH-1:0] == '0) ||
+            (dim_k[EFFECTIVE_GEMM_DIM_WIDTH-1:0] == '0)) begin
             bits[DESCERR_DIM_ZERO_BIT] = 1'b1;
         end
 

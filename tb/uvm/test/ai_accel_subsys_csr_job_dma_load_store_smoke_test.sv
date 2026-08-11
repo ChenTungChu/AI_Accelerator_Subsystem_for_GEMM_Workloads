@@ -37,6 +37,14 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
     localparam int unsigned C1D2_P14_STATUS_DS_LOAD_BUSY   = 3;
     localparam int unsigned C1D2_P14_STATUS_DMA_STORE_BUSY = 4;
 
+    localparam int unsigned C1_2C_P14_ERR_DMA_LOAD          = 0;
+    localparam int unsigned C1_2C_JOB_ERR_DMA_LOAD          = 0;
+    localparam int unsigned C1_2C_P14_STATUS_DMA_LOAD_BUSY  = 1;
+
+    localparam int unsigned C1_2C_B_FAULT_DMA_LOAD = 0;
+    localparam int unsigned C1_2C_B_FAULT_AXIS     = 1;
+    localparam int unsigned C1_2C_B_FAULT_DS       = 2;
+
     localparam logic [3:0] JOB_STATE_DONE  = 4'd13;
     localparam logic [3:0] JOB_STATE_ERROR = 4'd14;
 
@@ -609,6 +617,16 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
         repeat (2) @(posedge csr_vif.clk);
 
         case (worker_busy_bit)
+            C1_2C_P14_STATUS_DMA_LOAD_BUSY: begin
+                csr_write_dma_load_config(
+                    DMA_SRC_A_BASE,
+                    profile_item.base_addr_a,
+                    a_beats,
+                    {tag, " DMA_LOAD_REARM"}
+                );
+                csr_start_dma_load({tag, " DMA_LOAD_REARM"});
+            end
+
             C1D2_P14_STATUS_AXIS_LOAD_BUSY: begin
                 csr.write32_expect_okay(
                     ai_accel_csr_access_helper::CSR_AXIS_SRC_BASE,
@@ -671,7 +689,7 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
         // operations may finish before software observes BUSY, accept either
         // BUSY or the matching DONE bit as proof that the worker consumed the
         // new start.  DONE and BUSY use the same P14 bit number for these
-        // three workers (AXIS=2, DS=3, DMA-store=4).
+        // four workers (DMA-load=1, AXIS=2, DS=3, DMA-store=4).
         cnt = 0;
         forever begin
             csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
@@ -904,6 +922,222 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
     end
     endtask
 
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-C P15 B-preload genuine worker-error propagation
+    // ------------------------------------------------------------
+    task automatic arm_c1_2c_b_preload_fault_after_a_done(
+        input int unsigned fault_kind,
+        input string       tag
+    );
+    begin
+        case (fault_kind)
+            C1_2C_B_FAULT_DMA_LOAD: begin
+                @(posedge vif.dma_load_done);
+                vif.dma_src_set_rresp_error(1'b1, 0);
+            end
+
+            C1_2C_B_FAULT_AXIS: begin
+                @(posedge vif.axis_load_done);
+                vif.axis_src_set_rresp_error(1'b1, 0);
+            end
+
+            C1_2C_B_FAULT_DS: begin
+                @(posedge vif.ds_load_done);
+                vif.ds_src_set_rresp_error(1'b1, 0);
+            end
+
+            default: begin
+                `uvm_fatal("CODE_COV_C1_2C/P15_BAD_B_FAULT_KIND",
+                    $sformatf("%s: unsupported C1.2-C B-preload fault_kind=%0d",
+                        tag, fault_kind))
+            end
+        endcase
+
+        `uvm_info("CODE_COV_C1_2C/P15_B_FAULT_ARMED",
+            $sformatf("%s: armed relative beat-0 source RRESP error after A-preload completion",
+                tag),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic clear_c1_2c_b_preload_fault(
+        input int unsigned fault_kind,
+        input string       tag
+    );
+    begin
+        case (fault_kind)
+            C1_2C_B_FAULT_DMA_LOAD: vif.dma_src_set_rresp_error(1'b0, -1);
+            C1_2C_B_FAULT_AXIS:     vif.axis_src_set_rresp_error(1'b0, -1);
+            C1_2C_B_FAULT_DS:       vif.ds_src_set_rresp_error(1'b0, -1);
+
+            default: begin
+                `uvm_fatal("CODE_COV_C1_2C/P15_BAD_B_CLEAR_KIND",
+                    $sformatf("%s: unsupported C1.2-C B-preload clear fault_kind=%0d",
+                        tag, fault_kind))
+            end
+        endcase
+    end
+    endtask
+
+    task automatic run_c1_2c_b_preload_error_probe(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[],
+        input int signed               expected_c[],
+        input int unsigned             c_bytes,
+        input logic [31:0]             job_mode_value,
+        input int unsigned             job_error_bit,
+        input int unsigned             p14_error_bit,
+        input int unsigned             worker_busy_bit,
+        input int unsigned             fault_kind,
+        input string                   tag
+    );
+        logic [31:0] observed_job_error;
+        logic [31:0] observed_p14_error;
+        logic [31:0] expected_p14_error;
+    begin
+        expected_p14_error = 32'h0000_0001 << p14_error_bit;
+
+        prepare_dma_source_and_destination(a_flat, b_flat);
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+
+        // Start every probe from a known fault-disabled interface state.
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+
+        repeat (2) @(posedge csr_vif.clk);
+        csr_wait_d2_job_idle_ready(done_timeout_cycles, {tag, " prestart"});
+
+        csr_write_job_descriptor_mode(
+            profile_item,
+            a_flat.size(),
+            b_flat.size(),
+            c_bytes,
+            job_mode_value
+        );
+
+        // The observer is active before START_JOB.  It waits for the genuine
+        // A-worker DONE edge, then enables relative beat-0 injection while the
+        // sequencer is still traversing LOAD_B_SETUP/LOAD_B_START.  This keeps
+        // A preload clean and targets only the B preload transaction.
+        fork
+            begin
+                arm_c1_2c_b_preload_fault_after_a_done(fault_kind, tag);
+            end
+
+            begin
+                csr_start_job();
+            end
+        join
+
+        csr_poll_d2_job_error(
+            done_timeout_cycles,
+            job_error_bit,
+            p14_error_bit,
+            tag,
+            observed_job_error,
+            observed_p14_error
+        );
+
+        clear_c1_2c_b_preload_fault(fault_kind, tag);
+
+        csr_clear_d2_job_error_for_recovery(tag, expected_p14_error);
+        run_d2_recovery_job(
+            profile_item,
+            a_flat,
+            b_flat,
+            expected_c,
+            c_bytes,
+            job_mode_value,
+            p14_error_bit,
+            worker_busy_bit,
+            tag
+        );
+
+        case (fault_kind)
+            C1_2C_B_FAULT_DMA_LOAD: begin
+                `uvm_info("CODE_COV_C1_2C/P15_DMA_B_ERROR_PASS",
+                    $sformatf("Genuine DMA B-preload error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error),
+                    UVM_MEDIUM)
+            end
+
+            C1_2C_B_FAULT_AXIS: begin
+                `uvm_info("CODE_COV_C1_2C/P15_AXIS_B_ERROR_PASS",
+                    $sformatf("Genuine AXI-Stream B-preload error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error),
+                    UVM_MEDIUM)
+            end
+
+            C1_2C_B_FAULT_DS: begin
+                `uvm_info("CODE_COV_C1_2C/P15_DS_B_ERROR_PASS",
+                    $sformatf("Genuine Direct-Stream B-preload error propagated through P14/P15 and recovered: p14=0x%08h job=0x%08h",
+                        observed_p14_error, observed_job_error),
+                    UVM_MEDIUM)
+            end
+
+            default: begin end
+        endcase
+    end
+    endtask
+
+    task automatic run_c1_2c_b_preload_error_probes(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[],
+        input int signed               expected_c[],
+        input int unsigned             c_bytes
+    );
+    begin
+        run_c1_2c_b_preload_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_DMA_LOAD_DMA_STORE,
+            C1_2C_JOB_ERR_DMA_LOAD,
+            C1_2C_P14_ERR_DMA_LOAD,
+            C1_2C_P14_STATUS_DMA_LOAD_BUSY,
+            C1_2C_B_FAULT_DMA_LOAD,
+            "C1_2C_JOB_DMA_B_ERROR"
+        );
+
+        run_c1_2c_b_preload_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_AXIS_DMA_STORE,
+            C1D2_JOB_ERR_AXIS_LOAD,
+            C1D2_P14_ERR_AXIS_LOAD,
+            C1D2_P14_STATUS_AXIS_LOAD_BUSY,
+            C1_2C_B_FAULT_AXIS,
+            "C1_2C_JOB_AXIS_B_ERROR"
+        );
+
+        run_c1_2c_b_preload_error_probe(
+            profile_item, a_flat, b_flat, expected_c, c_bytes,
+            JOB_MODE_DS_DMA_STORE,
+            C1D2_JOB_ERR_DS_LOAD,
+            C1D2_P14_ERR_DS_LOAD,
+            C1D2_P14_STATUS_DS_LOAD_BUSY,
+            C1_2C_B_FAULT_DS,
+            "C1_2C_JOB_DS_B_ERROR"
+        );
+
+        // Restore the representative smoke-test memory/fault baseline before
+        // the unchanged final DMA job.
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+        prepare_dma_source_and_destination(a_flat, b_flat);
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1_2C/P15_B_ERROR_SUITE_PASS",
+            "P15 DMA, AXI-Stream, and Direct-Stream B-preload genuine worker-error propagation/recovery probes PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic run_d2_genuine_error_probes(
         input ai_accel_subsys_seq_item profile_item,
         input int signed               a_flat[],
@@ -1046,6 +1280,14 @@ class ai_accel_subsys_csr_job_dma_load_store_smoke_test extends ai_accel_subsys_
         if ((get_type_name() == "ai_accel_subsys_csr_job_dma_load_store_smoke_test") &&
             (selected_case_id == 102)) begin
             run_d2_genuine_error_probes(
+                profile_item,
+                a_flat,
+                b_flat,
+                expected_c,
+                c_bytes
+            );
+
+            run_c1_2c_b_preload_error_probes(
                 profile_item,
                 a_flat,
                 b_flat,

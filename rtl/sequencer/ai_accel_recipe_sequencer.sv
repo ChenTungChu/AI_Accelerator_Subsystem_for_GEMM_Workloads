@@ -155,6 +155,7 @@ module ai_accel_recipe_sequencer #(
     localparam logic [3:0] JOB_STATE_ERROR = 4'd14;
 
     localparam logic [3:0] P16_RECIPE_QUEUE_DEPTH_U4 = P16_RECIPE_QUEUE_DEPTH;
+    localparam logic [4:0] P16_RECIPE_QUEUE_DEPTH_U5 = P16_RECIPE_QUEUE_DEPTH;
 
     // ------------------------------------------------------------
     // Active recipe snapshot
@@ -198,6 +199,7 @@ module ai_accel_recipe_sequencer #(
     logic [31:0] perf_mac_count_q;
     logic [31:0] perf_output_count_q;
 
+    logic [4:0] selected_range_end;
     logic selected_range_valid;
     logic current_slot_valid;
     logic current_slot_is_final;
@@ -219,9 +221,13 @@ module ai_accel_recipe_sequencer #(
     assign recipe_perf_mac_count    = perf_mac_count_q;
     assign recipe_perf_output_count = perf_output_count_q;
 
+    // Keep the active-snapshot range check consistent with the CSR
+    // prevalidation and prevent 4-bit start_slot + count wraparound.
+    assign selected_range_end = {1'b0, recipe_start_slot_q} +
+                                {1'b0, recipe_count_q};
     assign selected_range_valid = (recipe_count_q != 4'd0) &&
                                   (recipe_start_slot_q < P16_RECIPE_QUEUE_DEPTH_U4) &&
-                                  ((recipe_start_slot_q + recipe_count_q) <= P16_RECIPE_QUEUE_DEPTH_U4);
+                                  (selected_range_end <= P16_RECIPE_QUEUE_DEPTH_U5);
 
     assign current_slot_valid = (current_slot_q < P16_RECIPE_QUEUE_DEPTH_U4);
     assign current_slot_is_final = (current_slot_q == final_slot_q);

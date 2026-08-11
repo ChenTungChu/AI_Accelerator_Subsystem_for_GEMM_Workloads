@@ -19,6 +19,22 @@ interface ai_accel_subsys_ctrl_if #(
     logic core_rst_n;
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-C2-A1 descriptor-to-recipe handoff observation
+    //
+    // These are passive testbench observations only.  They do not drive
+    // or alter DUT state.
+    // ------------------------------------------------------------
+    logic desc_fetch_busy_obs;
+    logic recipe_busy_obs;
+    logic desc_fetch_recipe_start_pulse_obs;
+    logic desc_fetch_launch_ownership_obs;
+    logic csr_dma_load_start_pulse_obs;
+    logic csr_job_start_pulse_obs;
+    logic csr_recipe_start_pulse_obs;
+    logic csr_desc_fetch_start_pulse_obs;
+    logic desc_fetch_start_to_engine_obs;
+
+    // ------------------------------------------------------------
     // Testbench reset override control
     // ------------------------------------------------------------
     logic tb_reset_override_en;
@@ -242,6 +258,66 @@ interface ai_accel_subsys_ctrl_if #(
     begin
         ds_src_inject_rresp_error      = enable;
         ds_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // P19 command-source AXI read protocol fault injection control
+    //
+    // These controls are verification-only and affect only the command
+    // source responder in ai_accel_subsys_csr_uvm_top.  Beat indices are
+    // relative to the current command-entry read burst.
+    // ------------------------------------------------------------
+    logic      cmd_src_inject_rresp_error = 1'b0;
+    int signed cmd_src_inject_rresp_error_beat = -1;
+
+    logic      cmd_src_inject_early_rlast = 1'b0;
+    int signed cmd_src_inject_early_rlast_beat = -1;
+
+    logic      cmd_src_inject_missing_rlast = 1'b0;
+    int signed cmd_src_inject_missing_rlast_beat = -1;
+
+    task automatic cmd_src_clear_faults();
+    begin
+        cmd_src_inject_rresp_error       = 1'b0;
+        cmd_src_inject_rresp_error_beat  = -1;
+        cmd_src_inject_early_rlast       = 1'b0;
+        cmd_src_inject_early_rlast_beat  = -1;
+        cmd_src_inject_missing_rlast      = 1'b0;
+        cmd_src_inject_missing_rlast_beat = -1;
+    end
+    endtask
+
+    task automatic cmd_src_set_rresp_error(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        cmd_src_clear_faults();
+        cmd_src_inject_rresp_error      = enable;
+        cmd_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    task automatic cmd_src_set_early_rlast(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        cmd_src_clear_faults();
+        cmd_src_inject_early_rlast      = enable;
+        cmd_src_inject_early_rlast_beat = beat_index;
+    end
+    endtask
+
+    task automatic cmd_src_set_missing_rlast(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        cmd_src_clear_faults();
+        cmd_src_inject_missing_rlast      = enable;
+        cmd_src_inject_missing_rlast_beat = beat_index;
     end
     endtask
 

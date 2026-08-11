@@ -422,33 +422,110 @@ class ai_accel_event_driven_host_runtime_helper extends uvm_object;
     end
     endtask
 
+    task automatic reset_queue_pointers(input string where = "");
+        logic [31:0] cmd;
+        logic [31:0] status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
+    begin
+        check_ready("reset_queue_pointers");
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::QUEUE_CMD_RESET_POINTERS] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_COMMAND, cmd);
+        repeat (3) @(posedge ctrl_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS,        status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS,  error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,       sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,       sq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,       cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,       cq_tail);
+
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000) ||
+            (sq_head       != 32'h0000_0000) ||
+            (sq_tail       != 32'h0000_0000) ||
+            (cq_head       != 32'h0000_0000) ||
+            (cq_tail       != 32'h0000_0000)) begin
+            `uvm_fatal("P23_HOST_RT/RESET_POINTERS",
+                $sformatf("%s%sRESET_QUEUE_POINTERS failed: status=0x%08h error=0x%08h reject=0x%08h SQ_HEAD=0x%08h SQ_TAIL=0x%08h CQ_HEAD=0x%08h CQ_TAIL=0x%08h",
+                    (where.len() == 0) ? "" : where,
+                    (where.len() == 0) ? "" : ": ",
+                    status,
+                    error_status,
+                    reject_status,
+                    sq_head,
+                    sq_tail,
+                    cq_head,
+                    cq_tail))
+        end
+
+        `uvm_info("P23_HOST_RT/RESET_POINTERS",
+            $sformatf("%s%sRESET_QUEUE_POINTERS established legal zero queue counters",
+                (where.len() == 0) ? "" : where,
+                (where.len() == 0) ? "" : ": "),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic program_queue(input p23_queue_cfg_t cfg);
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
     begin
         check_ready("program_queue");
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_BASE,   cfg.sq_base);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_DEPTH,  cfg.sq_depth);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,   cfg.sq_head);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,   cfg.sq_tail);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_STRIDE, cfg.sq_stride);
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_BASE,   cfg.cq_base);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_DEPTH,  cfg.cq_depth);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,   cfg.cq_head);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,   cfg.cq_tail);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_STRIDE, cfg.cq_stride);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,   cfg.queue_control);
+
+        // SQ_HEAD and CQ_TAIL are hardware-owned.  The cfg fields for those
+        // counters are expected readback values, not host write requests.
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL, sq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+
+        if ((sq_head !== cfg.sq_head) ||
+            (sq_tail !== cfg.sq_tail) ||
+            (cq_head !== cfg.cq_head) ||
+            (cq_tail !== cfg.cq_tail)) begin
+            `uvm_fatal("P23_HOST_RT/QUEUE_CFG_POINTERS",
+                $sformatf("Queue pointer readback mismatch after policy-compliant programming: expected SQ(h/t)=%0d/%0d CQ(h/t)=%0d/%0d observed SQ(h/t)=%0d/%0d CQ(h/t)=%0d/%0d",
+                    cfg.sq_head,
+                    cfg.sq_tail,
+                    cfg.cq_head,
+                    cfg.cq_tail,
+                    sq_head,
+                    sq_tail,
+                    cq_head,
+                    cq_tail))
+        end
 
         `uvm_info("P23_HOST_RT/QUEUE_CFG",
             $sformatf("Queue cfg: SQ base=0x%08h depth=%0d head=%0d tail=%0d CQ base=0x%08h depth=%0d head=%0d tail=%0d control=0x%08h",
                 cfg.sq_base,
                 cfg.sq_depth,
-                cfg.sq_head,
-                cfg.sq_tail,
+                sq_head,
+                sq_tail,
                 cfg.cq_base,
                 cfg.cq_depth,
-                cfg.cq_head,
-                cfg.cq_tail,
+                cq_head,
+                cq_tail,
                 cfg.queue_control),
             UVM_MEDIUM)
     end
@@ -687,6 +764,11 @@ class ai_accel_event_driven_host_runtime_helper extends uvm_object;
 
         clear_queue_sticky();
         clear_event_state();
+
+        // initialize_runtime starts a fresh queue session.  Establish the
+        // hardware-owned SQ_HEAD/CQ_TAIL counters through the architectural
+        // RESET_QUEUE_POINTERS command before programming host-owned state.
+        reset_queue_pointers("initialize_runtime");
 
         if (clear_mem) begin
             clear_queue_memory(cfg);

@@ -308,7 +308,8 @@ class ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test
             completion_event_mask,
             1'b1,
             1'b1,
-            "P28D single-command init"
+            "P28D single-command init",
+            1'b1 // fresh zero-pointer epoch
         );
 
         rt.host_rt_event_mod_default_cfg(
@@ -356,15 +357,15 @@ class ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test
                 one_snap.event_irq_count),
             UVM_MEDIUM)
 
-        // Keep the normal drained-session cleanup path pointer-epoch preserving.
-        // The threshold session below reprograms the queue while idle through
-        // program_queue(cfg_batch), which rewrites SQ/CQ head/tail to the desired
-        // baseline for this targeted smoke.  This avoids depending on the optional
-        // idle RESET_QUEUE_POINTERS command in a P28D threshold-moderation test.
+        // Keep this cleanup path pointer-epoch preserving.  The threshold
+        // session below is a separate fresh lifecycle session, so
+        // host_rt_lifecycle_init_session(..., fresh_pointer_epoch=1) establishes
+        // the next zero-counter epoch through the architectural idle-only
+        // RESET_QUEUE_POINTERS command.
         rt.host_rt_lifecycle_cleanup_drained(
             cfg_single,
             completion_event_mask,
-            1'b0, // preserve pointer epoch; next init programs cfg_batch
+            1'b0, // preserve here; next fresh init resets pointers architecturally
             1'b1, // consume visible CQ
             1'b1, // recycle SQ/CQ memory
             "P28D single-command cleanup"
@@ -380,7 +381,8 @@ class ai_accel_subsys_csr_event_mod_cq_threshold_smoke_test
             completion_event_mask,
             1'b1,
             1'b1,
-            "P28D threshold init"
+            "P28D threshold init",
+            1'b1 // fresh zero-pointer epoch
         );
 
         rt.host_rt_event_mod_program(mod_cfg, "P28D threshold moderation cfg");

@@ -9,7 +9,8 @@
 //   - CSR-triggered P18 completion writeback debug path only
 //   - validates busy-start rejection while an accepted writeback is active
 //   - validates base-alignment rejection
-//   - validates AXI BRESP error propagation from the completion-memory model
+//   - validates writeback-disabled completion without AXI traffic
+//   - validates AXI BRESP and BID error propagation from the completion-memory model
 //   - validates sticky done/error/reject clear behavior
 //
 // This test intentionally does not launch P17/P16/P15 recipes.  P18E/P18F
@@ -30,9 +31,10 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     virtual comp_wb_inject_if       comp_wb_inject_vif;
     ai_accel_csr_access_helper      csr;
 
-    localparam int unsigned COMP_BASE_ADDR_A = 32'h0000_0300;
-    localparam int unsigned COMP_BASE_ADDR_B = 32'h0000_0380;
-    localparam int unsigned COMP_BASE_BAD    = 32'h0000_0304; // not 64-bit aligned
+    localparam int unsigned COMP_BASE_ADDR_A   = 32'h0000_0300;
+    localparam int unsigned COMP_BASE_ADDR_B   = 32'h0000_0380;
+    localparam int unsigned COMP_BASE_DISABLED = 32'h0000_0400;
+    localparam int unsigned COMP_BASE_BAD      = 32'h0000_0304; // not 64-bit aligned
 
     localparam logic [31:0] EXP_STATUS_FLAGS = 32'h0000_005A;
     localparam logic [31:0] EXP_USER_TAG_A   = 32'hD18A_0001;
@@ -45,6 +47,7 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
 
     localparam int DONE_WRITE_BIT       = 0;
     localparam int ERROR_ENGINE_BIT     = 0;
+    localparam int ERROR_BID_BIT        = 1;
     localparam int REJECT_BUSY_BIT      = 0;
     localparam int REJECT_ALIGN_BIT     = 1;
     localparam int C1D1_REJECT_UNSUPPORTED_BIT = 8;
@@ -110,13 +113,14 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     end
     endtask
 
-    task automatic program_manual_payload(
+    task automatic program_manual_payload_with_control(
         input logic [31:0] base_addr,
-        input logic [31:0] user_tag
+        input logic [31:0] user_tag,
+        input logic [31:0] control
     );
     begin
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_BASE_ADDR, base_addr);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_CONTROL, 32'h0000_0003); // enable + overall_done
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_CONTROL, control);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_STATUS_FLAGS, EXP_STATUS_FLAGS);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_USER_TAG, user_tag);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_COUNTS, EXP_COUNTS);
@@ -125,6 +129,19 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_RECIPE_REJECT, 32'h0000_0000);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_PERF_MAC_COUNT, 32'h0000_0004);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_DETAIL, 32'h0000_0000);
+    end
+    endtask
+
+    task automatic program_manual_payload(
+        input logic [31:0] base_addr,
+        input logic [31:0] user_tag
+    );
+    begin
+        program_manual_payload_with_control(
+            base_addr,
+            user_tag,
+            32'h0000_0003 // enable + overall_done
+        );
     end
     endtask
 
@@ -282,6 +299,17 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     end
     endtask
 
+    task automatic expect_error_status(input logic [31:0] expected, input string tag);
+        logic [31:0] actual;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, actual);
+        if (actual !== expected) begin
+            `uvm_fatal("P18G_COMP_WB/ERROR_MISMATCH",
+                $sformatf("%s expected ERROR_STATUS=0x%08h actual=0x%08h", tag, expected, actual))
+        end
+    end
+    endtask
+
     task automatic expect_error_has(input logic [31:0] mask, input string tag);
         logic [31:0] actual;
     begin
@@ -346,6 +374,64 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
             $sformatf("Completion-WB DONE direct W1C PASS: done 0x%08h->0x%08h reject preserved=0x%08h",
                 done_before, done_after, reject_after),
             UVM_MEDIUM)
+    end
+    endtask
+
+    // CODE-COV-C1.2-B: wb_enable=0 is a normal architectural mode.
+    // START is accepted, DONE is reported, and no AXI completion record is
+    // written.  This covers the engine's disabled-writeback completion path.
+    task automatic run_disabled_writeback_case();
+        logic [31:0] status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] word_data;
+        int unsigned word_idx;
+    begin
+        `uvm_info("CODE_COV_C1_2B/P18_DISABLED",
+            "Starting writeback-disabled completion case",
+            UVM_MEDIUM)
+
+        csr_comp_wb_clear_all();
+        comp_wb_inject_vif.clear();
+        vif.dma_dst_mem_clear();
+
+        program_manual_payload_with_control(
+            COMP_BASE_DISABLED,
+            32'hD18A_0003,
+            32'h0000_0002 // overall_done=1, wb_enable=0
+        );
+        start_completion_wb();
+        wait_for_done();
+
+        expect_done_status(bit_mask(DONE_WRITE_BIT), "disabled writeback completion");
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_STATUS, status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, reject_status);
+
+        if (status[STATUS_BUSY_BIT] ||
+            (status[23:16] != 8'h00) ||
+            (error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2B/P18_DISABLED_STATUS",
+                $sformatf("Disabled writeback status mismatch: status=0x%08h error=0x%08h reject=0x%08h",
+                    status, error_status, reject_status))
+        end
+
+        for (word_idx = 0; word_idx < 16; word_idx++) begin
+            word_data = vif.dma_dst_mem_read_word32(COMP_BASE_DISABLED + (word_idx * 4));
+            if (word_data != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1_2B/P18_DISABLED_MEMORY",
+                    $sformatf("Disabled writeback unexpectedly modified completion word %0d: data=0x%08h",
+                        word_idx, word_data))
+            end
+        end
+
+        `uvm_info("CODE_COV_C1_2B/P18_DISABLED_PASS",
+            $sformatf("Writeback-disabled completion PASS: status=0x%08h, written_beats=%0d, memory unchanged",
+                status, status[23:16]),
+            UVM_MEDIUM)
+
+        csr_comp_wb_clear_all();
     end
     endtask
 
@@ -429,6 +515,44 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
     end
     endtask
 
+    // CODE-COV-C1.2-B: genuine AXI BID protocol mismatch.  BRESP remains
+    // OKAY so the completion engine reaches ERR_BID rather than ERR_BRESP.
+    task automatic run_bid_error_case();
+        logic [31:0] reject_status;
+    begin
+        `uvm_info("CODE_COV_C1_2B/P18_BID_CASE",
+            "Starting completion-memory BID mismatch case",
+            UVM_MEDIUM)
+
+        csr_comp_wb_clear_all();
+        comp_wb_inject_vif.clear();
+        comp_wb_inject_vif.set_bid_mismatch(1'b1, 0);
+
+        program_manual_payload(COMP_BASE_ADDR_B, 32'hD18A_0004);
+        start_completion_wb();
+        wait_for_error();
+        // The P18 engine sets raw ERR_BID[1].  The CSR block then ORs the
+        // generic completion-writeback error summary into bit 0, so the
+        // software-visible sticky value is ENGINE_ERROR | ERR_BID = 0x3.
+        expect_error_status(
+            bit_mask(ERROR_ENGINE_BIT) | bit_mask(ERROR_BID_BIT),
+            "BID mismatch error propagation"
+        );
+        expect_done_status(32'h0000_0000, "BID mismatch must not set done");
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, reject_status);
+        if (reject_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2B/P18_BID_REJECT",
+                $sformatf("BID mismatch unexpectedly set REJECT_STATUS=0x%08h", reject_status))
+        end
+
+        comp_wb_inject_vif.clear();
+
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, 32'hFFFF_FFFF);
+        repeat (3) @(posedge csr_vif.clk);
+        csr.expect_read32(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, 32'h0000_0000, "BID error W1C clear");
+    end
+    endtask
+
     task automatic run_bresp_error_case();
     begin
         `uvm_info("P18G_COMP_WB/BRESP_CASE", "Starting completion-memory BRESP error case", UVM_MEDIUM)
@@ -465,8 +589,10 @@ class ai_accel_subsys_csr_completion_wb_error_busy_clear_test extends uvm_test;
 
         csr.expect_read32(ai_accel_csr_access_helper::CSR_COMPLETION_WB_VERSION, 32'h0001_0018, "CSR_COMPLETION_WB_VERSION");
 
+        run_disabled_writeback_case();
         run_busy_reject_case();
         run_unaligned_reject_case();
+        run_bid_error_case();
         run_bresp_error_case();
 
         csr_comp_wb_clear_all();

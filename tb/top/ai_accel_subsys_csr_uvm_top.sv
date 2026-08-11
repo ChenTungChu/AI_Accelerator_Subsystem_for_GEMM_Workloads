@@ -345,6 +345,13 @@ module ai_accel_subsys_csr_uvm_top;
     int signed             desc_src_inject_rresp_error_beat_q = -1;
     int unsigned           desc_src_rresp_error_gen_q = 0;
     int unsigned           desc_src_inject_base_ar_count = 0;
+
+    // CODE-COV-C1.2-B descriptor source missing-RLAST injection.
+    logic                  desc_src_inject_rlast_error_q = 1'b0;
+    int signed             desc_src_inject_rlast_error_beat_q = -1;
+    int unsigned           desc_src_rlast_error_gen_q = 0;
+    int unsigned           desc_src_inject_rlast_base_ar_count = 0;
+
     int unsigned           desc_src_rd_pending_beat_idx;
 
     wire desc_src_ar_fire = desc_src_axi_arvalid && desc_src_axi_arready;
@@ -455,6 +462,12 @@ module ai_accel_subsys_csr_uvm_top;
     int signed                 comp_wb_inject_bresp_error_beat_q;
     int unsigned               comp_wb_inject_base_aw_count;
     int unsigned               comp_wb_bresp_error_gen_q;
+
+    // CODE-COV-C1.2-B TB-only completion BID mismatch injection.
+    logic                      comp_wb_inject_bid_mismatch_q;
+    int signed                 comp_wb_inject_bid_mismatch_beat_q;
+    int unsigned               comp_wb_inject_bid_base_aw_count;
+    int unsigned               comp_wb_bid_mismatch_gen_q;
 
     // P24E TB-only completion-writeback block injection.
     // This holds BRESP off after accepting AW/W so the completion engine
@@ -799,6 +812,30 @@ module ai_accel_subsys_csr_uvm_top;
     endfunction
 
 
+    function automatic logic [ID_WIDTH-1:0] comp_next_bid(
+        input int unsigned         aw_beat_idx,
+        input logic [ID_WIDTH-1:0] normal_bid
+    );
+        int signed rel_beat;
+    begin
+        if (aw_beat_idx >= comp_wb_inject_bid_base_aw_count) begin
+            rel_beat = int'(aw_beat_idx - comp_wb_inject_bid_base_aw_count);
+        end
+        else begin
+            rel_beat = -1;
+        end
+
+        if (comp_wb_inject_bid_mismatch_q &&
+            (comp_wb_inject_bid_mismatch_beat_q >= 0) &&
+            (rel_beat == comp_wb_inject_bid_mismatch_beat_q)) begin
+            return {{(ID_WIDTH-1){1'b0}}, 1'b1};
+        end
+
+        return normal_bid;
+    end
+    endfunction
+
+
     function automatic logic comp_should_block_bresp(
         input int unsigned aw_beat_idx
     );
@@ -826,8 +863,9 @@ module ai_accel_subsys_csr_uvm_top;
     // not interfere with DMA-store result checking.
     //
     // P18G adds a TB-only BRESP error injection hook through
-    // comp_wb_inject_if.  P24E extends the same hook with a BRESP
-    // block mode for watchdog timeout validation.  The hook is preserved
+    // comp_wb_inject_if.  CODE-COV-C1.2-B extends the same interface
+    // with a BID mismatch hook.  P24E also provides a BRESP block mode
+    // for watchdog timeout validation.  The hook is preserved
     // here because the
     // shared UVM package contains completion-writeback error tests;
     // keeping the interface instantiated also prevents Questa virtual
@@ -857,6 +895,11 @@ module ai_accel_subsys_csr_uvm_top;
             comp_wb_inject_base_aw_count      <= 0;
             comp_wb_bresp_error_gen_q         <= 0;
 
+            comp_wb_inject_bid_mismatch_q      <= 1'b0;
+            comp_wb_inject_bid_mismatch_beat_q <= -1;
+            comp_wb_inject_bid_base_aw_count   <= 0;
+            comp_wb_bid_mismatch_gen_q         <= 0;
+
             comp_wb_inject_bresp_block_q      <= 1'b0;
             comp_wb_inject_bresp_block_beat_q <= -1;
             comp_wb_inject_block_base_aw_count <= 0;
@@ -870,6 +913,14 @@ module ai_accel_subsys_csr_uvm_top;
                 comp_wb_bresp_error_gen_q         <= comp_wb_inject_vif.bresp_error_gen;
             end
 
+
+            if (comp_wb_inject_vif.bid_mismatch_gen !=
+                comp_wb_bid_mismatch_gen_q) begin
+                comp_wb_inject_bid_mismatch_q      <= comp_wb_inject_vif.bid_mismatch_enable;
+                comp_wb_inject_bid_mismatch_beat_q <= comp_wb_inject_vif.bid_mismatch_beat;
+                comp_wb_inject_bid_base_aw_count   <= comp_aw_count;
+                comp_wb_bid_mismatch_gen_q         <= comp_wb_inject_vif.bid_mismatch_gen;
+            end
 
             if (comp_wb_inject_vif.bresp_block_gen !=
                 comp_wb_bresp_block_gen_q) begin
@@ -916,6 +967,7 @@ module ai_accel_subsys_csr_uvm_top;
                 logic [DATA_WIDTH-1:0]     w_data_now;
                 logic [DATA_WIDTH/8-1:0]   w_strb_now;
                 logic [1:0]                bresp_now;
+                logic [ID_WIDTH-1:0]       bid_now;
                 logic                      block_bresp_now;
                 int unsigned               aw_beat_idx_now;
 
@@ -925,6 +977,7 @@ module ai_accel_subsys_csr_uvm_top;
                 w_data_now      = comp_w_fire  ? comp_axi_wdata  : comp_w_pending_data;
                 w_strb_now      = comp_w_fire  ? comp_axi_wstrb  : comp_w_pending_strb;
                 bresp_now       = comp_next_bresp(aw_beat_idx_now);
+                bid_now         = comp_next_bid(aw_beat_idx_now, aw_id_now);
                 block_bresp_now = comp_should_block_bresp(aw_beat_idx_now);
 
                 if (!block_bresp_now) begin
@@ -932,7 +985,7 @@ module ai_accel_subsys_csr_uvm_top;
                         comp_apply_write(aw_addr_now, w_data_now, w_strb_now);
                     end
 
-                    comp_bid_q    <= aw_id_now;
+                    comp_bid_q    <= bid_now;
                     comp_bresp_q  <= bresp_now;
                     comp_bvalid_q <= 1'b1;
 
@@ -1274,6 +1327,17 @@ module ai_accel_subsys_csr_uvm_top;
     end
     endtask
 
+    task automatic desc_src_set_rlast_error(
+        input bit        enable,
+        input int signed relative_read_beat
+    );
+    begin
+        desc_src_inject_rlast_error_q      = enable;
+        desc_src_inject_rlast_error_beat_q = relative_read_beat;
+        desc_src_inject_rlast_base_ar_count = desc_src_ar_count;
+    end
+    endtask
+
     // ============================================================
     // P17 descriptor source AXI read responder
     //
@@ -1320,7 +1384,15 @@ module ai_accel_subsys_csr_uvm_top;
                 cmd_src_rid_q    <= '0;
 
                 if (cmd_src_rd_pending_valid) begin
-                    if (cmd_src_rd_pending_beat == cmd_src_rd_pending_len) begin
+                    // A non-OKAY response or an asserted RLAST terminates the
+                    // verification responder's current burst.  This prevents
+                    // a deliberately malformed command read from leaving a
+                    // stale response beat parked after the controller enters
+                    // Q_ERROR.  A missing-final-RLAST fault still retires on
+                    // the architectural final beat.
+                    if ((cmd_src_rresp_q != AXI_RESP_OKAY) ||
+                        cmd_src_rlast_q ||
+                        (cmd_src_rd_pending_beat == cmd_src_rd_pending_len)) begin
                         cmd_src_rd_pending_valid <= 1'b0;
                     end else begin
                         cmd_src_rd_pending_beat  <= cmd_src_rd_pending_beat + 8'd1;
@@ -1334,10 +1406,34 @@ module ai_accel_subsys_csr_uvm_top;
                 cmd_src_rd_pending_valid &&
                 (cmd_src_rd_pending_delay == 0)) begin
                 cmd_src_rvalid_q <= 1'b1;
-                cmd_src_rlast_q  <= (cmd_src_rd_pending_beat == cmd_src_rd_pending_len);
                 cmd_src_rid_q    <= cmd_src_rd_pending_id;
                 cmd_src_rdata_q  <= src_pack_word(cmd_src_rd_pending_addr);
-                cmd_src_rresp_q  <= AXI_RESP_OKAY;
+
+                if (ctrl_if.cmd_src_inject_rresp_error &&
+                    (ctrl_if.cmd_src_inject_rresp_error_beat >= 0) &&
+                    (int'(cmd_src_rd_pending_beat) ==
+                        ctrl_if.cmd_src_inject_rresp_error_beat)) begin
+                    cmd_src_rresp_q <= AXI_RESP_SLVERR;
+                end else begin
+                    cmd_src_rresp_q <= AXI_RESP_OKAY;
+                end
+
+                if (ctrl_if.cmd_src_inject_early_rlast &&
+                    (ctrl_if.cmd_src_inject_early_rlast_beat >= 0) &&
+                    (cmd_src_rd_pending_beat != cmd_src_rd_pending_len) &&
+                    (int'(cmd_src_rd_pending_beat) ==
+                        ctrl_if.cmd_src_inject_early_rlast_beat)) begin
+                    cmd_src_rlast_q <= 1'b1;
+                end else if (ctrl_if.cmd_src_inject_missing_rlast &&
+                             (ctrl_if.cmd_src_inject_missing_rlast_beat >= 0) &&
+                             (cmd_src_rd_pending_beat == cmd_src_rd_pending_len) &&
+                             (int'(cmd_src_rd_pending_beat) ==
+                                 ctrl_if.cmd_src_inject_missing_rlast_beat)) begin
+                    cmd_src_rlast_q <= 1'b0;
+                end else begin
+                    cmd_src_rlast_q <=
+                        (cmd_src_rd_pending_beat == cmd_src_rd_pending_len);
+                end
             end
         end
     end
@@ -1360,6 +1456,7 @@ module ai_accel_subsys_csr_uvm_top;
 
             desc_src_rd_pending_beat_idx       <= 0;
             desc_src_rresp_error_gen_q         <= 0;
+            desc_src_rlast_error_gen_q         <= 0;
         end
         else begin
             if (desc_src_inject_vif.rresp_error_gen !=
@@ -1369,6 +1466,15 @@ module ai_accel_subsys_csr_uvm_top;
                 desc_src_inject_rresp_error_beat_q <= desc_src_inject_vif.rresp_error_beat;
                 desc_src_inject_base_ar_count      <= desc_src_ar_count;
                 desc_src_rresp_error_gen_q         <= desc_src_inject_vif.rresp_error_gen;
+            end
+
+            if (desc_src_inject_vif.rlast_error_gen !=
+                desc_src_rlast_error_gen_q) begin
+
+                desc_src_inject_rlast_error_q      <= desc_src_inject_vif.rlast_error_enable;
+                desc_src_inject_rlast_error_beat_q <= desc_src_inject_vif.rlast_error_beat;
+                desc_src_inject_rlast_base_ar_count <= desc_src_ar_count;
+                desc_src_rlast_error_gen_q         <= desc_src_inject_vif.rlast_error_gen;
             end
 
             if (desc_src_ar_fire) begin
@@ -1417,9 +1523,18 @@ module ai_accel_subsys_csr_uvm_top;
                 (desc_src_rd_pending_delay == 0)) begin
 
                 desc_src_rvalid_q <= 1'b1;
-                desc_src_rlast_q  <= 1'b1;
                 desc_src_rid_q    <= desc_src_rd_pending_id;
                 desc_src_rdata_q  <= src_pack_word(desc_src_rd_pending_addr);
+
+                if (desc_src_inject_rlast_error_q &&
+                    (desc_src_inject_rlast_error_beat_q >= 0) &&
+                    (desc_src_rd_pending_beat_idx >= desc_src_inject_rlast_base_ar_count) &&
+                    (int'(desc_src_rd_pending_beat_idx - desc_src_inject_rlast_base_ar_count) ==
+                        desc_src_inject_rlast_error_beat_q)) begin
+                    desc_src_rlast_q <= 1'b0;
+                end else begin
+                    desc_src_rlast_q <= 1'b1;
+                end
 
                 if (desc_src_inject_rresp_error_q &&
                     (desc_src_inject_rresp_error_beat_q >= 0) &&
@@ -1766,6 +1881,18 @@ module ai_accel_subsys_csr_uvm_top;
     // ============================================================
     assign ctrl_if.dma_rst_n  = dma_rst_n;
     assign ctrl_if.core_rst_n = core_rst_n;
+
+    // Passive observation of the exact descriptor-to-recipe handoff and
+    // the launch pulses that must remain blocked during that cycle.
+    assign ctrl_if.desc_fetch_busy_obs                = dut.desc_fetch_busy_i;
+    assign ctrl_if.recipe_busy_obs                    = dut.recipe_busy_i;
+    assign ctrl_if.desc_fetch_recipe_start_pulse_obs  = dut.desc_fetch_recipe_start_pulse;
+    assign ctrl_if.desc_fetch_launch_ownership_obs    = dut.desc_fetch_launch_ownership_i;
+    assign ctrl_if.csr_dma_load_start_pulse_obs       = dut.csr_dma_load_start_pulse;
+    assign ctrl_if.csr_job_start_pulse_obs            = dut.csr_job_start_pulse;
+    assign ctrl_if.csr_recipe_start_pulse_obs         = dut.csr_recipe_start_pulse;
+    assign ctrl_if.csr_desc_fetch_start_pulse_obs     = dut.csr_desc_fetch_start_pulse;
+    assign ctrl_if.desc_fetch_start_to_engine_obs     = dut.desc_fetch_start_to_engine;
 
     assign ctrl_if.acc_busy   = acc_busy;
     assign ctrl_if.acc_done   = acc_done;

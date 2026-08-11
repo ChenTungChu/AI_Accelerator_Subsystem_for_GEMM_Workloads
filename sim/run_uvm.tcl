@@ -8,7 +8,7 @@ file mkdir logs
 # Default: 50
 # --------------------------------------------------
 if {![info exists LOG_KEEP_COUNT]} {
-    set LOG_KEEP_COUNT 50
+    set LOG_KEEP_COUNT 150
 }
 
 proc prune_old_logs {log_dir keep_count} {

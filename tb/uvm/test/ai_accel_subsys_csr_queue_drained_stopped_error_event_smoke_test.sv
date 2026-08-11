@@ -231,29 +231,85 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
     end
     endtask
 
+    task automatic p22e_reset_queue_pointers(input string case_name);
+        logic [31:0] cmd;
+        logic [31:0] status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
+    begin
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::QUEUE_CMD_RESET_POINTERS] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_COMMAND, cmd);
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS,        status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS,  error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,       sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,       sq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,       cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,       cq_tail);
+
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000) ||
+            (sq_head       != 32'h0000_0000) ||
+            (sq_tail       != 32'h0000_0000) ||
+            (cq_head       != 32'h0000_0000) ||
+            (cq_tail       != 32'h0000_0000)) begin
+            `uvm_fatal("P22E_QUEUE/RESET_POINTERS",
+                $sformatf("%s RESET_QUEUE_POINTERS failed: status=0x%08h error=0x%08h reject=0x%08h SQ_HEAD=0x%08h SQ_TAIL=0x%08h CQ_HEAD=0x%08h CQ_TAIL=0x%08h",
+                    case_name,
+                    status,
+                    error_status,
+                    reject_status,
+                    sq_head,
+                    sq_tail,
+                    cq_head,
+                    cq_tail))
+        end
+
+        `uvm_info("P22E_QUEUE/RESET_POINTERS",
+            $sformatf("%s established legal zero queue counters through RESET_QUEUE_POINTERS", case_name),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic p22e_program_queue(input int unsigned sq_base,
                                       input int unsigned cq_base,
-                                      input logic [31:0] sq_head,
                                       input logic [31:0] sq_tail,
                                       input logic [31:0] cq_head,
-                                      input logic [31:0] cq_tail,
                                       input logic [31:0] sq_depth,
                                       input logic [31:0] cq_depth,
                                       input logic [31:0] control_value);
+        logic [31:0] sq_head_readback;
+        logic [31:0] cq_tail_readback;
     begin
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_BASE,   32'(sq_base));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_DEPTH,  sq_depth);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,   sq_head);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,   sq_tail);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_STRIDE, 32'(P22E_ENTRY_STRIDE));
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_BASE,   32'(cq_base));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_DEPTH,  cq_depth);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,   cq_head);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,   cq_tail);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_STRIDE, 32'(P22E_ENTRY_STRIDE));
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CONTROL, control_value);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head_readback);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail_readback);
+
+        if ((sq_head_readback != 32'h0000_0000) ||
+            (cq_tail_readback != 32'h0000_0000)) begin
+            `uvm_fatal("P22E_QUEUE/POINTER_STATE",
+                $sformatf("Fresh-session hardware-owned pointers were not zero: SQ_HEAD=0x%08h CQ_TAIL=0x%08h",
+                    sq_head_readback,
+                    cq_tail_readback))
+        end
     end
     endtask
 
@@ -310,6 +366,7 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
         end
     end
     endtask
+
 
     task automatic p22e_program_invalid_sq_entry();
         int unsigned base;
@@ -391,14 +448,13 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
 
         p22e_clear_ring_memory(P22E_DRAIN_SQ_BASE, P22E_DRAIN_CQ_BASE);
         csr_queue_clear_sticky_status();
+        p22e_reset_queue_pointers("empty drained");
         p22e_event_enable(P22E_EVENT_QUEUE_DRAINED_MASK, "empty drained");
 
         // bit0 QUEUE_ENABLE, bit2 STOP_ON_ERROR.  Empty SQ should drain
         // cleanly without fetching a command.
         p22e_program_queue(P22E_DRAIN_SQ_BASE,
                            P22E_DRAIN_CQ_BASE,
-                           32'h0000_0000,
-                           32'h0000_0000,
                            32'h0000_0000,
                            32'h0000_0000,
                            32'(P22E_QUEUE_DEPTH),
@@ -414,6 +470,70 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
         csr_queue_clear_sticky_status();
     end
     endtask
+
+    task automatic p22e_case_drained_tail_restart();
+        logic [31:0] start_cmd;
+        logic [31:0] done_status;
+    begin
+        `uvm_info("CODE_COV_C1_2G7_A2/DRAINED_TAIL_RESTART_START",
+            "Starting Q_DRAINED runtime SQ_TAIL restart case",
+            UVM_MEDIUM)
+
+        p22e_clear_ring_memory(P22E_ERR_SQ_BASE, P22E_ERR_CQ_BASE);
+        p22e_program_invalid_sq_entry();
+
+        csr_queue_clear_sticky_status();
+        p22e_reset_queue_pointers("Q_DRAINED tail restart");
+        p22e_event_enable(
+            P22E_EVENT_QUEUE_DRAINED_MASK | P22E_EVENT_QUEUE_ERROR_MASK,
+            "Q_DRAINED tail restart"
+        );
+
+        // Begin with an empty SQ, but preload slot 0.  The no-gap second
+        // write publishes SQ_TAIL=1 on the cycle in which the controller
+        // is resident in Q_DRAINED, forcing the run-until-empty restart
+        // branch before the invalid command reaches Q_VALIDATE.
+        p22e_program_queue(
+            P22E_ERR_SQ_BASE,
+            P22E_ERR_CQ_BASE,
+            32'h0000_0000,
+            32'h0000_0000,
+            32'(P22E_QUEUE_DEPTH),
+            32'(P22E_QUEUE_DEPTH),
+            32'h0000_0007
+        );
+
+        start_cmd = 32'h0000_0000;
+        start_cmd[ai_accel_csr_access_helper::QUEUE_CMD_START] = 1'b1;
+
+        csr.write32_pair_no_gap_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_COMMAND,
+            start_cmd,
+            ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,
+            32'h0000_0001
+        );
+
+        p22e_poll_queue_error(160);
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS,
+            done_status
+        );
+        if (!done_status[Q_DONE_DRAINED]) begin
+            `uvm_fatal("CODE_COV_C1_2G7_A2/DRAINED_TAIL_NO_DRAIN",
+                $sformatf("Expected initial drained evidence before tail restart, done=0x%08h",
+                    done_status))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_A2/DRAINED_TAIL_RESTART_PASS",
+            $sformatf("Q_DRAINED SQ_TAIL restart fetched the preloaded command: done=0x%08h",
+                done_status),
+            UVM_MEDIUM)
+
+        p22e_event_clear_all("Q_DRAINED tail restart cleanup");
+        csr_queue_clear_sticky_status();
+    end
+    endtask
+
 
     task automatic p22e_case_stop_event(input ai_accel_subsys_seq_item profile_item,
                                         input int signed expected_c[]);
@@ -443,6 +563,7 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
         p22e_program_invalid_sq_entry();
 
         csr_queue_clear_sticky_status();
+        p22e_reset_queue_pointers("invalid SQ command error");
         p22e_event_enable(P22E_EVENT_QUEUE_ERROR_MASK, "invalid SQ command error");
 
         // bit0 QUEUE_ENABLE, bit2 STOP_ON_ERROR.  SQ has one entry but the
@@ -450,9 +571,7 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
         // queue validation path must raise a real queue_error_pulse.
         p22e_program_queue(P22E_ERR_SQ_BASE,
                            P22E_ERR_CQ_BASE,
-                           32'h0000_0000,
                            32'h0000_0001,
-                           32'h0000_0000,
                            32'h0000_0000,
                            32'(P22E_QUEUE_DEPTH),
                            32'(P22E_QUEUE_DEPTH),
@@ -550,11 +669,12 @@ class ai_accel_subsys_csr_queue_drained_stopped_error_event_smoke_test
         p22e_event_clear_all("initialization");
 
         p22e_case_empty_drained_event();
+        p22e_case_drained_tail_restart();
         p22e_case_stop_event(profile_item, expected_c);
         p22e_case_queue_error_event();
 
         `uvm_info("P22E_QUEUE_EVENT/PASS",
-            $sformatf("P22E queue terminal event smoke completed: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d checked=drained,stopped,error",
+            $sformatf("P22E queue terminal event smoke completed: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d checked=drained,drained_tail_restart,stopped,error",
                 selected_case_id,
                 a_flat.size(),
                 b_flat.size(),

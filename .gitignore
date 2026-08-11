@@ -23,6 +23,9 @@ sim/coverage/**
 !sim/coverage/*_cov/*_summary.txt
 !sim/coverage/*_cov/*_details.txt
 
+# Ignore specific reports
+code_cov_g7_a2_effective_details.txt
+
 # Optimization output
 @_opt/
 */@_opt/

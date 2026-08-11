@@ -1040,29 +1040,68 @@ class ai_accel_event_driven_host_runtime_stress_helper
     end
     endtask
 
+    function automatic void host_rt_lifecycle_make_zero_epoch_cfg(
+        output p23_queue_cfg_t zero_cfg,
+        input  p23_queue_cfg_t cfg
+    );
+    begin
+        zero_cfg = cfg;
+        zero_cfg.sq_head = 32'h0000_0000;
+        zero_cfg.sq_tail = 32'h0000_0000;
+        zero_cfg.cq_head = 32'h0000_0000;
+        zero_cfg.cq_tail = 32'h0000_0000;
+    end
+    endfunction
+
     task automatic host_rt_lifecycle_init_session(
         input p23_queue_cfg_t cfg,
         input logic [31:0]   event_enable_mask,
         input bit            clear_mem = 1'b1,
         input bit            clear_lower_sticky = 1'b1,
-        input string         label = "host_rt_lifecycle_init_session"
+        input string         label = "host_rt_lifecycle_init_session",
+        input bit            fresh_pointer_epoch = 1'b0
     );
+        p23_queue_cfg_t programmed_cfg;
     begin
         check_ready(label);
+        programmed_cfg = cfg;
+
         host_rt_lifecycle_wait_idle({label, " wait_idle"}, P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES, 1'b1);
         host_rt_lifecycle_clear_queue_all_sticky(1'b1, {label, " queue_clear"});
         if (clear_lower_sticky) begin
             host_rt_lifecycle_clear_lower_sticky({label, " lower_clear"});
         end
         host_rt_lifecycle_clear_all_events_and_counters({label, " event_clear"});
-        if (clear_mem) begin
-            clear_queue_memory(cfg);
+
+        // A lifecycle init can either preserve an already-clean monotonic
+        // pointer epoch or establish a fresh zero-counter epoch.  Only the
+        // explicit fresh mode may issue RESET_QUEUE_POINTERS.  After reset,
+        // normalize all expected / host-owned counter fields before calling
+        // program_queue(); SQ_HEAD and CQ_TAIL remain hardware-owned.
+        if (fresh_pointer_epoch) begin
+            host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
+            host_rt_lifecycle_make_zero_epoch_cfg(programmed_cfg, cfg);
         end
-        program_queue(cfg);
+
+        if (clear_mem) begin
+            clear_queue_memory(programmed_cfg);
+        end
+        program_queue(programmed_cfg);
         host_rt_lifecycle_rearm_events(event_enable_mask, 1'b1, 32'h0000_0000, 1'b1, {label, " event_rearm"});
-        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        host_rt_lifecycle_check_clean_idle(
+            {label, " clean_check"},
+            1'b1,
+            1'b1,
+            fresh_pointer_epoch
+        );
         `uvm_info("P26_LIFECYCLE/INIT_PASS",
-            $sformatf("%s: lifecycle session initialized", label),
+            $sformatf("%s: lifecycle session initialized fresh_pointer_epoch=%0d SQ(h/t)=%0d/%0d CQ(h/t)=%0d/%0d",
+                label,
+                fresh_pointer_epoch,
+                programmed_cfg.sq_head,
+                programmed_cfg.sq_tail,
+                programmed_cfg.cq_head,
+                programmed_cfg.cq_tail),
             UVM_MEDIUM)
     end
     endtask
@@ -1076,8 +1115,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         input string         label = "host_rt_lifecycle_cleanup_drained"
     );
         p26_lifecycle_snapshot_t snap;
+        p23_queue_cfg_t          programmed_cfg;
     begin
         check_ready(label);
+        programmed_cfg = cfg;
         host_rt_lifecycle_wait_idle({label, " wait_idle"}, P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES, 1'b0);
         host_rt_lifecycle_capture_snapshot(snap, {label, " terminal_snapshot"});
 
@@ -1107,11 +1148,17 @@ class ai_accel_event_driven_host_runtime_stress_helper
 
         if (reset_pointers) begin
             host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
-            program_queue(cfg);
+            host_rt_lifecycle_make_zero_epoch_cfg(programmed_cfg, cfg);
+            program_queue(programmed_cfg);
         end
 
         host_rt_lifecycle_rearm_events(event_enable_mask, 1'b1, 32'h0000_0000, 1'b1, {label, " event_rearm"});
-        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        host_rt_lifecycle_check_clean_idle(
+            {label, " clean_check"},
+            1'b1,
+            1'b1,
+            reset_pointers
+        );
 
         `uvm_info("P26_LIFECYCLE/DRAINED_PASS",
             $sformatf("%s: drained-session cleanup PASS reset_pointers=%0d recycle_memory=%0d",
@@ -1183,8 +1230,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         input string         label = "host_rt_lifecycle_cleanup_stopped_discard"
     );
         p26_lifecycle_snapshot_t snap;
+        p23_queue_cfg_t          programmed_cfg;
     begin
         check_ready(label);
+        programmed_cfg = cfg;
         host_rt_lifecycle_wait_idle({label, " wait_idle"}, P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES, 1'b0);
         host_rt_lifecycle_capture_snapshot(snap, {label, " stopped_discard_snapshot"});
 
@@ -1203,9 +1252,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         end
 
         host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
-        program_queue(cfg);
+        host_rt_lifecycle_make_zero_epoch_cfg(programmed_cfg, cfg);
+        program_queue(programmed_cfg);
         host_rt_lifecycle_rearm_events(event_enable_mask, 1'b1, 32'h0000_0000, 1'b1, {label, " event_rearm"});
-        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b1);
 
         `uvm_info("P26_LIFECYCLE/STOPPED_DISCARD_PASS",
             $sformatf("%s: stopped-session discard cleanup PASS", label),
@@ -1253,8 +1303,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         input bit            clear_lower_sticky = 1'b1,
         input string         label = "host_rt_lifecycle_cleanup_error_discard"
     );
+        p23_queue_cfg_t programmed_cfg;
     begin
         check_ready(label);
+        programmed_cfg = cfg;
         host_rt_lifecycle_wait_idle({label, " wait_idle"}, P26_DEFAULT_LIFECYCLE_TIMEOUT_CYCLES, 1'b1);
         host_rt_lifecycle_capture_error_snapshot(error_snap, {label, " error_snapshot"}, 1'b1);
 
@@ -1274,9 +1326,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         end
 
         host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
-        program_queue(cfg);
+        host_rt_lifecycle_make_zero_epoch_cfg(programmed_cfg, cfg);
+        program_queue(programmed_cfg);
         host_rt_lifecycle_rearm_events(event_enable_mask, 1'b1, 32'h0000_0000, 1'b1, {label, " event_rearm"});
-        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b1);
 
         `uvm_info("P26_LIFECYCLE/ERROR_DISCARD_PASS",
             $sformatf("%s: timeout/error session-discard cleanup PASS", label),
@@ -1322,6 +1375,25 @@ class ai_accel_event_driven_host_runtime_stress_helper
                     label,
                     snap.event_pending,
                     snap.event_status))
+        end
+
+        // These lifecycle helpers use monotonic no-wrap counter epochs.
+        // Reject impossible host-visible ordering before unsigned occupancy
+        // arithmetic can disguise it as 0xffffffff / 0xfffffffe.
+        if (snap.sq_tail < snap.sq_head) begin
+            `uvm_fatal("P26_LIFECYCLE/SQ_POINTER_ORDER",
+                $sformatf("%s: SQ_TAIL < SQ_HEAD: SQ(h/t)=%0d/%0d",
+                    label,
+                    snap.sq_head,
+                    snap.sq_tail))
+        end
+
+        if (snap.cq_tail < snap.cq_head) begin
+            `uvm_fatal("P26_LIFECYCLE/CQ_POINTER_ORDER",
+                $sformatf("%s: CQ_TAIL < CQ_HEAD: CQ(h/t)=%0d/%0d",
+                    label,
+                    snap.cq_head,
+                    snap.cq_tail))
         end
 
         if (require_zero_pointers &&
@@ -2571,8 +2643,10 @@ class ai_accel_event_driven_host_runtime_stress_helper
         input p30_driver_runtime_abi_cfg_t cfg,
         input string                       label = "host_rt_abi_cold_boot_init"
     );
+        p23_queue_cfg_t programmed_queue_cfg;
     begin
         check_ready(label);
+        programmed_queue_cfg = cfg.queue_cfg;
 
         host_rt_lifecycle_wait_idle({label, " wait_idle"}, P30_DEFAULT_ABI_TIMEOUT_CYCLES, 1'b1);
         host_rt_lifecycle_clear_queue_all_sticky(1'b1, {label, " queue_clear"});
@@ -2585,8 +2659,14 @@ class ai_accel_event_driven_host_runtime_stress_helper
         host_rt_mem_guard_clear_all({label, " guard_clear"});
         host_rt_telem_clear({label, " telemetry_clear"});
 
+        // Driver cold-boot initialization owns a fresh queue counter epoch.
+        // Reset hardware-owned SQ_HEAD / CQ_TAIL architecturally before the
+        // host-owned queue configuration is programmed.
+        host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
+        host_rt_lifecycle_make_zero_epoch_cfg(programmed_queue_cfg, cfg.queue_cfg);
+
         if (cfg.clear_queue_memory) begin
-            clear_queue_memory(cfg.queue_cfg);
+            clear_queue_memory(programmed_queue_cfg);
         end
 
         if (cfg.enable_guard) begin
@@ -2595,7 +2675,7 @@ class ai_accel_event_driven_host_runtime_stress_helper
             host_rt_mem_guard_disable({label, " guard_disable"});
         end
 
-        program_queue(cfg.queue_cfg);
+        program_queue(programmed_queue_cfg);
 
         if (cfg.enable_event_moderation) begin
             host_rt_event_mod_program(cfg.event_mod_cfg, {label, " moderation_program"});
@@ -2607,7 +2687,7 @@ class ai_accel_event_driven_host_runtime_stress_helper
             host_rt_telem_enable(cfg.telemetry_control, {label, " telemetry_enable"});
         end
 
-        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b1);
 
         `uvm_info("P30_ABI/INIT_PASS",
             $sformatf("%s: driver ABI cold-boot init PASS guard=%0d moderation=%0d telemetry=%0d SQ(base=0x%08h depth=%0d) CQ(base=0x%08h depth=%0d) event_mask=0x%08h",

@@ -481,7 +481,8 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
             completion_event_mask,
             1'b1,
             1'b1,
-            "P29E timer telemetry init"
+            "P29E timer telemetry init",
+            1'b1 // fresh zero-pointer epoch
         );
 
         rt.host_rt_event_mod_default_cfg(
@@ -739,7 +740,8 @@ class ai_accel_subsys_csr_interrupt_efficiency_telemetry_smoke_test
             completion_event_mask,
             1'b1,
             1'b1,
-            "P29E coalescing telemetry init"
+            "P29E coalescing telemetry init",
+            1'b1 // fresh zero-pointer epoch
         );
 
         rt.host_rt_event_mod_default_cfg(

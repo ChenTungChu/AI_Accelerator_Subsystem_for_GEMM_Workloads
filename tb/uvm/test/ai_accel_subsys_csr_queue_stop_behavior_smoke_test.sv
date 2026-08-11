@@ -163,6 +163,42 @@ class ai_accel_subsys_csr_queue_stop_behavior_smoke_test
     end
     endtask
 
+    task automatic p20f_reset_queue_pointers(input string case_name);
+        logic [31:0] cmd;
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
+    begin
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::QUEUE_CMD_RESET_POINTERS] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_COMMAND, cmd);
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL, sq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+
+        if ((sq_head != 32'h0000_0000) ||
+            (sq_tail != 32'h0000_0000) ||
+            (cq_head != 32'h0000_0000) ||
+            (cq_tail != 32'h0000_0000)) begin
+            `uvm_fatal("P20F_QUEUE/RESET_POINTERS",
+                $sformatf("%s RESET_QUEUE_POINTERS failed: SQ_HEAD=0x%08h SQ_TAIL=0x%08h CQ_HEAD=0x%08h CQ_TAIL=0x%08h",
+                    case_name,
+                    sq_head,
+                    sq_tail,
+                    cq_head,
+                    cq_tail))
+        end
+
+        `uvm_info("P20F_QUEUE/RESET_POINTERS",
+            $sformatf("%s established legal zero queue counters through RESET_QUEUE_POINTERS", case_name),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic p20f_csr_program_completion_wb(input int unsigned cq_base);
     begin
         csr.write32_expect_okay(
@@ -182,16 +218,16 @@ class ai_accel_subsys_csr_queue_stop_behavior_smoke_test
     begin
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_BASE,   32'(sq_base));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_DEPTH,  32'(P20F_QUEUE_DEPTH));
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,   32'h0000_0000);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,   32'h0000_0002);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_STRIDE, 32'(P20F_ENTRY_STRIDE));
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_BASE,   32'(cq_base));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_DEPTH,  32'(P20F_QUEUE_DEPTH));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,   32'h0000_0000);
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,   32'h0000_0000);
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_STRIDE, 32'(P20F_ENTRY_STRIDE));
 
+        // SQ_HEAD and CQ_TAIL are hardware-owned and remain at the zero value
+        // established by p20f_reset_queue_pointers().
         // bit0 QUEUE_ENABLE, bit1 RUN_UNTIL_EMPTY, bit2 STOP_ON_ERROR
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CONTROL, 32'h0000_0007);
     end
@@ -497,6 +533,7 @@ class ai_accel_subsys_csr_queue_stop_behavior_smoke_test
         csr_completion_wb_clear_sticky_status();
         csr_queue_clear_sticky_status();
 
+        p20f_reset_queue_pointers("STOP_AFTER_THIS");
         p20f_csr_program_completion_wb(P20F_SAT_CQ_BASE);
         p20f_csr_program_two_entry_queue(P20F_SAT_SQ_BASE, P20F_SAT_CQ_BASE);
 
@@ -547,6 +584,7 @@ class ai_accel_subsys_csr_queue_stop_behavior_smoke_test
         csr_completion_wb_clear_sticky_status();
         csr_queue_clear_sticky_status();
 
+        p20f_reset_queue_pointers("STOP_QUEUE");
         p20f_csr_program_completion_wb(P20F_STOP_CQ_BASE);
         p20f_csr_program_two_entry_queue(P20F_STOP_SQ_BASE, P20F_STOP_CQ_BASE);
 

@@ -322,15 +322,12 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
 
 
     // P30F recovery contract note:
-    //   The validated P26 helper resets queue pointers through
-    //   RESET_QUEUE_POINTERS.  P30F is driver-ABI recovery validation, not
-    //   pointer-reset policy validation.  For timeout / guard discard paths,
-    //   use an idle-time discard cleanup that clears sticky state, recycles
-    //   SQ/CQ memory, reprograms the queue window, and re-arms events without
-    //   waiting on RESET_QUEUE_POINTERS.  This mirrors the P30B software
-    //   contract: error recovery may reinitialize the idle queue context before
-    //   submitting a known-good command.
-    task automatic p30f_cleanup_error_discard_no_ptr_reset(
+    //   Timeout / guard discard recovery starts a fresh queue session.
+    //   SQ_HEAD and CQ_TAIL are hardware-owned under G7-A1, so software must
+    //   establish the new counter epoch through idle-only RESET_QUEUE_POINTERS
+    //   before reprogramming host-owned queue configuration and submitting the
+    //   known-good recovery command.
+    task automatic p30f_cleanup_error_discard(
         input  ai_accel_event_driven_host_runtime_stress_helper rt,
         input  ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t cfg,
         input  logic [31:0] event_enable_mask,
@@ -338,9 +335,11 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
         input  bit consume_visible_cq = 1'b1,
         input  bit recycle_memory = 1'b1,
         input  bit clear_lower_sticky = 1'b1,
-        input  string label = "p30f_cleanup_error_discard_no_ptr_reset"
+        input  string label = "p30f_cleanup_error_discard"
     );
+        ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t fresh_cfg;
     begin
+        fresh_cfg = cfg;
         rt.host_rt_lifecycle_wait_idle({label, " wait_idle"}, 200000, 1'b1);
         rt.host_rt_lifecycle_capture_error_snapshot(error_snap, {label, " error_snapshot"}, 1'b1);
 
@@ -359,21 +358,23 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
             rt.host_rt_lifecycle_recycle_cq_slots(cfg, 0, cfg.cq_depth, {label, " recycle_cq"});
         end
 
-        rt.program_queue(cfg);
+        rt.host_rt_lifecycle_reset_pointers_idle({label, " reset_ptr"});
+        rt.host_rt_lifecycle_make_zero_epoch_cfg(fresh_cfg, cfg);
+        rt.program_queue(fresh_cfg);
         rt.host_rt_lifecycle_rearm_events(event_enable_mask, 1'b1, 32'h0000_0000, 1'b1, {label, " event_rearm"});
-        rt.host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b0);
+        rt.host_rt_lifecycle_check_clean_idle({label, " clean_check"}, 1'b1, 1'b1, 1'b1);
 
-        `uvm_info("P30F_ABI/ERROR_DISCARD_NO_RESET_PASS",
-            $sformatf("%s: error discard cleanup PASS without RESET_QUEUE_POINTERS SQ(base=0x%08h depth=%0d h/t=%0d/%0d) CQ(base=0x%08h depth=%0d h/t=%0d/%0d)",
+        `uvm_info("P30F_ABI/ERROR_DISCARD_PASS",
+            $sformatf("%s: error discard cleanup PASS with RESET_QUEUE_POINTERS SQ(base=0x%08h depth=%0d h/t=%0d/%0d) CQ(base=0x%08h depth=%0d h/t=%0d/%0d)",
                 label,
                 cfg.sq_base,
                 cfg.sq_depth,
-                cfg.sq_head,
-                cfg.sq_tail,
-                cfg.cq_base,
-                cfg.cq_depth,
-                cfg.cq_head,
-                cfg.cq_tail),
+                fresh_cfg.sq_head,
+                fresh_cfg.sq_tail,
+                fresh_cfg.cq_base,
+                fresh_cfg.cq_depth,
+                fresh_cfg.cq_head,
+                fresh_cfg.cq_tail),
             UVM_MEDIUM)
     end
     endtask
@@ -651,7 +652,8 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
             recovery_event_mask,
             1'b1,
             1'b1,
-            "P30F timeout phase init"
+            "P30F timeout phase init",
+            1'b1 // fresh zero-pointer epoch
         );
         rt.host_rt_mem_guard_program_regions(guard_good, "P30F timeout phase guard program");
         rt.host_rt_lifecycle_rearm_events(recovery_event_mask, 1'b1, 32'h0000_0000, 1'b1, "P30F timeout phase event rearm");
@@ -668,7 +670,7 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
         );
         p30f_check_timeout_snapshot(timeout_snap, "P30F timeout error event");
 
-        p30f_cleanup_error_discard_no_ptr_reset(
+        p30f_cleanup_error_discard(
             rt,
             cfg_normal,
             recovery_event_mask,
@@ -729,7 +731,8 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
             recovery_event_mask,
             1'b1,
             1'b1,
-            "P30F guard phase init"
+            "P30F guard phase init",
+            1'b1 // fresh zero-pointer epoch
         );
         rt.host_rt_mem_guard_program_regions(guard_bad, "P30F guard phase intentionally narrow descriptor region");
         rt.host_rt_lifecycle_rearm_events(recovery_event_mask, 1'b1, 32'h0000_0000, 1'b1, "P30F guard phase event rearm");
@@ -754,7 +757,7 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
             "P30F memory-guard descriptor reject"
         );
 
-        p30f_cleanup_error_discard_no_ptr_reset(
+        p30f_cleanup_error_discard(
             rt,
             cfg_normal,
             recovery_event_mask,

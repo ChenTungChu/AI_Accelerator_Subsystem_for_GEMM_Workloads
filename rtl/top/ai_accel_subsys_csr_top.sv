@@ -423,6 +423,7 @@ module ai_accel_subsys_csr_top #(
     logic [15:0]               csr_desc_fetch_stride_bytes;
 
     logic                      desc_fetch_busy_i;
+    logic                      desc_fetch_launch_ownership_i;
     logic                      desc_fetch_done_i;
     logic                      desc_fetch_error_i;
     logic                      desc_fetch_reject_i;
@@ -433,6 +434,7 @@ module ai_accel_subsys_csr_top #(
     // by the CSR/top-level integration layer before a START_FETCH pulse
     // reaches the descriptor fetch engine.
     logic                      desc_fetch_start_blocked_i;
+    logic                      csr_desc_fetch_start_blocked_i;
     logic                      desc_fetch_start_to_engine;
     logic                      desc_fetch_external_reject_q;
     logic [31:0]               desc_fetch_external_reject_status_q;
@@ -549,6 +551,7 @@ module ai_accel_subsys_csr_top #(
     logic [31:0]               csr_queue_cq_stride;
 
     logic                      queue_busy_i;
+    logic                      queue_csr_ownership_active_i;
     logic                      queue_drained_pulse_i;
     logic                      queue_cmd_fetched_pulse_i;
     logic                      queue_cmd_validated_pulse_i;
@@ -977,19 +980,26 @@ module ai_accel_subsys_csr_top #(
     // P17G descriptor-fetch top-level start gating
     //
     // START_FETCH is allowed to reach the fetch engine only when no
-    // descriptor fetch, P16 recipe, P15 job, or P14 micro-operation is
-    // active.  Rejected START_FETCH writes are reported through the
-    // descriptor-fetch reject CSR window without modifying the in-flight
-    // operation.
+    // descriptor-fetch launch ownership, P16 recipe, P15 job, or P14
+    // micro-operation is active.  Launch ownership includes the one-cycle
+    // descriptor-to-recipe handoff so a new fetch cannot enter between
+    // raw fetch_busy deassertion and recipe_busy assertion.
     // ============================================================
-    assign desc_fetch_start_blocked_i = desc_fetch_busy_i ||
-                                        recipe_busy_i     ||
+    assign desc_fetch_start_blocked_i = desc_fetch_launch_ownership_i ||
+                                        recipe_busy_i                 ||
                                         job_busy_i        ||
                                         acc_busy_i        ||
                                         dma_load_busy_i   ||
                                         axis_load_busy_i  ||
                                         ds_load_busy_i    ||
                                         dma_store_busy_i;
+
+    // G7-A1: queue ownership blocks only the host/manual P17 ingress.
+    // The raw lower-stack predicate remains queue-independent so the
+    // queue controller can launch its own descriptor fetch without
+    // creating queue_busy -> blocked -> not-idle self-deadlock.
+    assign csr_desc_fetch_start_blocked_i = desc_fetch_start_blocked_i ||
+                                            queue_csr_ownership_active_i;
 
     function automatic logic [7:0] p24_timeout_detail_code;
         begin
@@ -1104,7 +1114,7 @@ module ai_accel_subsys_csr_top #(
                                           !queue_cmd_reject_i;
 
     assign desc_fetch_start_to_engine = (csr_desc_fetch_start_pulse &&
-                                         !desc_fetch_start_blocked_i) ||
+                                         !csr_desc_fetch_start_blocked_i) ||
                                         queue_desc_fetch_start_pulse;
 
     assign desc_fetch_base_addr_to_engine = queue_desc_fetch_start_pulse ?
@@ -1160,7 +1170,7 @@ module ai_accel_subsys_csr_top #(
                 queue_timeout_sq_index_q        <= queue_cmd_sq_index_i;
                 queue_timeout_cq_index_q        <= queue_cmd_cq_index_i;
                 queue_timeout_user_tag_q        <= queue_cmd_user_tag_i;
-            end else if (csr_desc_fetch_start_pulse && !desc_fetch_start_blocked_i) begin
+            end else if (csr_desc_fetch_start_pulse && !csr_desc_fetch_start_blocked_i) begin
                 queue_completion_context_valid_q <= 1'b0;
                 queue_completion_flags_q         <= 32'h0000_0000;
                 queue_cmd_stop_after_this_q      <= 1'b0;
@@ -1264,6 +1274,16 @@ module ai_accel_subsys_csr_top #(
                                         payload_guard_queue_error_detail_q :
                                         queue_error_detail_i);
 
+    // Keep CSR-visible queue ownership continuous from accepted SQ
+    // command handoff through the queue-owned descriptor, recipe, and
+    // completion pipeline, including the one-cycle raw Q_IDLE boundary
+    // used for RUN_UNTIL_EMPTY restart.  Manual P14-P18 starts and queue
+    // configuration writes remain blocked for the complete queue-owned
+    // command lifetime.
+    assign queue_csr_ownership_active_i = queue_busy_i ||
+                                          queue_completion_context_valid_q ||
+                                          queue_auto_continue_pending_q;
+
     assign queue_auto_continue_start_pulse_i = queue_auto_continue_pending_q &&
                                                csr_queue_enable &&
                                                csr_queue_run_until_empty &&
@@ -1284,7 +1304,7 @@ module ai_accel_subsys_csr_top #(
                 desc_fetch_external_reject_status_q <= 32'h0000_0000;
             end
 
-            if (csr_desc_fetch_start_pulse && desc_fetch_start_blocked_i) begin
+            if (csr_desc_fetch_start_pulse && csr_desc_fetch_start_blocked_i) begin
                 desc_fetch_external_reject_q           <= 1'b1;
                 desc_fetch_external_reject_status_q[0] <= 1'b1;
             end
@@ -1429,6 +1449,7 @@ module ai_accel_subsys_csr_top #(
         .desc_fetch_stride_bytes        (csr_desc_fetch_stride_bytes),
 
         .desc_fetch_busy                (desc_fetch_busy_i),
+        .desc_fetch_launch_ownership    (desc_fetch_launch_ownership_i),
         .desc_fetch_done                (desc_fetch_done_i),
         .desc_fetch_error               (desc_fetch_error_i),
         .desc_fetch_reject              (desc_fetch_reject_to_csr),
@@ -1485,7 +1506,7 @@ module ai_accel_subsys_csr_top #(
         .queue_cq_head                  (csr_queue_cq_head),
         .queue_cq_tail                  (csr_queue_cq_tail),
         .queue_cq_stride                (csr_queue_cq_stride),
-        .queue_busy                     (queue_busy_i),
+        .queue_busy                     (queue_csr_ownership_active_i),
         .queue_drained_pulse            (queue_drained_pulse_i),
         .queue_cmd_fetched_pulse        (queue_cmd_fetched_pulse_i),
         .queue_cmd_validated_pulse      (queue_cmd_validated_pulse_i),
@@ -1728,6 +1749,7 @@ module ai_accel_subsys_csr_top #(
     ai_accel_desc_fetch_engine #(
         .ADDR_WIDTH         (ADDR_WIDTH),
         .DATA_WIDTH         (DATA_WIDTH),
+        .GEMM_DIM_WIDTH     (GEMM_DIM_WIDTH),
         .AXI_ID_WIDTH       (ID_WIDTH),
         .RECIPE_QUEUE_DEPTH (P16_RECIPE_QUEUE_DEPTH)
     ) u_ai_accel_desc_fetch_engine (
@@ -2282,6 +2304,13 @@ module ai_accel_subsys_csr_top #(
 
     assign desc_fetch_recipe_start_pulse = desc_fetch_recipe_start_raw_i &&
                                            !payload_guard_error_w;
+
+    // CODE-COV-C1.2-C2-A1 ownership handoff:
+    //   active fetch_busy -> descriptor-to-recipe start pulse -> recipe_busy
+    // The pulse closes the single-cycle gap in which raw fetch_busy is low
+    // before the recipe sequencer has sampled its automatic start.
+    assign desc_fetch_launch_ownership_i = desc_fetch_busy_i ||
+                                           desc_fetch_recipe_start_pulse;
 
     assign eff_recipe_start_pulse = csr_recipe_start_pulse |
                                     desc_fetch_recipe_start_pulse;

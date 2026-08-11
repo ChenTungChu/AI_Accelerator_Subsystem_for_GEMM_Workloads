@@ -6,12 +6,15 @@
 // P20E SQ/CQ wrap-around representative smoke
 //
 // Scope:
+//   - Resets all queue pointers through RESET_QUEUE_POINTERS while idle.
+//   - Runs three legal warm-up commands so hardware naturally advances
+//     SQ_HEAD and CQ_TAIL from 0 to 3.
+//   - Advances host-owned CQ_HEAD to 3 to consume warm-up completions.
 //   - Programs two valid 64-byte SQ command entries at wrapped
-//     physical positions SQ[3] and SQ[0].
-//   - Programs monotonic queue pointers so SQ_HEAD=3 and SQ_TAIL=5.
-//   - Programs completion pointers so CQ_HEAD=3 and CQ_TAIL=3.
+//     physical positions SQ[3] and SQ[0], then writes host-owned
+//     SQ_TAIL=5 without directly writing hardware-owned SQ_HEAD/CQ_TAIL.
 //   - Enables RUN_UNTIL_EMPTY in CSR_QUEUE_CONTROL.
-//   - Issues one host START_QUEUE kick.
+//   - Issues one host START_QUEUE kick for the wrapped two-command run.
 //   - Verifies the wrapper drains both commands in order while using
 //     physical index wrap:
 //       SQ counter 3 -> SQ[3] -> execute -> CQ[3]
@@ -39,6 +42,7 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
     localparam int unsigned P20E_DESC_BASE1   = 32'h0000_0400;
     localparam int unsigned P20E_DESC_STRIDE  = 32'h0000_0080;
 
+    localparam int unsigned P20E_WARMUP_TAIL  = 3;
     localparam int unsigned P20E_START_HEAD   = 3;
     localparam int unsigned P20E_START_TAIL   = 5;
     localparam int unsigned P20E_FINAL_HEAD   = 5;
@@ -54,6 +58,9 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
     localparam logic [31:0] P20E_CMD_CONTROL  = 32'h0000_0103;
     localparam logic [31:0] P20E_CMD0_TAG     = 32'hD20E_0000;
     localparam logic [31:0] P20E_CMD1_TAG     = 32'hD20E_0001;
+    localparam logic [31:0] P20E_WARM0_TAG    = 32'hD20E_F000;
+    localparam logic [31:0] P20E_WARM1_TAG    = 32'hD20E_F001;
+    localparam logic [31:0] P20E_WARM2_TAG    = 32'hD20E_F002;
     localparam logic [31:0] P20E_COMP_FLAGS   = 32'h0000_0001;
 
     localparam logic [31:0] P20E_DESC0_TAG0   = 32'hD20E_1000;
@@ -73,6 +80,41 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
                  uvm_component parent = null);
         super.new(name, parent);
     endfunction
+
+    task automatic p20e_reset_queue_pointers();
+        logic [31:0] cmd;
+        logic [31:0] sq_head;
+        logic [31:0] sq_tail;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
+    begin
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::QUEUE_CMD_RESET_POINTERS] = 1'b1;
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_COMMAND, cmd);
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL, sq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+
+        if ((sq_head != 32'h0000_0000) ||
+            (sq_tail != 32'h0000_0000) ||
+            (cq_head != 32'h0000_0000) ||
+            (cq_tail != 32'h0000_0000)) begin
+            `uvm_fatal("P20E_QUEUE/RESET_POINTERS",
+                $sformatf("RESET_QUEUE_POINTERS failed: SQ_HEAD=0x%08h SQ_TAIL=0x%08h CQ_HEAD=0x%08h CQ_TAIL=0x%08h",
+                    sq_head,
+                    sq_tail,
+                    cq_head,
+                    cq_tail))
+        end
+
+        `uvm_info("P20E_QUEUE/RESET_POINTERS",
+            "RESET_QUEUE_POINTERS established the legal zero-counter starting point",
+            UVM_MEDIUM)
+    end
+    endtask
 
     task automatic p20e_program_one_sq_command_entry(input int unsigned sq_slot,
                                                      input logic [31:0] cmd_tag,
@@ -103,6 +145,17 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
                 P20E_DESC_STRIDE,
                 P20E_COMP_FLAGS),
             UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p20e_program_warmup_sq_command_entries();
+    begin
+        // Warm-up counters 0, 1, and 2 map directly to SQ[0], SQ[1], SQ[2].
+        // Reusing the first legal descriptor table is sufficient because the
+        // purpose of this phase is to advance hardware-owned counters legally.
+        p20e_program_one_sq_command_entry(0, P20E_WARM0_TAG, P20E_DESC_BASE0);
+        p20e_program_one_sq_command_entry(1, P20E_WARM1_TAG, P20E_DESC_BASE0);
+        p20e_program_one_sq_command_entry(2, P20E_WARM2_TAG, P20E_DESC_BASE0);
     end
     endtask
 
@@ -154,6 +207,14 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
     end
     endtask
 
+    task automatic p20e_clear_cq_ring_memory();
+    begin
+        for (int unsigned i = 0; i < (P20E_QUEUE_DEPTH * P20E_ENTRY_STRIDE); i++) begin
+            p17d_ctrl_vif.dma_dst_mem[P20E_CQ_BASE + i] = 8'h00;
+        end
+    end
+    endtask
+
     task automatic p20e_csr_program_completion_wb();
     begin
         csr.write32_expect_okay(
@@ -168,25 +229,47 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
     end
     endtask
 
-    task automatic p20e_csr_program_wrapped_queue();
+    task automatic p20e_csr_program_queue_base();
     begin
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_BASE,   32'(P20E_SQ_BASE));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_DEPTH,  32'(P20E_QUEUE_DEPTH));
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD,   32'(P20E_START_HEAD));
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,   32'(P20E_START_TAIL));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_STRIDE, 32'(P20E_ENTRY_STRIDE));
 
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_BASE,   32'(P20E_CQ_BASE));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_DEPTH,  32'(P20E_QUEUE_DEPTH));
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD,   32'(P20E_START_HEAD));
-        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL,   32'(P20E_START_HEAD));
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_STRIDE, 32'(P20E_ENTRY_STRIDE));
 
         // bit0 QUEUE_ENABLE, bit1 RUN_UNTIL_EMPTY, bit2 STOP_ON_ERROR
         csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CONTROL, 32'h0000_0007);
+    end
+    endtask
+
+    task automatic p20e_csr_program_warmup_queue();
+    begin
+        p20e_csr_program_queue_base();
+
+        // Only host-owned pointers are written.  SQ_HEAD and CQ_TAIL remain
+        // hardware-owned and start from the legal reset value of zero.
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL, 32'(P20E_WARMUP_TAIL));
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, 32'h0000_0000);
+
+        `uvm_info("P20E_QUEUE/WARMUP_CFG",
+            $sformatf("Programmed legal warm-up queue: SQ_HEAD=0 SQ_TAIL=%0d CQ_HEAD=0 CQ_TAIL=0 depth=%0d",
+                P20E_WARMUP_TAIL,
+                P20E_QUEUE_DEPTH),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p20e_csr_program_wrapped_queue();
+    begin
+        // Warm-up has naturally advanced hardware-owned SQ_HEAD/CQ_TAIL to 3.
+        // Consume those completions through host-owned CQ_HEAD and append two
+        // wrapped commands through host-owned SQ_TAIL.
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL, 32'(P20E_START_TAIL));
 
         `uvm_info("P20E_QUEUE/CFG",
-            $sformatf("Programmed wrapped queue: SQ_HEAD=%0d SQ_TAIL=%0d CQ_HEAD=%0d CQ_TAIL=%0d depth=%0d; expected SQ slots=%0d,%0d CQ slots=%0d,%0d",
+            $sformatf("Programmed wrapped queue using legal ownership: SQ_HEAD=%0d SQ_TAIL=%0d CQ_HEAD=%0d CQ_TAIL=%0d depth=%0d; expected SQ slots=%0d,%0d CQ slots=%0d,%0d",
                 P20E_START_HEAD,
                 P20E_START_TAIL,
                 P20E_START_HEAD,
@@ -200,7 +283,111 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
     end
     endtask
 
-    task automatic p20e_start_queue_once();
+    task automatic p20e_poll_warmup_drained(input int unsigned timeout_cycles);
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] sq_head;
+        logic [31:0] cq_tail;
+        logic [31:0] cq_occ;
+        logic [31:0] last_tag;
+        int unsigned cnt;
+    begin
+        cnt = 0;
+
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_OCCUPANCY, cq_occ);
+
+            if ((error_status != 32'h0000_0000) ||
+                (reject_status != 32'h0000_0000)) begin
+                `uvm_fatal("P20E_QUEUE/WARMUP_ERROR",
+                    $sformatf("Queue failed during legal counter warm-up: status=0x%08h done=0x%08h error=0x%08h reject=0x%08h sq_head=0x%08h cq_tail=0x%08h cq_occ=0x%08h",
+                        status,
+                        done_status,
+                        error_status,
+                        reject_status,
+                        sq_head,
+                        cq_tail,
+                        cq_occ))
+            end
+
+            if ((sq_head == 32'(P20E_START_HEAD)) &&
+                (cq_tail == 32'(P20E_START_HEAD)) &&
+                (cq_occ  == 32'(P20E_START_HEAD)) &&
+                done_status[1]) begin
+                csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_LAST_CMD_TAG, last_tag);
+                if (last_tag !== P20E_WARM2_TAG) begin
+                    `uvm_fatal("P20E_QUEUE/WARMUP_LAST_TAG",
+                        $sformatf("Expected warm-up last tag=0x%08h got=0x%08h",
+                            P20E_WARM2_TAG,
+                            last_tag))
+                end
+
+                `uvm_info("P20E_QUEUE/WARMUP_PASS",
+                    $sformatf("Hardware-owned counters legally advanced to three after %0d poll(s): SQ_HEAD=0x%08h CQ_TAIL=0x%08h CQ_OCC=0x%08h",
+                        cnt,
+                        sq_head,
+                        cq_tail,
+                        cq_occ),
+                    UVM_MEDIUM)
+                return;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("P20E_QUEUE/WARMUP_TIMEOUT",
+                    $sformatf("Timed out waiting for legal counter warm-up: status=0x%08h done=0x%08h error=0x%08h reject=0x%08h sq_head=0x%08h cq_tail=0x%08h cq_occ=0x%08h",
+                        status,
+                        done_status,
+                        error_status,
+                        reject_status,
+                        sq_head,
+                        cq_tail,
+                        cq_occ))
+            end
+        end
+    end
+    endtask
+
+    task automatic p20e_check_warmup_consumed();
+        logic [31:0] sq_head;
+        logic [31:0] cq_head;
+        logic [31:0] cq_tail;
+        logic [31:0] cq_occ;
+    begin
+        repeat (3) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, cq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_OCCUPANCY, cq_occ);
+
+        if ((sq_head != 32'(P20E_START_HEAD)) ||
+            (cq_head != 32'(P20E_START_HEAD)) ||
+            (cq_tail != 32'(P20E_START_HEAD)) ||
+            (cq_occ  != 32'h0000_0000)) begin
+            `uvm_fatal("P20E_QUEUE/WARMUP_CONSUME",
+                $sformatf("Warm-up completion consume failed: SQ_HEAD=0x%08h CQ_HEAD=0x%08h CQ_TAIL=0x%08h CQ_OCC=0x%08h",
+                    sq_head,
+                    cq_head,
+                    cq_tail,
+                    cq_occ))
+        end
+
+        `uvm_info("P20E_QUEUE/WARMUP_CONSUME_PASS",
+            "Host-owned CQ_HEAD consumed all warm-up completions while hardware counters remained at three",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic p20e_start_queue_once(input string phase_name);
         logic [31:0] cmd;
     begin
         cmd = 32'h0000_0000;
@@ -211,7 +398,9 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
             cmd
         );
 
-        `uvm_info("P20E_QUEUE/START", "Issued one CSR_QUEUE_COMMAND.START_QUEUE kick for wrap-around run", UVM_MEDIUM)
+        `uvm_info("P20E_QUEUE/START",
+            $sformatf("%s: issued CSR_QUEUE_COMMAND.START_QUEUE", phase_name),
+            UVM_MEDIUM)
     end
     endtask
 
@@ -471,6 +660,28 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
             c_bytes
         );
 
+        p20e_program_warmup_sq_command_entries();
+
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+
+        p20e_reset_queue_pointers();
+        p20e_csr_program_completion_wb();
+        p20e_csr_program_warmup_queue();
+
+        csr_check_recipe_idle_ready("before P20E legal counter warm-up START");
+        p20e_start_queue_once("legal counter warm-up");
+        p20e_poll_warmup_drained(done_timeout_cycles * 6);
+
+        // Consume the three warm-up completions, clear their backing records,
+        // and then program the true slot-3-to-slot-0 wrap-around payload.
+        csr.write32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_HEAD, 32'(P20E_START_HEAD));
+        p20e_check_warmup_consumed();
+        p20e_clear_cq_ring_memory();
         p20e_program_sq_command_entries();
 
         csr_clear_sticky_status();
@@ -484,7 +695,7 @@ class ai_accel_subsys_csr_queue_wraparound_smoke_test
         p20e_csr_program_wrapped_queue();
 
         csr_check_recipe_idle_ready("before P20E wrapped queue START");
-        p20e_start_queue_once();
+        p20e_start_queue_once("wrapped two-command run");
 
         p20e_poll_wrapped_queue_drained(done_timeout_cycles * 4);
 

@@ -156,6 +156,7 @@ module ai_accel_csr_regs #(
     // P17 descriptor-fetch status inputs
     // ------------------------------------------------------------
     input  logic                  desc_fetch_busy,
+    input  logic                  desc_fetch_launch_ownership,
     input  logic                  desc_fetch_done,
     input  logic                  desc_fetch_error,
     input  logic                  desc_fetch_reject,
@@ -904,6 +905,7 @@ module ai_accel_csr_regs #(
     localparam logic [31:0] RECIPE_CONTROL_MASK = 32'h0000_0FFF;
     localparam logic [31:0] RECIPE_SLOT_CONTROL_MASK = 32'h0000_007F;
     localparam logic [3:0]  P16_RECIPE_QUEUE_DEPTH_U4 = P16_RECIPE_QUEUE_DEPTH;
+    localparam logic [4:0]  P16_RECIPE_QUEUE_DEPTH_U5 = P16_RECIPE_QUEUE_DEPTH;
 
     // ------------------------------------------------------------
     // P17 descriptor-fetch command/status bit positions
@@ -935,16 +937,25 @@ module ai_accel_csr_regs #(
     // ------------------------------------------------------------
     // P19 queue command / control bit positions
     // ------------------------------------------------------------
-    localparam int QUEUE_CMD_START_BIT       = 0;
-    localparam int QUEUE_CMD_STOP_BIT        = 1;
-    localparam int QUEUE_CMD_CLEAR_DONE_BIT  = 8;
-    localparam int QUEUE_CMD_CLEAR_ERROR_BIT = 9;
+    localparam int QUEUE_CMD_START_BIT          = 0;
+    localparam int QUEUE_CMD_STOP_BIT           = 1;
+    localparam int QUEUE_CMD_CLEAR_DONE_BIT     = 8;
+    localparam int QUEUE_CMD_CLEAR_ERROR_BIT    = 9;
+    localparam int QUEUE_CMD_CLEAR_COUNTERS_BIT = 10;
+    localparam int QUEUE_CMD_RESET_POINTERS_BIT = 11;
 
     localparam int QUEUE_CONTROL_ENABLE_BIT          = 0;
     localparam int QUEUE_CONTROL_RUN_UNTIL_EMPTY_BIT = 1;
     localparam int QUEUE_CONTROL_STOP_ON_ERROR_BIT   = 2;
 
     localparam logic [31:0] QUEUE_CONTROL_MASK = 32'h0000_001F;
+
+    localparam int QUEUE_ERR_CONFIG_WRITE_BUSY_BIT = 7;
+
+    localparam int QUEUE_REJ_QUEUE_BUSY_BIT         = 0;
+    localparam int QUEUE_REJ_STICKY_ERROR_BIT       = 4;
+    localparam int QUEUE_REJ_RESET_POINTERS_BUSY_BIT= 6;
+    localparam int QUEUE_REJ_CONFIG_WRITE_BUSY_BIT  = 7;
 
     // ------------------------------------------------------------
     // AXI-Lite transaction state
@@ -1111,6 +1122,9 @@ module ai_accel_csr_regs #(
     logic [31:0] queue_cq_tail_q;
     logic [31:0] queue_cq_stride_q;
     logic [31:0] queue_extra_error_status_q;
+    logic [31:0] queue_extra_reject_status_q;
+    logic        queue_local_error_pulse_q;
+    logic        queue_restart_pending_q;
 
     logic [31:0] mem_guard_control_q;
     logic [31:0] mem_guard_error_status_q;
@@ -1287,6 +1301,7 @@ module ai_accel_csr_regs #(
     logic [31:0] desc_fetch_snapshot_status_read_data;
     logic [31:0] completion_wb_status_read_data;
     logic [31:0] queue_status_read_data;
+    logic        queue_sticky_status_present;
     logic        micro_op_busy;
     logic        job_preload_required;
     logic        job_store_required;
@@ -1294,6 +1309,7 @@ module ai_accel_csr_regs #(
 
     logic [3:0]  recipe_count_comb;
     logic [3:0]  recipe_start_slot_comb;
+    logic [4:0]  recipe_range_end_comb;
     logic        recipe_range_valid;
     logic        recipe_selected_slots_valid;
     logic        recipe_selected_desc_valid;
@@ -1439,9 +1455,11 @@ module ai_accel_csr_regs #(
             return 1'b0;
         end
 
-        if ((recipe_slot_dim_m_q[slot_idx] == 32'h0000_0000) ||
-            (recipe_slot_dim_n_q[slot_idx] == 32'h0000_0000) ||
-            (recipe_slot_dim_k_q[slot_idx] == 32'h0000_0000)) begin
+        // Validate the effective dimensions delivered to the recipe
+        // sequencer, not the unused upper bits of the 32-bit CSR storage.
+        if ((recipe_slot_dim_m_q[slot_idx][GEMM_DIM_WIDTH-1:0] == '0) ||
+            (recipe_slot_dim_n_q[slot_idx][GEMM_DIM_WIDTH-1:0] == '0) ||
+            (recipe_slot_dim_k_q[slot_idx][GEMM_DIM_WIDTH-1:0] == '0)) begin
             return 1'b0;
         end
 
@@ -2231,7 +2249,7 @@ CSR_QUEUE_VERSION_ADDR,
             end
 
             CSR_QUEUE_REJECT_STATUS_ADDR: begin
-                return queue_reject_status;
+                return queue_reject_status | queue_extra_reject_status_q;
             end
 
             CSR_QUEUE_STATE_ADDR: begin
@@ -2732,22 +2750,31 @@ CSR_QUEUE_VERSION_ADDR,
         job_status_read_data[0]  = job_busy;
         job_status_read_data[1]  = |job_done_status_q;
         job_status_read_data[2]  = (|job_error_status_q) | (|job_reject_status_q);
-        job_status_read_data[3]  = !job_busy && !micro_op_busy && !recipe_busy;
+        // Queue activity owns the lower descriptor/recipe/job execution stack.
+        // Keep JOB_ACCEPT_READY aligned with the START_JOB acceptance guard.
+        job_status_read_data[3]  = !job_busy && !micro_op_busy && !recipe_busy &&
+                                   !desc_fetch_launch_ownership && !queue_busy;
         job_status_read_data[8]  = micro_op_busy;
         job_status_read_data[16] = 1'b1;
 
         recipe_count_comb      = recipe_control_q[3:0];
         recipe_start_slot_comb = recipe_control_q[7:4];
-        recipe_range_valid     = (recipe_count_comb != 4'd0) &&
-                                 (recipe_start_slot_comb < P16_RECIPE_QUEUE_DEPTH_U4) &&
-                                 ((recipe_start_slot_comb + recipe_count_comb) <= P16_RECIPE_QUEUE_DEPTH_U4);
+
+        // Widen before addition so start_slot + count cannot wrap in the
+        // 4-bit CSR fields and accidentally pass range prevalidation.
+        recipe_range_end_comb = {1'b0, recipe_start_slot_comb} +
+                                {1'b0, recipe_count_comb};
+        recipe_range_valid    = (recipe_count_comb != 4'd0) &&
+                                (recipe_start_slot_comb < P16_RECIPE_QUEUE_DEPTH_U4) &&
+                                (recipe_range_end_comb <= P16_RECIPE_QUEUE_DEPTH_U5);
 
         recipe_selected_slots_valid = 1'b1;
         recipe_selected_desc_valid  = 1'b1;
 
         for (int unsigned slot_i = 0; slot_i < P16_RECIPE_QUEUE_DEPTH; slot_i++) begin
-            if ((slot_i >= recipe_start_slot_comb) &&
-                (slot_i < (recipe_start_slot_comb + recipe_count_comb))) begin
+            if (recipe_range_valid &&
+                (slot_i >= recipe_start_slot_comb) &&
+                (slot_i < recipe_range_end_comb)) begin
                 if (!recipe_slot_control_q[slot_i][0]) begin
                     recipe_selected_slots_valid = 1'b0;
                 end
@@ -2762,7 +2789,8 @@ CSR_QUEUE_VERSION_ADDR,
         recipe_status_read_data[0]  = recipe_busy;
         recipe_status_read_data[1]  = |recipe_done_status_q;
         recipe_status_read_data[2]  = (|recipe_error_status_q) | (|recipe_reject_status_q);
-        recipe_status_read_data[3]  = !recipe_busy && !job_busy && !micro_op_busy;
+        recipe_status_read_data[3]  = !recipe_busy && !job_busy && !micro_op_busy &&
+                                      !desc_fetch_launch_ownership;
         recipe_status_read_data[8]  = job_busy;
         recipe_status_read_data[9]  = micro_op_busy;
         recipe_status_read_data[16] = 1'b1;
@@ -2771,7 +2799,8 @@ CSR_QUEUE_VERSION_ADDR,
         desc_fetch_status_read_data[0]  = desc_fetch_busy;
         desc_fetch_status_read_data[1]  = desc_fetch_done;
         desc_fetch_status_read_data[2]  = desc_fetch_error | desc_fetch_reject;
-        desc_fetch_status_read_data[3]  = !desc_fetch_busy && !recipe_busy && !job_busy && !micro_op_busy;
+        desc_fetch_status_read_data[3]  = !desc_fetch_launch_ownership &&
+                                          !recipe_busy && !job_busy && !micro_op_busy;
         desc_fetch_status_read_data[4]  = desc_fetch_snapshot_valid;
         desc_fetch_status_read_data[8]  = recipe_busy;
         desc_fetch_status_read_data[9]  = job_busy;
@@ -2802,7 +2831,10 @@ CSR_QUEUE_VERSION_ADDR,
         queue_status_read_data = 32'h0000_0000;
         queue_status_read_data[0]  = queue_busy;
         queue_status_read_data[1]  = queue_done_status[1];
-        queue_status_read_data[2]  = (|queue_error_status) | (|queue_reject_status);
+        queue_status_read_data[2]  = (|queue_error_status) |
+                                           (|queue_extra_error_status_q) |
+                                           (|queue_reject_status) |
+                                           (|queue_extra_reject_status_q);
         queue_status_read_data[3]  = queue_enable && !queue_busy;
         queue_status_read_data[4]  = queue_cq_full_stall;
         queue_status_read_data[8]  = desc_fetch_busy;
@@ -2847,7 +2879,9 @@ CSR_QUEUE_VERSION_ADDR,
         event_raw_source_mask[P22_EVENT_QUEUE_COMPLETED]    = queue_completion_commit_pulse;
         event_raw_source_mask[P22_EVENT_QUEUE_DRAINED]      = queue_drained_pulse;
         event_raw_source_mask[P22_EVENT_QUEUE_STOPPED]      = queue_done_status[3] & ~queue_done_stopped_d_q;
-        event_raw_source_mask[P22_EVENT_QUEUE_ERROR]        = queue_error_pulse | queue_completion_error_pulse;
+        event_raw_source_mask[P22_EVENT_QUEUE_ERROR]        = queue_error_pulse |
+                                                                          queue_completion_error_pulse |
+                                                                          queue_local_error_pulse_q;
         event_raw_source_mask[P22_EVENT_CQ_NOT_EMPTY]       = queue_completion_commit_pulse;
         event_raw_source_mask[P22_EVENT_CQ_FULL_STALL]      = queue_cq_full_stall & ~queue_cq_full_stall_d_q;
         event_raw_source_mask[P22_EVENT_CQ_SPACE_RECOVERED] = queue_busy & (queue_cq_space != 32'h0000_0000) &
@@ -3154,6 +3188,10 @@ CSR_QUEUE_VERSION_ADDR,
         queue_command_has_active_strobe = |write_strb;
         queue_command_masked            = write_data & strobe_to_mask(write_strb);
         queue_command_has_start         = queue_command_masked[QUEUE_CMD_START_BIT];
+        queue_sticky_status_present     = |(queue_error_status |
+                                            queue_extra_error_status_q |
+                                            queue_reject_status |
+                                            queue_extra_reject_status_q);
 
         mem_guard_command_has_active_strobe = |write_strb;
         mem_guard_command_masked            = write_data & strobe_to_mask(write_strb);
@@ -3311,7 +3349,10 @@ CSR_QUEUE_VERSION_ADDR,
             queue_cq_head_q      <= 32'h0000_0000;
             queue_cq_tail_q      <= 32'h0000_0000;
             queue_cq_stride_q    <= 32'h0000_0040;
-            queue_extra_error_status_q <= 32'h0000_0000;
+            queue_extra_error_status_q  <= 32'h0000_0000;
+            queue_extra_reject_status_q <= 32'h0000_0000;
+            queue_local_error_pulse_q   <= 1'b0;
+            queue_restart_pending_q     <= 1'b0;
 
             mem_guard_control_q                <= 32'h0000_0000;
             mem_guard_error_status_q           <= 32'h0000_0000;
@@ -3470,7 +3511,15 @@ CSR_QUEUE_VERSION_ADDR,
             queue_stop_pulse        <= 1'b0;
             queue_clear_done_pulse  <= 1'b0;
             queue_clear_error_pulse <= 1'b0;
+            queue_local_error_pulse_q <= 1'b0;
 
+            // A combined CLEAR_QUEUE_ERROR + START_QUEUE write is
+            // serialized into a one-cycle delayed start so the queue FSM
+            // first leaves Q_ERROR and then observes START_QUEUE in Q_IDLE.
+            if (queue_restart_pending_q) begin
+                queue_start_pulse     <= 1'b1;
+                queue_restart_pending_q <= 1'b0;
+            end
 
             queue_done_stopped_d_q     <= queue_done_status[3];
             queue_cq_full_stall_d_q    <= queue_cq_full_stall;
@@ -3526,7 +3575,7 @@ CSR_QUEUE_VERSION_ADDR,
                 if (queue_done_status[3] & ~queue_done_stopped_d_q) begin
                     telem_queue_stopped_count_q <= telem_queue_stopped_count_q + 32'd1;
                 end
-                if (queue_error_pulse || queue_completion_error_pulse) begin
+                if (queue_error_pulse || queue_completion_error_pulse || queue_local_error_pulse_q) begin
                     telem_queue_error_count_q <= telem_queue_error_count_q + 32'd1;
                 end
                 if (telem_host_cq_consume_enabled && telem_cq_head_update_source) begin
@@ -3670,7 +3719,8 @@ CSR_QUEUE_VERSION_ADDR,
             end
 
             if (queue_clear_error_pulse) begin
-                queue_extra_error_status_q <= 32'h0000_0000;
+                queue_extra_error_status_q  <= 32'h0000_0000;
+                queue_extra_reject_status_q <= 32'h0000_0000;
             end else if (queue_completion_error_pulse) begin
                 queue_extra_error_status_q[4] <= 1'b1;
             end
@@ -3877,10 +3927,15 @@ CSR_QUEUE_VERSION_ADDR,
                                         perf_output_count_q <= 32'h0000_0000;
                                     end
 
-                                    if (command_has_start && desc_fetch_busy) begin
-                                        // P17G: descriptor fetch owns the next recipe-launch window.
-                                        // Reject manual P14 micro-op starts while a fetch is active so
-                                        // debug/manual traffic cannot race the fetched recipe snapshot.
+                                    if (command_has_start && queue_busy) begin
+                                        // CODE-COV-C1.2-G7-A1: queue ownership blocks all
+                                        // manual P14 micro-operation starts.
+                                        reject_status_q[REJ_UNSUPPORTED_BIT] <= 1'b1;
+                                    end
+                                    else if (command_has_start && desc_fetch_launch_ownership) begin
+                                        // CODE-COV-C1.2-C2-A1: descriptor-fetch ownership spans both
+                                        // the active fetch and the descriptor-to-recipe handoff pulse.
+                                        // Reject manual P14 starts until recipe_busy takes ownership.
                                         reject_status_q[REJ_UNSUPPORTED_BIT] <= 1'b1;
                                     end
                                     else if (command_has_start && recipe_busy) begin
@@ -3981,12 +4036,20 @@ CSR_QUEUE_VERSION_ADDR,
                                     end
 
                                     if (job_command_masked[JOB_CMD_START_BIT]) begin
-                                        if (desc_fetch_busy) begin
-                                            // P17G: block manual P15 jobs while descriptor fetch is active.
+                                        if (desc_fetch_launch_ownership) begin
+                                            // CODE-COV-C1.2-C2-A1: block manual P15 jobs through the
+                                            // descriptor-fetch to recipe ownership handoff cycle.
                                             job_reject_status_q[JOB_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                         end
                                         else if (recipe_busy) begin
                                             recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                        end
+                                        else if (queue_busy) begin
+                                            // CODE-COV-C1.2-D5-A1: an active queue owns the
+                                            // descriptor-fetch -> recipe -> job execution stack.
+                                            // Reject manual P15 launches before they can overlap
+                                            // a queue-backed automatic recipe.
+                                            job_reject_status_q[JOB_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                         end
                                         else if (job_busy) begin
                                             job_reject_status_q[JOB_REJ_BUSY_BIT] <= 1'b1;
@@ -4060,9 +4123,14 @@ CSR_QUEUE_VERSION_ADDR,
                                     end
 
                                     if (recipe_command_masked[RECIPE_CMD_START_BIT]) begin
-                                        if (desc_fetch_busy) begin
-                                            // P17G: block manual P16 recipe starts while descriptor fetch
-                                            // is building the fetched snapshot.
+                                        if (queue_busy) begin
+                                            // CODE-COV-C1.2-G7-A1: an active queue owns
+                                            // the automatic descriptor-fetch -> recipe path.
+                                            recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
+                                        end
+                                        else if (desc_fetch_launch_ownership) begin
+                                            // CODE-COV-C1.2-C2-A1: keep manual P16 starts blocked until
+                                            // the fetched recipe has sampled its automatic start pulse.
                                             recipe_reject_status_q[RECIPE_REJ_MANUAL_CMD_BIT] <= 1'b1;
                                         end
                                         else if (recipe_busy) begin
@@ -4111,6 +4179,9 @@ CSR_QUEUE_VERSION_ADDR,
                                 end
 
                                 if (desc_fetch_command_has_start) begin
+                                    // Manual P17 queue-ownership rejection is completed
+                                    // by the top-level external-reject path.  Keep the pulse
+                                    // visible to that path; it will not reach the engine.
                                     desc_fetch_start_pulse <= 1'b1;
                                 end
                             end
@@ -4161,7 +4232,13 @@ CSR_QUEUE_VERSION_ADDR,
                                     end
 
                                     if (completion_wb_command_has_start) begin
-                                        completion_wb_start_pulse <= 1'b1;
+                                        if (queue_busy) begin
+                                            // CODE-COV-C1.2-G7-A1: block manual P18
+                                            // writeback while the queue owns completion.
+                                            completion_wb_reject_status_q[COMP_WB_REJ_ENGINE_BIT] <= 1'b1;
+                                        end else begin
+                                            completion_wb_start_pulse <= 1'b1;
+                                        end
                                     end
                                 end
                             end
@@ -4347,8 +4424,33 @@ CSR_QUEUE_VERSION_ADDR,
                                     queue_clear_error_pulse <= 1'b1;
                                 end
 
+                                if (queue_command_masked[QUEUE_CMD_RESET_POINTERS_BIT]) begin
+                                    if (queue_busy) begin
+                                        queue_extra_reject_status_q[QUEUE_REJ_RESET_POINTERS_BUSY_BIT] <= 1'b1;
+                                    end else begin
+                                        // G7-A1: host-visible pointer reset is the only CSR path
+                                        // that updates the hardware-owned SQ_HEAD / CQ_TAIL pair.
+                                        queue_sq_head_q <= 32'h0000_0000;
+                                        queue_sq_tail_q <= 32'h0000_0000;
+                                        queue_cq_head_q <= 32'h0000_0000;
+                                        queue_cq_tail_q <= 32'h0000_0000;
+                                    end
+                                end
+
                                 if (queue_command_has_start) begin
-                                    queue_start_pulse <= 1'b1;
+                                    if (queue_busy) begin
+                                        queue_extra_reject_status_q[QUEUE_REJ_QUEUE_BUSY_BIT] <= 1'b1;
+                                    end else if (queue_sticky_status_present) begin
+                                        if (queue_command_masked[QUEUE_CMD_CLEAR_ERROR_BIT]) begin
+                                            // Clear the sticky state first, then issue START_QUEUE
+                                            // on the following cycle after the controller returns IDLE.
+                                            queue_restart_pending_q <= 1'b1;
+                                        end else begin
+                                            queue_extra_reject_status_q[QUEUE_REJ_STICKY_ERROR_BIT] <= 1'b1;
+                                        end
+                                    end else begin
+                                        queue_start_pulse <= 1'b1;
+                                    end
                                 end
 
                                 if (queue_command_masked[QUEUE_CMD_STOP_BIT]) begin
@@ -4381,43 +4483,83 @@ CSR_QUEUE_VERSION_ADDR,
                         end
 
                         CSR_QUEUE_SQ_BASE_ADDR: begin
-                            queue_sq_base_addr_q <= apply_wstrb32(queue_sq_base_addr_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_sq_base_addr_q <= apply_wstrb32(queue_sq_base_addr_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_QUEUE_SQ_DEPTH_ADDR: begin
-                            queue_sq_depth_q <= apply_wstrb32(queue_sq_depth_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_sq_depth_q <= apply_wstrb32(queue_sq_depth_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_QUEUE_SQ_HEAD_ADDR: begin
-                            queue_sq_head_q <= apply_wstrb32(queue_sq_head_q, write_data, write_strb);
+                            // G7-A1: SQ_HEAD is hardware-owned and read-only to the host.
+                            // AXI-Lite still returns OKAY; the write is intentionally ignored.
                         end
 
                         CSR_QUEUE_SQ_TAIL_ADDR: begin
+                            // Host-owned producer pointer; runtime updates remain legal.
                             queue_sq_tail_q <= apply_wstrb32(queue_sq_tail_q, write_data, write_strb);
                         end
 
                         CSR_QUEUE_SQ_STRIDE_ADDR: begin
-                            queue_sq_stride_q <= apply_wstrb32(queue_sq_stride_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_sq_stride_q <= apply_wstrb32(queue_sq_stride_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_QUEUE_CQ_BASE_ADDR: begin
-                            queue_cq_base_addr_q <= apply_wstrb32(queue_cq_base_addr_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_cq_base_addr_q <= apply_wstrb32(queue_cq_base_addr_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_QUEUE_CQ_DEPTH_ADDR: begin
-                            queue_cq_depth_q <= apply_wstrb32(queue_cq_depth_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_cq_depth_q <= apply_wstrb32(queue_cq_depth_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_QUEUE_CQ_HEAD_ADDR: begin
+                            // Host-owned consumer pointer; CQ-full recovery is legal while busy.
                             queue_cq_head_q <= apply_wstrb32(queue_cq_head_q, write_data, write_strb);
                         end
 
                         CSR_QUEUE_CQ_TAIL_ADDR: begin
-                            queue_cq_tail_q <= apply_wstrb32(queue_cq_tail_q, write_data, write_strb);
+                            // G7-A1: CQ_TAIL is hardware-owned and read-only to the host.
+                            // AXI-Lite still returns OKAY; the write is intentionally ignored.
                         end
 
                         CSR_QUEUE_CQ_STRIDE_ADDR: begin
-                            queue_cq_stride_q <= apply_wstrb32(queue_cq_stride_q, write_data, write_strb);
+                            if (queue_busy) begin
+                                queue_extra_error_status_q[QUEUE_ERR_CONFIG_WRITE_BUSY_BIT]   <= 1'b1;
+                                queue_extra_reject_status_q[QUEUE_REJ_CONFIG_WRITE_BUSY_BIT] <= 1'b1;
+                                queue_local_error_pulse_q <= 1'b1;
+                            end else begin
+                                queue_cq_stride_q <= apply_wstrb32(queue_cq_stride_q, write_data, write_strb);
+                            end
                         end
 
                         CSR_TELEM_COMMAND_ADDR: begin

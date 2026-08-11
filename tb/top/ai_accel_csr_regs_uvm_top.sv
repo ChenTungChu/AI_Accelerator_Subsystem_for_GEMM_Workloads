@@ -520,6 +520,7 @@ module ai_accel_csr_regs_uvm_top;
         .desc_fetch_stride_bytes        (),
 
         .desc_fetch_busy                (1'b0),
+        .desc_fetch_launch_ownership    (1'b0),
         .desc_fetch_done                (1'b0),
         .desc_fetch_error               (1'b0),
         .desc_fetch_reject              (1'b0),

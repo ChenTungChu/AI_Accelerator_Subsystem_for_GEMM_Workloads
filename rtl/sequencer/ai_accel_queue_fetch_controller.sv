@@ -188,15 +188,15 @@ module ai_accel_queue_fetch_controller #(
     // Queue error bits
     localparam int Q_ERR_CMD_FETCH        = 0;
     localparam int Q_ERR_CMD_VALIDATION   = 1;
-    localparam int Q_ERR_UNDERLYING_BUSY  = 2;
-    localparam int Q_ERR_BAD_POINTER      = 3;
-    localparam int Q_ERR_INTERNAL         = 7;
+    localparam int Q_ERR_BAD_POINTER      = 5;
+    localparam int Q_ERR_INTERNAL         = 8;
 
-    // Queue reject bits
+    // Queue reject bits.  Keep these encodings aligned with the
+    // canonical P19 queue CSR map.
     localparam int Q_REJ_QUEUE_BUSY        = 0;
     localparam int Q_REJ_QUEUE_DISABLED    = 1;
     localparam int Q_REJ_INVALID_CFG       = 2;
-    localparam int Q_REJ_BAD_POINTER       = 3;
+    localparam int Q_REJ_UNDERLYING_BUSY   = 3;
     localparam int Q_REJ_UNSUPPORTED_COMBO = 5;
 
     // Error detail encodings used by this P24C RTL.
@@ -204,6 +204,7 @@ module ai_accel_queue_fetch_controller #(
     localparam logic [31:0] ERR_DISABLED             = 32'h0000_0001;
     localparam logic [31:0] ERR_INVALID_CFG          = 32'h0000_0002;
     localparam logic [31:0] ERR_BAD_POINTER          = 32'h0000_0003;
+    localparam logic [31:0] ERR_UNDERLYING_BUSY       = 32'h0000_0004;
     localparam logic [31:0] ERR_AR_RRESP             = 32'h0000_0101;
     localparam logic [31:0] ERR_AR_EARLY_RLAST       = 32'h0000_0102;
     localparam logic [31:0] ERR_AR_MISSING_RLAST     = 32'h0000_0103;
@@ -450,7 +451,12 @@ module ai_accel_queue_fetch_controller #(
                                         mem_guard_desc_limit,
                                         desc_guard_detail_code_w);
 
-        if (desc_span_calc_w[63:32] != 32'h0000_0000) begin
+        // CODE-COV-C1.2-G7-A1: descriptor-span overflow is a guard
+        // failure only when the strict descriptor-domain check is enabled.
+        // With the guard disabled, queue command validation must not be
+        // affected by an otherwise unused 64-bit span overflow.
+        if (mem_guard_desc_check_w &&
+            (desc_span_calc_w[63:32] != 32'h0000_0000)) begin
             desc_guard_ok_w = 1'b0;
             desc_guard_detail_code_w = P27_DETAIL_ADDR_OVERFLOW;
         end
@@ -592,8 +598,14 @@ module ai_accel_queue_fetch_controller #(
             Q_IDLE: begin
                 rbeat_count_d        = 4'd0;
                 fetched_cmd_reject_d = 1'b0;
-                error_detail_d       = ERR_NONE;
 
+                // Keep CSR_QUEUE_ERROR_DETAIL aligned with the sticky
+                // queue error/reject status.  Command-validation errors
+                // pass through Q_PRESENT/Q_DONE before returning here;
+                // clearing the detail merely because Q_IDLE is reached
+                // loses the last-error diagnostic while ERROR_STATUS
+                // remains asserted.  Reset and CLEAR_QUEUE_ERROR remain
+                // the only architectural clear sources.
                 if (start_queue_pulse) begin
                     if (!queue_enable) begin
                         reject_status_d[Q_REJ_QUEUE_DISABLED] = 1'b1;
@@ -607,9 +619,18 @@ module ai_accel_queue_fetch_controller #(
                         state_d = Q_ERROR;
                     end else if (!ptr_valid_w) begin
                         error_status_d[Q_ERR_BAD_POINTER] = 1'b1;
-                        reject_status_d[Q_REJ_BAD_POINTER] = 1'b1;
+                        reject_status_d[Q_REJ_INVALID_CFG] = 1'b1;
                         error_detail_d = ERR_BAD_POINTER;
                         error_index_d  = {16'd0, cq_tail[7:0], sq_head[7:0]};
+                        queue_reject_pulse = 1'b1;
+                        state_d = Q_ERROR;
+                    end else if (!underlying_idle) begin
+                        // CODE-COV-C1.2-G7-A1: reject before queue
+                        // ownership is accepted.  Q_CHECK_READY may then
+                        // assume that the lower execution stack was idle at
+                        // the acceptance boundary.
+                        reject_status_d[Q_REJ_UNDERLYING_BUSY] = 1'b1;
+                        error_detail_d = ERR_UNDERLYING_BUSY;
                         queue_reject_pulse = 1'b1;
                         state_d = Q_ERROR;
                     end else begin
@@ -632,7 +653,7 @@ module ai_accel_queue_fetch_controller #(
                     state_d = Q_ERROR;
                 end else if (!ptr_valid_w) begin
                     error_status_d[Q_ERR_BAD_POINTER] = 1'b1;
-                    reject_status_d[Q_REJ_BAD_POINTER] = 1'b1;
+                    reject_status_d[Q_REJ_INVALID_CFG] = 1'b1;
                     error_detail_d = ERR_BAD_POINTER;
                     error_index_d  = {16'd0, cq_tail[7:0], sq_head[7:0]};
                     queue_reject_pulse = 1'b1;
