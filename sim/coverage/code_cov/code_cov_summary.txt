@@ -1,5 +1,5 @@
 QuestaSim-64 vcover 10.7c Coverage Utility 2018.08 Aug 18 2018
-Start time: 22:35:00 on Aug 10,2026
+Start time: 23:07:26 on Aug 11,2026
 vcover report -code bcefst coverage/code_cov/code_cov_merged.ucdb 
 Coverage Report Summary Data by file
 
@@ -8,9 +8,9 @@ Coverage Report Summary Data by file
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                         1220      1206        14     98.85
-    Branches                      1007       947        60     94.04
-    FEC Condition Terms             96        66        30     68.75
+    Stmts                         1220      1210        10     99.18
+    Branches                      1007       951        56     94.43
+    FEC Condition Terms             96        70        26     72.91
     FEC Expression Terms           174       147        27     84.48
     Toggle Bins                  19236      3786     15450     19.68
 
@@ -312,7 +312,7 @@ Coverage Report Summary Data by file
     Toggle Bins                  22676      3398     19278     14.98
 
 
-Total Coverage By File (code coverage only, filtered view): 71.41%
+Total Coverage By File (code coverage only, filtered view): 71.58%
 
-End time: 22:35:00 on Aug 10,2026, Elapsed time: 0:00:00
+End time: 23:07:26 on Aug 11,2026, Elapsed time: 0:00:00
 Errors: 0, Warnings: 0

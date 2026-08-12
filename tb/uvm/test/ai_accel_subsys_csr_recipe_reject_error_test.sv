@@ -15,6 +15,9 @@
 //     sticky error status and slot error masks
 //   - validates CLEAR_* cleanup and a valid recipe after error/reject
 //     recovery
+//   - CODE-COV-C1.2-G7-F3: closes reachable CSR recipe descriptor
+//     prevalidation returns for zero A-load length, zero B-load length, and
+//     zero DMA-store byte count, plus the direct slot-reject-mask W1C path
 //
 // This test focuses on the P16 recipe-level control plane.  It does
 // not modify BRAM, GEMM, DMA, AXI-Stream, Direct Stream, CSR RTL, or
@@ -697,6 +700,275 @@ class ai_accel_subsys_csr_recipe_reject_error_test extends ai_accel_subsys_csr_r
 
         `uvm_info("CODE_COV_C1_2D2_A1/SUITE_PASS",
             "Manual recipe width/range prevalidation fix probes PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-F3 reachable CSR recipe prevalidation closure
+    // ------------------------------------------------------------
+    task automatic g7_f3_expect_descriptor_prevalidation_reject(
+        input string tag
+    );
+        logic [31:0] before_current_slot;
+        logic [31:0] before_completed_count;
+
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] state;
+        logic [31:0] current_slot;
+        logic [31:0] completed_count;
+        logic [31:0] slot_done_mask;
+        logic [31:0] slot_error_mask;
+        logic [31:0] slot_reject_mask;
+    begin
+        // current_slot / completed_count are live last-run state and are not
+        // architecturally required to clear to zero with sticky-status cleanup.
+        // Snapshot them before the rejected START and require invariance rather
+        // than incorrectly requiring an absolute zero value.
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_RECIPE_CURRENT_SLOT,
+            before_current_slot
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_RECIPE_COMPLETED_COUNT,
+            before_completed_count
+        );
+
+        csr_start_recipe();
+        repeat (3) @(posedge csr_vif.clk);
+
+        csr_read_recipe_sticky(
+            status,
+            done_status,
+            error_status,
+            reject_status,
+            state,
+            current_slot,
+            completed_count,
+            slot_done_mask,
+            slot_error_mask,
+            slot_reject_mask
+        );
+
+        if (!reject_status[ai_accel_csr_access_helper::RECIPE_REJ_SLOT_DESC]) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/DESC_REJECT_MISSING",
+                $sformatf("%s: expected RECIPE_REJ_SLOT_DESC, status=0x%08h done=0x%08h error=0x%08h reject=0x%08h state=0x%08h",
+                    tag,
+                    status,
+                    done_status,
+                    error_status,
+                    reject_status,
+                    state))
+        end
+
+        if (status[0] || (state[3:0] != P16F_RECIPE_STATE_IDLE)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/LAUNCH_NOT_BLOCKED",
+                $sformatf("%s: descriptor prevalidation reject did not keep recipe IDLE: status=0x%08h state=0x%08h reject=0x%08h",
+                    tag,
+                    status,
+                    state,
+                    reject_status))
+        end
+
+        if ((done_status != 32'h0000_0000) ||
+            (error_status != 32'h0000_0000) ||
+            (slot_done_mask != 32'h0000_0000) ||
+            (slot_error_mask != 32'h0000_0000) ||
+            (slot_reject_mask != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/UNEXPECTED_RECIPE_STICKY",
+                $sformatf("%s: rejected descriptor changed recipe sticky state: done=0x%08h error=0x%08h masks(done/error/reject)=0x%08h/0x%08h/0x%08h",
+                    tag,
+                    done_status,
+                    error_status,
+                    slot_done_mask,
+                    slot_error_mask,
+                    slot_reject_mask))
+        end
+
+        if ((current_slot != before_current_slot) ||
+            (completed_count != before_completed_count)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/UNEXPECTED_RECIPE_STATE",
+                $sformatf("%s: rejected descriptor changed recipe execution state: current_slot %0d->%0d completed %0d->%0d",
+                    tag,
+                    before_current_slot,
+                    current_slot,
+                    before_completed_count,
+                    completed_count))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_F3/DESC_REJECT_PASS",
+            $sformatf("%s: CSR descriptor prevalidation blocked launch with reject=0x%08h current_slot=%0d completed=%0d",
+                tag,
+                reject_status,
+                current_slot,
+                completed_count),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_f3_direct_slot_reject_mask_w1c();
+        logic [31:0] before_mask;
+        logic [31:0] after_mask;
+    begin
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK,
+            before_mask
+        );
+
+        if (before_mask != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/SLOT_REJECT_MASK_PRE",
+                $sformatf("Expected zero CSR_RECIPE_SLOT_REJECT_MASK before direct W1C probe, actual=0x%08h",
+                    before_mask))
+        end
+
+        // The CSR assignment itself is architecturally reachable even when
+        // the current sticky value is zero.  Writing all ones legally
+        // exercises the direct W1C decode without forcing an unreachable
+        // recipe-sequencer slot-reject producer.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK,
+            32'hFFFF_FFFF
+        );
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK,
+            after_mask
+        );
+
+        if (after_mask != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G7_F3/SLOT_REJECT_MASK_W1C",
+                $sformatf("Direct zero-value slot-reject-mask W1C changed architectural state unexpectedly: before=0x%08h after=0x%08h",
+                    before_mask,
+                    after_mask))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_F3/SLOT_REJECT_MASK_W1C_PASS",
+            "Direct CSR_RECIPE_SLOT_REJECT_MASK W1C decode PASS with zero architectural source",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_g7_f3_recipe_prevalidation_and_slot_reject_w1c(
+        input ai_accel_subsys_seq_item profile_item,
+        input int unsigned             a_bytes,
+        input int unsigned             b_bytes,
+        input int unsigned             c_bytes
+    );
+        logic [11:0] slot0;
+    begin
+        slot0 = csr.recipe_slot_addr(0, 7'h00);
+
+        // --------------------------------------------------------
+        // 1) Non-host-preloaded A load length == 0.
+        // Keep every other descriptor field valid so the CSR
+        // descriptor validator reaches the A-length guard.
+        // --------------------------------------------------------
+        csr_clear_recipe_job_and_p14_sticky(
+            "before G7-F3 zero A-load-length prevalidation probe"
+        );
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1F30
+        );
+        csr.write32_expect_okay(
+            slot0 + ai_accel_csr_access_helper::SLOT_A_LOAD_BEATS,
+            32'h0000_0000
+        );
+        csr_write_recipe_control_value(
+            C1_2D2_A1_RECIPE_CONTROL_ONE_SLOT,
+            "G7-F3 one-slot zero A-load-length descriptor control"
+        );
+        g7_f3_expect_descriptor_prevalidation_reject(
+            "zero A-load length descriptor reject"
+        );
+        `uvm_info("CODE_COV_C1_2G7_F3/A_ZERO_LEN_PASS",
+            "Reachable CSR recipe descriptor zero A-load-length prevalidation path PASS",
+            UVM_MEDIUM)
+        csr_clear_recipe_job_and_p14_sticky(
+            "after G7-F3 zero A-load-length prevalidation probe"
+        );
+
+        // --------------------------------------------------------
+        // 2) Non-host-preloaded B load length == 0.
+        // A length is restored by reprogramming the valid slot so
+        // the validator cannot return early at the A-length check.
+        // --------------------------------------------------------
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1F32
+        );
+        csr.write32_expect_okay(
+            slot0 + ai_accel_csr_access_helper::SLOT_B_LOAD_BEATS,
+            32'h0000_0000
+        );
+        csr_write_recipe_control_value(
+            C1_2D2_A1_RECIPE_CONTROL_ONE_SLOT,
+            "G7-F3 one-slot zero B-load-length descriptor control"
+        );
+        g7_f3_expect_descriptor_prevalidation_reject(
+            "zero B-load length descriptor reject"
+        );
+        `uvm_info("CODE_COV_C1_2G7_F3/B_ZERO_LEN_PASS",
+            "Reachable CSR recipe descriptor zero B-load-length prevalidation path PASS",
+            UVM_MEDIUM)
+        csr_clear_recipe_job_and_p14_sticky(
+            "after G7-F3 zero B-load-length prevalidation probe"
+        );
+
+        // --------------------------------------------------------
+        // 3) DMA-store output with store byte count == 0.
+        // Reprogram the valid slot first, then select DMA_STORE and
+        // zero only the store length so both load-length guards pass.
+        // --------------------------------------------------------
+        program_valid_two_slot_recipe(
+            profile_item,
+            a_bytes,
+            b_bytes,
+            c_bytes,
+            32'h0000_1F34
+        );
+        csr.write32_expect_okay(
+            slot0 + ai_accel_csr_access_helper::SLOT_CONTROL,
+            P16F_SLOT1_CONTROL_DMA_DMA_STORE
+        );
+        csr.write32_expect_okay(
+            slot0 + ai_accel_csr_access_helper::SLOT_STORE_BYTE_COUNT,
+            32'h0000_0000
+        );
+        csr_write_recipe_control_value(
+            C1_2D2_A1_RECIPE_CONTROL_ONE_SLOT,
+            "G7-F3 one-slot zero DMA-store-length descriptor control"
+        );
+        g7_f3_expect_descriptor_prevalidation_reject(
+            "zero DMA-store byte count descriptor reject"
+        );
+        `uvm_info("CODE_COV_C1_2G7_F3/STORE_ZERO_LEN_PASS",
+            "Reachable CSR recipe descriptor zero DMA-store-length prevalidation path PASS",
+            UVM_MEDIUM)
+        csr_clear_recipe_job_and_p14_sticky(
+            "after G7-F3 zero DMA-store-length prevalidation probe"
+        );
+
+        // --------------------------------------------------------
+        // 4) Direct W1C decode for CSR_RECIPE_SLOT_REJECT_MASK.
+        // Current architecture keeps this mask zero for the legal
+        // upstream-rejected descriptor cases above; zero-value W1C
+        // still legally executes the CSR assignment under coverage.
+        // --------------------------------------------------------
+        g7_f3_direct_slot_reject_mask_w1c();
+
+        `uvm_info("CODE_COV_C1_2G7_F3/SUITE_PASS",
+            "CSR recipe prevalidation zero-length paths and slot-reject-mask direct W1C reachable 4-delta suite PASS",
             UVM_MEDIUM)
     end
     endtask
@@ -1500,6 +1772,15 @@ class ai_accel_subsys_csr_recipe_reject_error_test extends ai_accel_subsys_csr_r
             );
             prepare_dma_source_and_destination(a_flat, b_flat);
             csr_check_recipe_idle_ready("after C1.2-D2-A1 width/range probes");
+
+            run_g7_f3_recipe_prevalidation_and_slot_reject_w1c(
+                profile_item,
+                a_flat.size(),
+                b_flat.size(),
+                c_bytes
+            );
+            prepare_dma_source_and_destination(a_flat, b_flat);
+            csr_check_recipe_idle_ready("after G7-F3 reachable 4-delta probes");
         end
 
         run_immediate_reject_checks(
