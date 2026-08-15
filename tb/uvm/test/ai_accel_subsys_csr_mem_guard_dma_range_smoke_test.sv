@@ -41,6 +41,15 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
     localparam logic [31:0] P27E_BAD_DST_CMD_TAG  = 32'hD27E_0002;
     localparam logic [31:0] P27E_RECOVERY_CMD_TAG = 32'hD27E_0003;
 
+    // CODE-COV-C1.2-G7-G3 targeted payload-guard commands.
+    // These remain legal queue commands; only the P27 guard configuration
+    // or the memory-backed descriptor payload address is changed.
+    localparam logic [31:0] G7_G3_BAD_B_SRC_CMD_TAG = 32'hD27E_0010;
+    localparam logic [31:0] G7_G3_SPAN_CFG_CMD_TAG  = 32'hD27E_0011;
+    localparam logic [31:0] G7_G3_OVERFLOW_CMD_TAG  = 32'hD27E_0012;
+
+    localparam int unsigned G7_G3_DESC_WORD_A_SRC_BASE = 7;
+
     localparam logic [31:0] P27E_DESC0_TAG0 = 32'hD27E_1000;
     localparam logic [31:0] P27E_DESC0_TAG1 = 32'hD27E_1001;
     localparam logic [31:0] P27E_DESC1_TAG0 = 32'hD27E_2000;
@@ -250,6 +259,9 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t bad_src_cmd;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t bad_dst_cmd;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t recovery_cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t g7_g3_bad_b_src_cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t g7_g3_span_cfg_cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t g7_g3_overflow_cmd;
         ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t baseline_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p25_runtime_snapshot_t recovery_snap;
         ai_accel_event_driven_host_runtime_stress_helper::p27_guard_cfg_t guard_cfg;
@@ -257,6 +269,7 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
         logic [31:0] event_mask;
         logic [31:0] bad_src_limit;
         logic [31:0] bad_dst_limit;
+        logic [31:0] g7_g3_guard_control_readback;
     begin
         phase.raise_objection(this);
 
@@ -300,10 +313,13 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
         );
 
         p27e_make_cfg(rt, cfg);
-        p27e_make_cmd(rt, baseline_cmd, 32'(P27E_DESC_BASE0), P27E_BASELINE_CMD_TAG);
-        p27e_make_cmd(rt, bad_src_cmd,  32'(P27E_DESC_BASE0), P27E_BAD_SRC_CMD_TAG);
-        p27e_make_cmd(rt, bad_dst_cmd,  32'(P27E_DESC_BASE1), P27E_BAD_DST_CMD_TAG);
-        p27e_make_cmd(rt, recovery_cmd, 32'(P27E_DESC_BASE1), P27E_RECOVERY_CMD_TAG);
+        p27e_make_cmd(rt, baseline_cmd,       32'(P27E_DESC_BASE0), P27E_BASELINE_CMD_TAG);
+        p27e_make_cmd(rt, bad_src_cmd,        32'(P27E_DESC_BASE0), P27E_BAD_SRC_CMD_TAG);
+        p27e_make_cmd(rt, bad_dst_cmd,        32'(P27E_DESC_BASE1), P27E_BAD_DST_CMD_TAG);
+        p27e_make_cmd(rt, recovery_cmd,       32'(P27E_DESC_BASE1), P27E_RECOVERY_CMD_TAG);
+        p27e_make_cmd(rt, g7_g3_bad_b_src_cmd,32'(P27E_DESC_BASE0), G7_G3_BAD_B_SRC_CMD_TAG);
+        p27e_make_cmd(rt, g7_g3_span_cfg_cmd, 32'(P27E_DESC_BASE0), G7_G3_SPAN_CFG_CMD_TAG);
+        p27e_make_cmd(rt, g7_g3_overflow_cmd, 32'(P27E_DESC_BASE0), G7_G3_OVERFLOW_CMD_TAG);
 
         event_mask = rt.queue_completion_event_mask() |
                      rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_DRAINED);
@@ -399,10 +415,109 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
             "P27E destination range reject"
         );
 
-        // Known-good recovery after SRC and DST guard rejects.
+        // ------------------------------------------------------------
+        // CODE-COV-C1.2-G7-G3-A
+        //
+        // 1) Keep slot0 A inside the source range while placing slot0 B
+        //    exactly at the exclusive limit.  This reaches the genuine B
+        //    source materialization path without altering RTL or forcing
+        //    internal state.
+        // ------------------------------------------------------------
+        p27e_make_guard_cfg(rt, cfg, 32'h0000_0100, 32'h0000_0000, guard_cfg);
+        rt.host_rt_mem_guard_program_regions(guard_cfg, "G7-G3 B-source range guard cfg");
+
+        p27e_run_guard_negative_case(
+            rt,
+            cfg,
+            g7_g3_bad_b_src_cmd,
+            1,
+            32'h0000_0002,
+            32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_SRC_RANGE,
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_SRC,
+            ai_accel_csr_access_helper::P27_DETAIL_SRC_RANGE,
+            "CODE_COV_C1_2G7_G3/B_SRC_PASS",
+            "G7-G3 B-source range reject"
+        );
+
+        // 2) A non-empty payload with BASE == LIMIT is a legal host
+        //    misconfiguration and must report SPAN_CONFIG + BASE_LIMIT.
         p27e_make_guard_cfg(rt, cfg, 32'h0000_0000, 32'h0000_0000, guard_cfg);
-        rt.host_rt_mem_guard_program_regions(guard_cfg, "P27E recovery valid guard cfg");
+        guard_cfg.src_base  = 32'h0000_1000;
+        guard_cfg.src_limit = 32'h0000_1000;
+        rt.host_rt_mem_guard_program_regions(guard_cfg, "G7-G3 source BASE>=LIMIT guard cfg");
+
+        p27e_run_guard_negative_case(
+            rt,
+            cfg,
+            g7_g3_span_cfg_cmd,
+            1,
+            32'h0000_0002,
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_SRC_RANGE) |
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_BASE_LIMIT),
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_SRC,
+            ai_accel_csr_access_helper::P27_DETAIL_SPAN_CONFIG,
+            "CODE_COV_C1_2G7_G3/SPAN_CONFIG_PASS",
+            "G7-G3 source span-config reject"
+        );
+
+        // 3) Move slot0 A to the top of the 32-bit address space.  The
+        //    non-zero A transfer then crosses the 32-bit boundary and must
+        //    report ADDR_OVERFLOW.  Restore the descriptor immediately after
+        //    the negative case so later recovery remains the canonical table.
+        write_desc_word(
+            P27E_DESC_BASE0 + (0 * P27E_DESC_STRIDE),
+            G7_G3_DESC_WORD_A_SRC_BASE,
+            32'hFFFF_FFFC
+        );
+
+        p27e_make_guard_cfg(rt, cfg, 32'h0000_0000, 32'h0000_0000, guard_cfg);
+        rt.host_rt_mem_guard_program_regions(guard_cfg, "G7-G3 source overflow guard cfg");
+
+        p27e_run_guard_negative_case(
+            rt,
+            cfg,
+            g7_g3_overflow_cmd,
+            1,
+            32'h0000_0002,
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_SRC_RANGE) |
+            (32'h0000_0001 << ai_accel_csr_access_helper::MEM_GUARD_ERR_ADDR_OVERFLOW),
+            ai_accel_csr_access_helper::P27_GUARD_DOMAIN_SRC,
+            ai_accel_csr_access_helper::P27_DETAIL_ADDR_OVERFLOW,
+            "CODE_COV_C1_2G7_G3/OVERFLOW_PASS",
+            "G7-G3 source address-overflow reject"
+        );
+
+        write_desc_word(
+            P27E_DESC_BASE0 + (0 * P27E_DESC_STRIDE),
+            G7_G3_DESC_WORD_A_SRC_BASE,
+            32'h0000_0000
+        );
+
+        // Known-good recovery after the original and G7-G3 guard rejects.
+        p27e_make_guard_cfg(rt, cfg, 32'h0000_0000, 32'h0000_0000, guard_cfg);
+        guard_cfg.control = rt.host_rt_mem_guard_control_value(
+            1'b1, // guard_enable
+            1'b1, // strict_reject_enable
+            1'b1, // SQ check
+            1'b1, // CQ check
+            1'b1, // descriptor check
+            1'b1, // source check
+            1'b0, // destination check: G7-G3 SRC-only success target
+            1'b1  // write CQ error if safe
+        );
+        rt.host_rt_mem_guard_program_regions(guard_cfg, "P27E recovery SRC-only guard cfg");
         rt.host_rt_mem_guard_check_clean("P27E recovery guard clean", 1'b1, 1'b1);
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_MEM_GUARD_CONTROL,
+            g7_g3_guard_control_readback
+        );
+        if (g7_g3_guard_control_readback !== guard_cfg.control) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/SRC_ONLY_CONTROL",
+                $sformatf("SRC-only guard control readback mismatch: expected=0x%08h actual=0x%08h",
+                    guard_cfg.control,
+                    g7_g3_guard_control_readback))
+        end
 
         rt.host_rt_lifecycle_init_session(
             cfg,
@@ -434,11 +549,20 @@ class ai_accel_subsys_csr_mem_guard_dma_range_smoke_test
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
 
+        `uvm_info("CODE_COV_C1_2G7_G3/SRC_ONLY_PASS",
+            $sformatf("SRC-only guarded recovery completed with DST check disabled: control=0x%08h",
+                g7_g3_guard_control_readback),
+            UVM_MEDIUM)
+
         rt.host_rt_mem_guard_check_clean("P27E final guard clean", 1'b1, 1'b1);
         rt.host_rt_lifecycle_check_clean_idle("P27E final lifecycle clean idle", 1'b0, 1'b1, 1'b0);
 
         `uvm_info("P27E_GUARD/RECOVERY_PASS",
-            "P27E known-good command completed after source and destination guard rejects",
+            "P27E known-good command completed after source/destination and G7-G3 guard rejects",
+            UVM_MEDIUM)
+
+        `uvm_info("CODE_COV_C1_2G7_G3/PAYLOAD_GUARD_SUITE_PASS",
+            "G7-G3 payload guard targeted suite completed: B-source, span-config, overflow, and SRC-only success",
             UVM_MEDIUM)
 
         `uvm_info("P27E_GUARD/PASS",

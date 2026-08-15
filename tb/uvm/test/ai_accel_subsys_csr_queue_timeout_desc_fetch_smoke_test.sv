@@ -19,6 +19,12 @@
 // This test does not add RTL, new CSR addresses, new CQ format, a
 // standalone timeout interface, a new simulation flow, or BRAM/GEMM/
 // DMA/frontend datapath changes.
+//
+// CODE-COV-C1.2-G7-G3 note:
+//   Current clock-sampled watchdog timing makes P24 0x0C COMMAND_TIMEOUT a
+//   defensive phase label without a legal sampled producer in this integration.
+//   G7-G3 therefore targets the genuine 0x0E RECIPE timeout and preserves 0x0C
+//   for waiver disposition after source/timing evidence review.
 // ============================================================
 
 class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
@@ -46,6 +52,8 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
     localparam logic [31:0] P24D_TIMEOUT_CMD_TAG      = 32'hD24D_E000;
     localparam logic [31:0] P24D_TIMEOUT_DESC_TAG0    = 32'hD24D_2000;
     localparam logic [31:0] P24D_TIMEOUT_DESC_TAG1    = 32'hD24D_2001;
+
+    localparam logic [31:0] G7_G3_RECIPE_TIMEOUT_CMD_TAG = 32'hD24D_E002;
 
     localparam int unsigned P24D_SHORT_TIMEOUT_CYCLES = 4;
 
@@ -198,9 +206,154 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-G3-C deterministic timeout-phase calibration
+    //
+    // The control interface signals below are passive observations wired
+    // by the existing CSR UVM top.  They do not drive DUT state.  Measuring
+    // the accepted descriptor-start -> handoff -> recipe-busy distance in
+    // the timeout-disabled reference command avoids guessing a watchdog
+    // budget.  The handoff observation is a post-edge phase marker only;
+    // the watchdog detail is captured synchronously on a later clock edge,
+    // so the all-idle handoff phase is not itself a capturable 0x0C detail.
+    // ------------------------------------------------------------
+    task automatic g7_g3_measure_timeout_phase_budgets(
+        output int unsigned handoff_timeout_budget,
+        output int unsigned recipe_timeout_budget
+    );
+        int unsigned cycle_index;
+    begin
+        handoff_timeout_budget = 0;
+        recipe_timeout_budget  = 0;
+
+        while (p17d_ctrl_vif.desc_fetch_start_to_engine_obs !== 1'b1) begin
+            @(posedge p17d_ctrl_vif.clk);
+            #1ps;
+        end
+
+        // Budget=1 would assert the watchdog threshold from this accepted-start epoch.
+        cycle_index = 0;
+
+        while (p17d_ctrl_vif.desc_fetch_recipe_start_pulse_obs !== 1'b1) begin
+            @(posedge p17d_ctrl_vif.clk);
+            #1ps;
+            cycle_index++;
+            if (cycle_index > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_HANDOFF",
+                    "Timed out while calibrating descriptor-to-recipe handoff budget")
+            end
+        end
+
+        if ((p17d_ctrl_vif.desc_fetch_busy_obs === 1'b1) ||
+            (p17d_ctrl_vif.recipe_busy_obs === 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_HANDOFF_PHASE",
+                $sformatf("Handoff observation is not the expected all-idle post-edge phase: desc_busy=%0b recipe_busy=%0b cycle=%0d",
+                    p17d_ctrl_vif.desc_fetch_busy_obs,
+                    p17d_ctrl_vif.recipe_busy_obs,
+                    cycle_index))
+        end
+
+        handoff_timeout_budget = cycle_index + 1;
+
+        while (p17d_ctrl_vif.recipe_busy_obs !== 1'b1) begin
+            @(posedge p17d_ctrl_vif.clk);
+            #1ps;
+            cycle_index++;
+            if (cycle_index > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_RECIPE",
+                    "Timed out while calibrating recipe-busy watchdog budget")
+            end
+        end
+
+        if (p17d_ctrl_vif.desc_fetch_busy_obs === 1'b1) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_RECIPE_PHASE",
+                $sformatf("Recipe calibration cycle still reports desc_fetch_busy: cycle=%0d", cycle_index))
+        end
+
+        recipe_timeout_budget = cycle_index + 1;
+
+        if (recipe_timeout_budget <= handoff_timeout_budget) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_ORDER",
+                $sformatf("Invalid calibrated timeout budget order: handoff=%0d recipe=%0d",
+                    handoff_timeout_budget,
+                    recipe_timeout_budget))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_G3/TIMEOUT_CAL_PASS",
+            $sformatf("Calibrated watchdog phase markers from passive observation: handoff=%0d recipe=%0d",
+                handoff_timeout_budget,
+                recipe_timeout_budget),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // G7-G3-C reusable timeout-probe cleanup
+    //
+    // Recipe sticky masks cross the recipe-runner -> CSR boundary.  A
+    // single clear pulse can leave a one-cycle CSR-visible OR residue
+    // from a just-completed previous recipe.  Clear twice and verify
+    // that the next timeout probe starts from a zero-sticky recipe
+    // baseline.  This is architectural CSR cleanup only; no force or
+    // hierarchical state corruption is used.
+    // ------------------------------------------------------------
+    task automatic g7_g3_clear_for_timeout_probe(input string label);
+        logic [31:0] recipe_done_status;
+        logic [31:0] recipe_error_status;
+        logic [31:0] recipe_reject_status;
+        logic [31:0] recipe_slot_done_mask;
+        logic [31:0] recipe_slot_error_mask;
+        logic [31:0] recipe_slot_reject_mask;
+    begin
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+        repeat (6) @(posedge csr_vif.clk);
+
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+        repeat (6) @(posedge csr_vif.clk);
+
+        csr_check_recipe_idle_ready(label);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_DONE_STATUS, recipe_done_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_ERROR_STATUS, recipe_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_REJECT_STATUS, recipe_reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_DONE_MASK, recipe_slot_done_mask);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_ERROR_MASK, recipe_slot_error_mask);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_RECIPE_SLOT_REJECT_MASK, recipe_slot_reject_mask);
+
+        if ((recipe_done_status != 32'h0000_0000) ||
+            (recipe_error_status != 32'h0000_0000) ||
+            (recipe_reject_status != 32'h0000_0000) ||
+            (recipe_slot_done_mask != 32'h0000_0000) ||
+            (recipe_slot_error_mask != 32'h0000_0000) ||
+            (recipe_slot_reject_mask != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_PRECLEAN",
+                $sformatf("%s: timeout-probe pre-clean left recipe sticky residue: done=0x%08h error=0x%08h reject=0x%08h masks(done/error/reject)=0x%08h/0x%08h/0x%08h",
+                    label,
+                    recipe_done_status,
+                    recipe_error_status,
+                    recipe_reject_status,
+                    recipe_slot_done_mask,
+                    recipe_slot_error_mask,
+                    recipe_slot_reject_mask))
+        end
+    end
+    endtask
+
     task automatic p24d_case_timeout_disabled_normal_completion(
-        input ai_accel_event_driven_host_runtime_helper rt,
-        input ai_accel_subsys_seq_item                 profile_item
+        input  ai_accel_event_driven_host_runtime_helper rt,
+        input  ai_accel_subsys_seq_item                 profile_item,
+        output int unsigned                              handoff_timeout_budget,
+        output int unsigned                              recipe_timeout_budget
     );
         ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t       cfg;
         ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t          cmd;
@@ -244,7 +397,18 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
 
         rt.write_sq_command(cfg, 0, cmd, 1'b1);
         rt.ring_sq_tail(32'h0000_0001);
-        rt.start_queue();
+
+        fork
+            begin
+                g7_g3_measure_timeout_phase_budgets(
+                    handoff_timeout_budget,
+                    recipe_timeout_budget
+                );
+            end
+            begin
+                rt.start_queue();
+            end
+        join
 
         rt.wait_events(event_required, snap, done_timeout_cycles * 8, 1'b1);
         expect_p23f_event_snapshot("P24D timeout disabled normal completion", snap, event_required, 1'b1);
@@ -301,9 +465,7 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
 
         event_required = rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_ERROR);
 
-        csr_queue_clear_sticky_status();
-        csr_desc_fetch_clear_sticky_status();
-        csr_completion_wb_clear_sticky_status();
+        g7_g3_clear_for_timeout_probe("before P24D descriptor-fetch timeout START");
         rt.initialize_runtime(cfg, event_required, 1'b1);
 
         csr_check_recipe_idle_ready("before P24D timeout START");
@@ -344,15 +506,135 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
         rt.ack_events(ack_mask);
         check_p23f_event_cleanup("P24D QUEUE_ERROR timeout", ack_mask);
 
-        csr_queue_clear_sticky_status();
-        csr_desc_fetch_clear_sticky_status();
-        csr_completion_wb_clear_sticky_status();
+        // Drain the already-started legal lower stack before the next
+        // G7-G3 calibrated timeout case reuses the queue/descriptor path.
+        csr_poll_desc_fetch_done(done_timeout_cycles * 2);
+        csr_poll_recipe_done(done_timeout_cycles * 4);
+
+        g7_g3_clear_for_timeout_probe("after P24D descriptor-fetch timeout drain");
 
         `uvm_info("P24D_TIMEOUT/DESC_FETCH_PASS",
             $sformatf("Descriptor-fetch watchdog timeout PASS: error_status=0x%08h detail=0x%08h cq_tail=0x%08h",
                 error_status,
                 error_detail,
                 cq_tail),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_g3_case_exact_timeout_detail(
+        input ai_accel_event_driven_host_runtime_helper rt,
+        input logic [31:0] expected_cmd_tag,
+        input int unsigned timeout_budget,
+        input logic [7:0]  expected_detail_code,
+        input string       pass_id,
+        input string       label
+    );
+        ai_accel_event_driven_host_runtime_helper::p23_queue_cfg_t       cfg;
+        ai_accel_event_driven_host_runtime_helper::p23_sq_cmd_t          cmd;
+        ai_accel_event_driven_host_runtime_helper::p23_event_snapshot_t  snap;
+        logic [31:0] event_required;
+        logic [31:0] ack_mask;
+        logic [31:0] error_status;
+        logic [31:0] error_detail;
+        logic [31:0] cq_tail;
+        logic [31:0] cq_commit_word;
+    begin
+        if (timeout_budget == 0) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_BUDGET_ZERO",
+                $sformatf("%s: calibrated timeout budget must be non-zero", label))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_G3/TIMEOUT_CASE",
+            $sformatf("%s: starting exact timeout-detail case budget=%0d expected_detail=0x%02h",
+                label,
+                timeout_budget,
+                expected_detail_code),
+            UVM_MEDIUM)
+
+        rt.make_default_queue_cfg(
+            cfg,
+            32'(P24D_TIMEOUT_SQ_BASE),
+            32'(P24D_TIMEOUT_CQ_BASE),
+            32'(P24D_QUEUE_DEPTH),
+            1'b0
+        );
+
+        rt.make_fetch_recipe_cmd(
+            cmd,
+            32'(P24D_TIMEOUT_DESC_BASE),
+            32'h0000_0002,
+            32'(P24D_DESC_STRIDE),
+            expected_cmd_tag,
+            1'b1,
+            1'b0
+        );
+        cmd.timeout_cycles = 32'(timeout_budget);
+
+        event_required = rt.event_bit(ai_accel_csr_access_helper::P22_EVENT_QUEUE_ERROR);
+
+        g7_g3_clear_for_timeout_probe({"before ", label});
+        rt.initialize_runtime(cfg, event_required, 1'b1);
+
+        csr_check_recipe_idle_ready({"before ", label});
+
+        rt.write_sq_command(cfg, 0, cmd, 1'b1);
+        rt.ring_sq_tail(32'h0000_0001);
+        rt.start_queue();
+
+        wait_p24d_timeout_error(
+            expected_cmd_tag,
+            error_status,
+            error_detail,
+            cq_tail,
+            done_timeout_cycles * 2
+        );
+
+        if (error_detail[7:0] !== expected_detail_code) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_DETAIL_MISMATCH",
+                $sformatf("%s: expected timeout detail 0x%02h, got detail=0x%08h budget=%0d",
+                    label,
+                    expected_detail_code,
+                    error_detail,
+                    timeout_budget))
+        end
+
+        if (cq_tail !== 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CQ_TAIL",
+                $sformatf("%s: timeout unexpectedly advanced CQ tail: cq_tail=0x%08h",
+                    label,
+                    cq_tail))
+        end
+
+        rt.read_dst_word_le(P24D_TIMEOUT_CQ_BASE, cq_commit_word);
+        if (cq_commit_word !== 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G7_G3/TIMEOUT_CQ_COMMIT",
+                $sformatf("%s: timeout CQ slot should remain uncommitted: commit_word=0x%08h",
+                    label,
+                    cq_commit_word))
+        end
+
+        rt.wait_events(event_required, snap, done_timeout_cycles * 2, 1'b1);
+        expect_p23f_event_snapshot({label, " QUEUE_ERROR event"}, snap, event_required, 1'b1);
+
+        ack_mask = snap.pending & ai_accel_csr_access_helper::EVENT_VALID_MASK;
+        rt.ack_events(ack_mask);
+        check_p23f_event_cleanup({label, " QUEUE_ERROR event"}, ack_mask);
+
+        // A P24 timeout terminates queue ownership, but it intentionally
+        // does not force-corrupt or asynchronously abort the already-started
+        // lower stack.  Drain the legal descriptor/recipe work before reuse.
+        csr_poll_desc_fetch_done(done_timeout_cycles * 2);
+        csr_poll_recipe_done(done_timeout_cycles * 4);
+
+        g7_g3_clear_for_timeout_probe({label, " post-timeout cleanup"});
+
+        `uvm_info(pass_id,
+            $sformatf("%s PASS: budget=%0d detail=0x%08h error_status=0x%08h",
+                label,
+                timeout_budget,
+                error_detail,
+                error_status),
             UVM_MEDIUM)
     end
     endtask
@@ -367,6 +649,8 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
         int unsigned             c_bytes;
 
         ai_accel_event_driven_host_runtime_helper rt;
+        int unsigned g7_g3_handoff_timeout_budget;
+        int unsigned g7_g3_recipe_timeout_budget;
     begin
         phase.raise_objection(this);
 
@@ -407,11 +691,47 @@ class ai_accel_subsys_csr_queue_timeout_desc_fetch_smoke_test
         csr_queue_clear_sticky_status();
         csr_program_completion_wb();
 
-        p24d_case_timeout_disabled_normal_completion(rt, profile_item);
+        p24d_case_timeout_disabled_normal_completion(
+            rt,
+            profile_item,
+            g7_g3_handoff_timeout_budget,
+            g7_g3_recipe_timeout_budget
+        );
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
 
+        // Preserve the original P24D early descriptor-fetch timeout case.
         p24d_case_descriptor_fetch_timeout(rt);
+
+        // G7-G3-C corrected reachability disposition:
+        //   - P24_DETAIL_TIMEOUT_IN_RECIPE (0x0E) is genuinely reachable.
+        //   - P24_DETAIL_COMMAND_TIMEOUT (0x0C) is not targeted here.  The
+        //     apparent desc-fetch->recipe all-idle handoff exists only as a
+        //     post-edge observation; the watchdog error/detail is captured
+        //     synchronously, so the adjacent clock-sampled phases transition
+        //     from DESC_FETCH (0x0D) directly to RECIPE (0x0E).
+        // The handoff marker is retained as evidence, while the recipe-busy
+        // marker is used for the genuine targeted closure.
+        `uvm_info("CODE_COV_C1_2G7_G3/COMMAND_TIMEOUT_RECLASS_EVIDENCE",
+            $sformatf("Clock-sampled timeout classification skips the post-edge all-idle handoff: handoff_marker=%0d recipe_marker=%0d; line 1015 is a waiver candidate, not a stimulus target",
+                g7_g3_handoff_timeout_budget,
+                g7_g3_recipe_timeout_budget),
+            UVM_MEDIUM)
+
+        g7_g3_case_exact_timeout_detail(
+            rt,
+            G7_G3_RECIPE_TIMEOUT_CMD_TAG,
+            g7_g3_recipe_timeout_budget,
+            P24D_DETAIL_TIMEOUT_IN_RECIPE,
+            "CODE_COV_C1_2G7_G3/RECIPE_TIMEOUT_PASS",
+            "G7-G3 recipe-busy timeout"
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_G3/TIMEOUT_SUITE_PASS",
+            $sformatf("G7-G3 timeout detail suite completed: handoff_marker=%0d recipe_budget=%0d; 0x0E targeted, 0x0C reclassified unreachable",
+                g7_g3_handoff_timeout_budget,
+                g7_g3_recipe_timeout_budget),
+            UVM_MEDIUM)
 
         `uvm_info("P24D_TIMEOUT/PASS",
             $sformatf("P24D queue timeout watchdog smoke completed: CASE_ID=%0d timeout_cycles=%0d A_bytes=%0d B_bytes=%0d C_words=%0d",
