@@ -192,6 +192,66 @@ class axi_mm_host_seq extends uvm_sequence #(axi_mm_host_seq_item);
     endfunction
 
     // ------------------------------------------------------------
+    // Raw AXI burst queue helpers
+    // ------------------------------------------------------------
+    function void queue_raw_write_burst(
+        input bit [31:0] addr,
+        input bit [63:0] data[],
+        input bit [7:0]  strb[],
+        input bit [2:0]  size,
+        input bit [1:0]  burst,
+        input axi_mm_host_seq_item::op_role_e role =
+              axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+    );
+        axi_mm_host_seq_item item;
+        item = alloc_item("raw_write_burst");
+        item.setup_raw_write_burst(addr, data, strb, size, burst, role);
+        push_request(item);
+    endfunction
+
+    // ------------------------------------------------------------
+    // Raw write helper with repeated independent bursts and deferred
+    // B-channel acceptance.  Existing queue_raw_write_burst() remains
+    // unchanged and therefore preserves all legacy callers.
+    // ------------------------------------------------------------
+    function void queue_raw_write_burst_repeated(
+        input bit [31:0] addr,
+        input bit [63:0] data[],
+        input bit [7:0]  strb[],
+        input bit [2:0]  size,
+        input bit [1:0]  burst,
+        input int unsigned repeat_count,
+        input int unsigned repeat_stride_bytes,
+        input int unsigned bready_hold_cycles,
+        input axi_mm_host_seq_item::op_role_e role =
+              axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+    );
+        axi_mm_host_seq_item item;
+        item = alloc_item("raw_write_burst_repeated");
+        item.setup_raw_write_burst(addr, data, strb, size, burst, role);
+        item.configure_raw_write_repeats(
+            repeat_count,
+            repeat_stride_bytes,
+            bready_hold_cycles
+        );
+        push_request(item);
+    endfunction
+
+    function void queue_raw_read_burst(
+        input bit [31:0] addr,
+        input int unsigned beat_count,
+        input bit [2:0]  size,
+        input bit [1:0]  burst,
+        input axi_mm_host_seq_item::op_role_e role =
+              axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+    );
+        axi_mm_host_seq_item item;
+        item = alloc_item("raw_read_burst");
+        item.setup_raw_read_burst(addr, beat_count, size, burst, role);
+        push_request(item);
+    endfunction
+
+    // ------------------------------------------------------------
     // Convenience wrappers for current subsystem flow
     // ------------------------------------------------------------
     function void queue_preload_a(

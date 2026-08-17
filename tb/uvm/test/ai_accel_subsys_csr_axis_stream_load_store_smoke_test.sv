@@ -27,6 +27,19 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     localparam logic [31:0] AXIS_SRC_B_BASE = 32'h0000_0100;
     localparam logic [31:0] DMA_DST_C_BASE  = 32'h0000_0000;
 
+    // CODE-COV-C1.2-G7-K3-C isolated dual-port arbitration probe.
+    // Keep Port0 and Port1 scratchpad ranges disjoint from the normal
+    // A/B/C regions used by this representative smoke flow.
+    localparam logic [31:0] G7_K3C_HOST_DST_BASE = 32'h0000_0C00;
+    localparam logic [31:0] G7_K3C_AXIS_SRC_BASE = 32'h0000_0400;
+    localparam logic [31:0] G7_K3C_AXIS_DST_BASE = 32'h0000_0E00;
+
+    localparam int unsigned G7_K3C_PROBE_BYTES = 512;
+    localparam int unsigned G7_K3C_HOST_WORDS  = G7_K3C_PROBE_BYTES / 4;
+
+    localparam logic [31:0] G7_K3C_HOST_FILL_VALUE = 32'hC3C3_C3C3;
+    localparam logic [7:0]  G7_K3C_AXIS_FILL_BYTE  = 8'hA5;
+
     // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
@@ -558,6 +571,220 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-K3-C
+    // Dual-Port Simultaneous-Ready Arbitration Collision Reachability
+    //
+    // Purpose:
+    //   - Port0: legal serialized host AXI-MM writes
+    //   - Port1: legal CSR-controlled AXI-Stream scratchpad preload
+    //   - run both for a sustained interval so completed bursts from both
+    //     ports contend for the shared commit engine while it returns to
+    //     CE_IDLE.
+    //
+    // Coverage targets in rtl/mem/axi_mm_dual_port_bram.sv:
+    //   1201 : P1 starvation counter increments during simultaneous-ready
+    //   1225 : simultaneous-ready with nonzero P0 quota grants Port0
+    //   1239 : contested Port0 grant decrements P0 quota
+    //
+    // No force, hierarchical corruption, BRAM RTL change, or new test class.
+    // ------------------------------------------------------------
+    task automatic g7_k3c_prepare_axis_probe_source();
+        int unsigned i;
+    begin
+        for (i = 0; i < G7_K3C_PROBE_BYTES; i++) begin
+            vif.dma_src_mem_write_byte(
+                G7_K3C_AXIS_SRC_BASE + 32'(i),
+                G7_K3C_AXIS_FILL_BYTE
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_K3C",
+            $sformatf("Prepared arbitration probe AXIS source: src=0x%08h bytes=%0d fill=0x%02h",
+                G7_K3C_AXIS_SRC_BASE,
+                G7_K3C_PROBE_BYTES,
+                G7_K3C_AXIS_FILL_BYTE),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_k3c_check_one_read(
+        input axi_mm_host_seq      seq,
+        input int unsigned         rsp_idx,
+        input logic [31:0]         expected_value,
+        input string               tag
+    );
+        axi_mm_host_seq_item rsp;
+    begin
+        rsp = seq.get_response_item(rsp_idx);
+
+        if (rsp == null) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3C/NULL_RSP",
+                $sformatf("%s: response[%0d] is null", tag, rsp_idx))
+        end
+
+        if (!rsp.response_valid) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3C/INVALID_RSP",
+                $sformatf("%s: response[%0d] is not valid: %s",
+                    tag, rsp_idx, rsp.convert2string()))
+        end
+
+        if (rsp.read_data_s32.size() != 1) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3C/BAD_READ_SIZE",
+                $sformatf("%s: expected one S32 read value, got %0d",
+                    tag, rsp.read_data_s32.size()))
+        end
+
+        if (rsp.read_data_s32[0] !== $signed(expected_value)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3C/READBACK_MISMATCH",
+                $sformatf("%s: expected=0x%08h actual=0x%08h",
+                    tag,
+                    expected_value,
+                    rsp.read_data_s32[0]))
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_K3C/CHECK",
+            $sformatf("%s PASS: 0x%08h", tag, expected_value),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_g7_k3c_dual_port_arbitration_probe();
+        axi_mm_host_seq host_write_seq;
+        axi_mm_host_seq host_read_seq;
+        int unsigned    axis_beats;
+    begin
+        axis_beats = bytes_to_beats(G7_K3C_PROBE_BYTES);
+
+        g7_k3c_prepare_axis_probe_source();
+
+        // Pre-program Port1 before starting the concurrent window so the
+        // CSR configuration traffic itself does not consume the overlap.
+        csr_clear_sticky_status();
+        csr_write_axis_load_config(
+            G7_K3C_AXIS_SRC_BASE,
+            G7_K3C_AXIS_DST_BASE,
+            axis_beats,
+            "G7_K3C_ARB"
+        );
+
+        host_write_seq = axi_mm_host_seq::type_id::create("g7_k3c_host_write_seq");
+        host_write_seq.set_case_context(
+            selected_case_id,
+            selected_test_kind,
+            "g7_k3c_dual_port_arbitration",
+            0
+        );
+        host_write_seq.queue_fill_u32(
+            G7_K3C_HOST_DST_BASE,
+            G7_K3C_HOST_WORDS,
+            G7_K3C_HOST_FILL_VALUE,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_K3C",
+            $sformatf("Starting sustained legal Port0/Port1 arbitration probe: P0=[0x%08h,+%0dB) P1=[0x%08h,+%0dB) axis_beats=%0d",
+                G7_K3C_HOST_DST_BASE,
+                G7_K3C_PROBE_BYTES,
+                G7_K3C_AXIS_DST_BASE,
+                G7_K3C_PROBE_BYTES,
+                axis_beats),
+            UVM_MEDIUM)
+
+        // Both threads are legal public-interface traffic.  The long,
+        // serialized streams intentionally overlap for many commit-engine
+        // opportunities; no internal signal is forced or sampled.
+        fork
+            begin : g7_k3c_port1_axis_thread
+                csr_start_axis_load("G7_K3C_ARB");
+                csr_poll_done_bit(
+                    done_timeout_cycles,
+                    ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+                    "G7_K3C_ARB"
+                );
+            end
+
+            begin : g7_k3c_port0_host_thread
+                host_write_seq.start(env.host_agent.sequencer);
+            end
+        join
+
+        repeat (4) @(posedge csr_vif.clk);
+
+        // Read back both ends of each isolated region after contention has
+        // drained.  This proves arbitration did not corrupt either owner's
+        // committed data while leaving the collision proof itself to code
+        // coverage.
+        host_read_seq = axi_mm_host_seq::type_id::create("g7_k3c_host_read_seq");
+        host_read_seq.set_case_context(
+            selected_case_id,
+            selected_test_kind,
+            "g7_k3c_dual_port_arbitration_readback",
+            0
+        );
+
+        host_read_seq.queue_read_s32(
+            G7_K3C_HOST_DST_BASE,
+            1,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+        host_read_seq.queue_read_s32(
+            G7_K3C_HOST_DST_BASE + G7_K3C_PROBE_BYTES - 4,
+            1,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+        host_read_seq.queue_read_s32(
+            G7_K3C_AXIS_DST_BASE,
+            1,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+        host_read_seq.queue_read_s32(
+            G7_K3C_AXIS_DST_BASE + G7_K3C_PROBE_BYTES - 4,
+            1,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+
+        host_read_seq.start(env.host_agent.sequencer);
+
+        if (host_read_seq.get_response_count() != 4) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3C/RSP_COUNT",
+                $sformatf("Expected 4 arbitration-probe readback responses, got %0d",
+                    host_read_seq.get_response_count()))
+        end
+
+        g7_k3c_check_one_read(
+            host_read_seq,
+            0,
+            G7_K3C_HOST_FILL_VALUE,
+            "Port0 first word"
+        );
+        g7_k3c_check_one_read(
+            host_read_seq,
+            1,
+            G7_K3C_HOST_FILL_VALUE,
+            "Port0 last word"
+        );
+        g7_k3c_check_one_read(
+            host_read_seq,
+            2,
+            {4{G7_K3C_AXIS_FILL_BYTE}},
+            "Port1 first word"
+        );
+        g7_k3c_check_one_read(
+            host_read_seq,
+            3,
+            {4{G7_K3C_AXIS_FILL_BYTE}},
+            "Port1 last word"
+        );
+
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1_2G7_K3C/PASS",
+            "Legal sustained Port0 host + Port1 AXI-Stream arbitration probe PASS; exact simultaneous-ready closure requires statement report confirmation",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Destination-memory result collection
     // ------------------------------------------------------------
     task automatic collect_dma_destination_c(
@@ -622,6 +849,7 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
             (selected_case_id == 102)) begin
             run_d1_axis_reject_probes(profile_item.base_addr_a);
             run_d2_axis_error_probe(profile_item.base_addr_a, a_flat.size());
+            run_g7_k3c_dual_port_arbitration_probe();
         end
 
         run_one_axis_load(

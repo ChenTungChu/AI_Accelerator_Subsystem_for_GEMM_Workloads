@@ -50,6 +50,7 @@ class axi_mm_host_monitor extends uvm_monitor;
     // ------------------------------------------------------------
     typedef struct {
         bit [ADDR_WIDTH-1:0] addr;
+        bit [7:0]            len;
         bit [2:0]            size;
         bit [1:0]            burst;
     } aw_info_t;
@@ -62,6 +63,7 @@ class axi_mm_host_monitor extends uvm_monitor;
 
     typedef struct {
         bit [ADDR_WIDTH-1:0] addr;
+        bit [7:0]            len;
         bit [2:0]            size;
         bit [1:0]            burst;
     } ar_info_t;
@@ -77,8 +79,12 @@ class axi_mm_host_monitor extends uvm_monitor;
 
     aw_info_t aw_q[$];
     w_info_t  w_q[$];
-    wr_info_t pending_write_q[$];
+    axi_mm_host_seq_item pending_write_item_q[$];
     ar_info_t ar_q[$];
+
+    bit                       active_read_valid;
+    ar_info_t                 active_ar;
+    bit [DATA_WIDTH-1:0]      active_r_data_q[$];
 
     // ------------------------------------------------------------
     // Debug / bookkeeping
@@ -117,6 +123,8 @@ class axi_mm_host_monitor extends uvm_monitor;
         observed_write_count   = 0;
         observed_read_count    = 0;
         dropped_on_reset_count = 0;
+        active_read_valid      = 1'b0;
+        active_r_data_q.delete();
 
         void'(uvm_config_db#(bit)::get(this, "", "enable_log", enable_log));
     endfunction
@@ -192,8 +200,9 @@ class axi_mm_host_monitor extends uvm_monitor;
         pending_count =
             aw_q.size() +
             w_q.size() +
-            pending_write_q.size() +
-            ar_q.size();
+            pending_write_item_q.size() +
+            ar_q.size() +
+            (active_read_valid ? 1 : 0);
 
         if (pending_count != 0) begin
             dropped_on_reset_count += pending_count;
@@ -205,8 +214,10 @@ class axi_mm_host_monitor extends uvm_monitor;
 
         aw_q.delete();
         w_q.delete();
-        pending_write_q.delete();
+        pending_write_item_q.delete();
         ar_q.delete();
+        active_read_valid = 1'b0;
+        active_r_data_q.delete();
     end
     endfunction
 
@@ -436,6 +447,90 @@ class axi_mm_host_monitor extends uvm_monitor;
     endfunction
 
     // ------------------------------------------------------------
+    // Build observed item from a completed raw write burst.
+    //
+    // Legacy single-beat INCR writes continue to use
+    // build_write_item() so existing monitor/checker behavior is
+    // unchanged.  Any non-legacy burst is published as one raw
+    // burst transaction with exact LEN/SIZE/BURST metadata.
+    // ------------------------------------------------------------
+    function axi_mm_host_seq_item build_raw_write_burst_item(
+        aw_info_t aw,
+        bit [DATA_WIDTH-1:0] data_vec[],
+        bit [BYTE_PER_WORD-1:0] strb_vec[]
+    );
+        axi_mm_host_seq_item item;
+        bit [63:0]           data64[];
+        bit [7:0]            strb8[];
+        int unsigned         i;
+    begin
+        item = axi_mm_host_seq_item::type_id::create("observed_raw_write_burst_item");
+        annotate_context(item);
+
+        data64 = new[data_vec.size()];
+        strb8  = new[strb_vec.size()];
+
+        for (i = 0; i < data_vec.size(); i++) begin
+            data64[i] = data_vec[i];
+        end
+
+        for (i = 0; i < strb_vec.size(); i++) begin
+            strb8[i] = strb_vec[i];
+        end
+
+        item.setup_raw_write_burst(
+            aw.addr,
+            data64,
+            strb8,
+            aw.size,
+            aw.burst,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+        item.response_valid = 1'b0;
+
+        return item;
+    end
+    endfunction
+
+    // ------------------------------------------------------------
+    // Build observed item from a completed raw read burst.
+    //
+    // Legacy single-beat INCR reads continue to use
+    // build_read_item().  Any non-legacy burst is published as one
+    // raw read transaction after all expected R beats are observed.
+    // ------------------------------------------------------------
+    function axi_mm_host_seq_item build_raw_read_burst_item(
+        ar_info_t ar,
+        bit [DATA_WIDTH-1:0] data_vec[]
+    );
+        axi_mm_host_seq_item item;
+        int unsigned         i;
+        int unsigned         beat_count;
+    begin
+        beat_count = int'(ar.len) + 1;
+
+        item = axi_mm_host_seq_item::type_id::create("observed_raw_read_burst_item");
+        annotate_context(item);
+
+        item.setup_raw_read_burst(
+            ar.addr,
+            beat_count,
+            ar.size,
+            ar.burst,
+            axi_mm_host_seq_item::AXI_HOST_ROLE_GENERIC
+        );
+
+        item.burst_read_data = new[data_vec.size()];
+        for (i = 0; i < data_vec.size(); i++) begin
+            item.burst_read_data[i] = data_vec[i];
+        end
+
+        item.response_valid = 1'b1;
+        return item;
+    end
+    endfunction
+
+    // ------------------------------------------------------------
     // Publish helpers
     // ------------------------------------------------------------
     function void publish_write_item(wr_info_t wr);
@@ -475,6 +570,36 @@ class axi_mm_host_monitor extends uvm_monitor;
     end
     endfunction
 
+    function void publish_prebuilt_write_item(axi_mm_host_seq_item item);
+    begin
+        observed_write_count++;
+
+        if (enable_log) begin
+            `uvm_info("AXI_HOST_MON",
+                $sformatf("Observed host write #%0d: %s",
+                    observed_write_count, item.convert2string()),
+                UVM_MEDIUM)
+        end
+
+        ap.write(item);
+    end
+    endfunction
+
+    function void publish_prebuilt_read_item(axi_mm_host_seq_item item);
+    begin
+        observed_read_count++;
+
+        if (enable_log) begin
+            `uvm_info("AXI_HOST_MON",
+                $sformatf("Observed host read #%0d: %s",
+                    observed_read_count, item.convert2string()),
+                UVM_MEDIUM)
+        end
+
+        ap.write(item);
+    end
+    endfunction
+
     // ------------------------------------------------------------
     // Run phase
     // ------------------------------------------------------------
@@ -483,6 +608,12 @@ class axi_mm_host_monitor extends uvm_monitor;
         w_info_t  w;
         wr_info_t wr;
         ar_info_t ar;
+        axi_mm_host_seq_item item;
+        bit [DATA_WIDTH-1:0]    write_data_vec[];
+        bit [BYTE_PER_WORD-1:0] write_strb_vec[];
+        bit [DATA_WIDTH-1:0]    read_data_vec[];
+        int unsigned expected_beats;
+        int unsigned beat_idx;
     begin
         wait_for_reset_release();
         clear_pending_state();
@@ -500,6 +631,7 @@ class axi_mm_host_monitor extends uvm_monitor;
             // --------------------------------------------
             if (vif.awvalid && vif.awready) begin
                 aw.addr  = vif.awaddr;
+                aw.len   = vif.awlen;
                 aw.size  = vif.awsize;
                 aw.burst = vif.awburst;
                 aw_q.push_back(aw);
@@ -516,33 +648,83 @@ class axi_mm_host_monitor extends uvm_monitor;
             end
 
             // --------------------------------------------
-            // Combine AW/W in-order into pending writes
+            // Combine one AW with all of its W beats.
+            //
+            // AXI4 W has no transaction ID, so write data is
+            // associated with AW transactions in issue order.
+            // Wait until all LEN+1 beats for the oldest AW have
+            // arrived, then build exactly one pending transaction
+            // that will be published when its B response is seen.
             // --------------------------------------------
-            while ((aw_q.size() > 0) && (w_q.size() > 0)) begin
+            while (aw_q.size() > 0) begin
+                expected_beats = int'(aw_q[0].len) + 1;
+
+                if (w_q.size() < expected_beats)
+                    break;
+
                 aw = aw_q.pop_front();
-                w  = w_q.pop_front();
 
-                wr.addr  = aw.addr;
-                wr.size  = aw.size;
-                wr.burst = aw.burst;
-                wr.data  = w.data;
-                wr.strb  = w.strb;
-                wr.last  = w.last;
+                write_data_vec = new[expected_beats];
+                write_strb_vec = new[expected_beats];
 
-                pending_write_q.push_back(wr);
+                for (beat_idx = 0; beat_idx < expected_beats; beat_idx++) begin
+                    w = w_q.pop_front();
+
+                    write_data_vec[beat_idx] = w.data;
+                    write_strb_vec[beat_idx] = w.strb;
+
+                    if ((beat_idx + 1) < expected_beats) begin
+                        if (w.last) begin
+                            `uvm_error("AXI_HOST_MON/EARLY_WLAST",
+                                $sformatf("Observed early WLAST for AW addr=0x%08h len=%0d at beat=%0d",
+                                    aw.addr, aw.len, beat_idx))
+                        end
+                    end
+                    else begin
+                        if (!w.last) begin
+                            `uvm_error("AXI_HOST_MON/MISSING_WLAST",
+                                $sformatf("Missing WLAST on final W beat for AW addr=0x%08h len=%0d",
+                                    aw.addr, aw.len))
+                        end
+                    end
+                end
+
+                // Preserve the existing single-beat INCR monitor
+                // representation exactly for all legacy traffic.
+                if ((aw.len == 8'd0) && (aw.burst == 2'b01)) begin
+                    wr.addr  = aw.addr;
+                    wr.size  = aw.size;
+                    wr.burst = aw.burst;
+                    wr.data  = write_data_vec[0];
+                    wr.strb  = write_strb_vec[0];
+                    wr.last  = 1'b1;
+
+                    item = build_write_item(wr);
+                    item.response_valid = 1'b0;
+                end
+                else begin
+                    item = build_raw_write_burst_item(
+                        aw,
+                        write_data_vec,
+                        write_strb_vec
+                    );
+                end
+
+                pending_write_item_q.push_back(item);
             end
 
             // --------------------------------------------
             // Sample B handshake -> completed write item
             // --------------------------------------------
             if (vif.bvalid && vif.bready) begin
-                if (pending_write_q.size() == 0) begin
+                if (pending_write_item_q.size() == 0) begin
                     `uvm_error("AXI_HOST_MON/UNMATCHED_B",
                         "Observed B handshake with no pending write")
                 end
                 else begin
-                    wr = pending_write_q.pop_front();
-                    publish_write_item(wr);
+                    item = pending_write_item_q.pop_front();
+                    item.response_valid = 1'b1;
+                    publish_prebuilt_write_item(item);
                 end
             end
 
@@ -551,22 +733,88 @@ class axi_mm_host_monitor extends uvm_monitor;
             // --------------------------------------------
             if (vif.arvalid && vif.arready) begin
                 ar.addr  = vif.araddr;
+                ar.len   = vif.arlen;
                 ar.size  = vif.arsize;
                 ar.burst = vif.arburst;
                 ar_q.push_back(ar);
             end
 
             // --------------------------------------------
-            // Sample R handshake -> completed read item
+            // Sample R handshake.
+            //
+            // Keep the AR active for LEN+1 beats.  This fixes the
+            // previous single-beat assumption that popped AR on the
+            // first R handshake and reported the remaining burst
+            // beats as UNMATCHED_R.
             // --------------------------------------------
             if (vif.rvalid && vif.rready) begin
-                if (ar_q.size() == 0) begin
-                    `uvm_error("AXI_HOST_MON/UNMATCHED_R",
-                        "Observed R handshake with no pending AR")
+                if (!active_read_valid) begin
+                    if (ar_q.size() == 0) begin
+                        `uvm_error("AXI_HOST_MON/UNMATCHED_R",
+                            "Observed R handshake with no pending AR")
+                    end
+                    else begin
+                        active_ar         = ar_q.pop_front();
+                        active_read_valid = 1'b1;
+                        active_r_data_q.delete();
+                    end
                 end
-                else begin
-                    ar = ar_q.pop_front();
-                    publish_read_item(ar, vif.rdata);
+
+                if (active_read_valid) begin
+                    expected_beats = int'(active_ar.len) + 1;
+                    active_r_data_q.push_back(vif.rdata);
+
+                    beat_idx = active_r_data_q.size() - 1;
+
+                    if ((beat_idx + 1) < expected_beats) begin
+                        if (vif.rlast) begin
+                            `uvm_error("AXI_HOST_MON/EARLY_RLAST",
+                                $sformatf("Observed early RLAST for AR addr=0x%08h len=%0d at beat=%0d",
+                                    active_ar.addr, active_ar.len, beat_idx))
+                        end
+                    end
+                    else if ((beat_idx + 1) == expected_beats) begin
+                        if (!vif.rlast) begin
+                            `uvm_error("AXI_HOST_MON/MISSING_RLAST",
+                                $sformatf("Missing RLAST on final R beat for AR addr=0x%08h len=%0d",
+                                    active_ar.addr, active_ar.len))
+                        end
+
+                        // Preserve the existing single-beat INCR
+                        // monitor representation for legacy traffic.
+                        if ((active_ar.len == 8'd0) &&
+                            (active_ar.burst == 2'b01)) begin
+                            publish_read_item(
+                                active_ar,
+                                active_r_data_q[0]
+                            );
+                        end
+                        else begin
+                            read_data_vec = new[active_r_data_q.size()];
+                            for (beat_idx = 0;
+                                 beat_idx < active_r_data_q.size();
+                                 beat_idx++) begin
+                                read_data_vec[beat_idx] =
+                                    active_r_data_q[beat_idx];
+                            end
+
+                            item = build_raw_read_burst_item(
+                                active_ar,
+                                read_data_vec
+                            );
+                            publish_prebuilt_read_item(item);
+                        end
+
+                        active_read_valid = 1'b0;
+                        active_r_data_q.delete();
+                    end
+                    else begin
+                        `uvm_error("AXI_HOST_MON/EXTRA_R",
+                            $sformatf("Observed more than LEN+1 R beats for AR addr=0x%08h len=%0d",
+                                active_ar.addr, active_ar.len))
+                        active_read_valid = 1'b0;
+                        active_r_data_q.delete();
+                    end
                 end
             end
         end

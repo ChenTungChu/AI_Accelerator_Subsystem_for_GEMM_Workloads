@@ -8,9 +8,11 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
     // Host operation kind
     // ------------------------------------------------------------
     typedef enum int unsigned {
-        AXI_HOST_OP_WRITE_BYTES = 0,
-        AXI_HOST_OP_FILL_U32    = 1,
-        AXI_HOST_OP_READ_S32    = 2
+        AXI_HOST_OP_WRITE_BYTES     = 0,
+        AXI_HOST_OP_FILL_U32        = 1,
+        AXI_HOST_OP_READ_S32        = 2,
+        AXI_HOST_OP_RAW_WRITE_BURST = 3,
+        AXI_HOST_OP_RAW_READ_BURST  = 4
     } op_kind_e;
 
     // ------------------------------------------------------------
@@ -66,9 +68,50 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
     bit [31:0]   fill_value_u32;
 
     // ------------------------------------------------------------
+    // Raw AXI burst request payload / metadata
+    //
+    // burst_len:
+    //   AXI LEN field (beats - 1)
+    //
+    // burst_size:
+    //   AXI SIZE field (log2(bytes per beat))
+    //
+    // burst_type:
+    //   2'b00 FIXED, 2'b01 INCR, 2'b10 WRAP
+    //
+    // The current host interface is 64-bit, so burst_size must not
+    // exceed 3 for legal raw-burst requests.
+    // ------------------------------------------------------------
+    bit [7:0]    burst_len;
+    bit [2:0]    burst_size;
+    bit [1:0]    burst_type;
+    bit [63:0]   burst_write_data[];
+    bit [7:0]    burst_write_strb[];
+
+    // Optional repeated-write / B-channel backpressure controls.
+    //
+    // burst_repeat_count:
+    //   Number of independent AW/W bursts emitted for one raw-write item.
+    //   Each repeated burst uses the same LEN/SIZE/BURST/data/strobe payload.
+    //
+    // burst_repeat_stride_bytes:
+    //   Byte-address increment applied between repeated bursts.
+    //
+    // burst_bready_hold_cycles:
+    //   Number of AXI clocks to keep BREADY low after all repeated AW/W
+    //   bursts have completed.  This is a verification control used to
+    //   exercise legal outstanding write-response / backpressure behavior.
+    //
+    // Defaults preserve the original one-burst, immediate-BREADY behavior.
+    int unsigned burst_repeat_count;
+    int unsigned burst_repeat_stride_bytes;
+    int unsigned burst_bready_hold_cycles;
+
+    // ------------------------------------------------------------
     // Response payload
     // ------------------------------------------------------------
     int signed   read_data_s32[];
+    bit [63:0]   burst_read_data[];
     bit          response_valid;
 
     `uvm_object_utils_begin(axi_mm_host_seq_item)
@@ -91,8 +134,19 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
         `uvm_field_array_int(write_data_s8, UVM_DEFAULT)
         `uvm_field_int(fill_value_u32, UVM_DEFAULT | UVM_HEX)
 
+        // Raw AXI burst request payload / metadata
+        `uvm_field_int(burst_len, UVM_DEFAULT)
+        `uvm_field_int(burst_size, UVM_DEFAULT)
+        `uvm_field_int(burst_type, UVM_DEFAULT)
+        `uvm_field_array_int(burst_write_data, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_array_int(burst_write_strb, UVM_DEFAULT | UVM_HEX)
+        `uvm_field_int(burst_repeat_count, UVM_DEFAULT)
+        `uvm_field_int(burst_repeat_stride_bytes, UVM_DEFAULT)
+        `uvm_field_int(burst_bready_hold_cycles, UVM_DEFAULT)
+
         // Response payload
         `uvm_field_array_int(read_data_s32, UVM_DEFAULT)
+        `uvm_field_array_int(burst_read_data, UVM_DEFAULT | UVM_HEX)
         `uvm_field_int(response_valid, UVM_DEFAULT)
     `uvm_object_utils_end
 
@@ -115,10 +169,21 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
         bytes_per_element = 1;
 
         fill_value_u32    = 32'h0000_0000;
-        response_valid    = 1'b0;
+
+        burst_len                  = 8'd0;
+        burst_size                 = 3'd3;
+        burst_type                 = 2'b01;
+        burst_repeat_count         = 1;
+        burst_repeat_stride_bytes  = 0;
+        burst_bready_hold_cycles   = 0;
+
+        response_valid             = 1'b0;
 
         write_data_s8     = new[0];
+        burst_write_data  = new[0];
+        burst_write_strb  = new[0];
         read_data_s32     = new[0];
+        burst_read_data   = new[0];
     endfunction
 
     // ------------------------------------------------------------
@@ -137,11 +202,26 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
     endfunction
 
     // ------------------------------------------------------------
+    // Raw-burst request reset helper
+    // ------------------------------------------------------------
+    function void clear_raw_burst_request();
+        burst_len                  = 8'd0;
+        burst_size                 = 3'd3;
+        burst_type                 = 2'b01;
+        burst_write_data           = new[0];
+        burst_write_strb           = new[0];
+        burst_repeat_count         = 1;
+        burst_repeat_stride_bytes  = 0;
+        burst_bready_hold_cycles   = 0;
+    endfunction
+
+    // ------------------------------------------------------------
     // Clear response helper
     // ------------------------------------------------------------
     function void clear_response();
-        read_data_s32  = new[0];
-        response_valid = 1'b0;
+        read_data_s32   = new[0];
+        burst_read_data = new[0];
+        response_valid  = 1'b0;
     endfunction
 
     // ------------------------------------------------------------
@@ -166,6 +246,7 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
         end
 
         fill_value_u32 = 32'h0000_0000;
+        clear_raw_burst_request();
         clear_response();
     endfunction
 
@@ -211,6 +292,7 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
 
         write_data_s8  = new[0];
         fill_value_u32 = value_in;
+        clear_raw_burst_request();
         clear_response();
     endfunction
 
@@ -230,6 +312,96 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
 
         write_data_s8  = new[0];
         fill_value_u32 = 32'h0000_0000;
+        clear_raw_burst_request();
+        clear_response();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Setup: RAW_WRITE_BURST
+    // ------------------------------------------------------------
+    function void setup_raw_write_burst(
+        input bit [31:0] addr_in,
+        input bit [63:0] data_in[],
+        input bit [7:0]  strb_in[],
+        input bit [2:0]  size_in,
+        input bit [1:0]  burst_in,
+        input op_role_e role_in = AXI_HOST_ROLE_GENERIC
+    );
+        int unsigned i;
+
+        op_kind           = AXI_HOST_OP_RAW_WRITE_BURST;
+        op_role           = role_in;
+        addr              = addr_in;
+        element_count     = data_in.size();
+        bytes_per_element = (1 << size_in);
+
+        burst_len                  = (data_in.size() > 0) ? (data_in.size() - 1) : 0;
+        burst_size                 = size_in;
+        burst_type                 = burst_in;
+        burst_repeat_count         = 1;
+        burst_repeat_stride_bytes  = 0;
+        burst_bready_hold_cycles   = 0;
+
+        write_data_s8     = new[0];
+        fill_value_u32    = 32'h0000_0000;
+
+        burst_write_data = new[data_in.size()];
+        for (i = 0; i < data_in.size(); i++) begin
+            burst_write_data[i] = data_in[i];
+        end
+
+        burst_write_strb = new[strb_in.size()];
+        for (i = 0; i < strb_in.size(); i++) begin
+            burst_write_strb[i] = strb_in[i];
+        end
+
+        clear_response();
+    endfunction
+
+    // ------------------------------------------------------------
+    // Configure repeated raw-write bursts with deferred BREADY.
+    //
+    // Call after setup_raw_write_burst().  Keeping this as a separate
+    // helper preserves the existing setup_raw_write_burst() API.
+    // ------------------------------------------------------------
+    function void configure_raw_write_repeats(
+        input int unsigned repeat_count_in,
+        input int unsigned repeat_stride_bytes_in,
+        input int unsigned bready_hold_cycles_in
+    );
+        burst_repeat_count        = repeat_count_in;
+        burst_repeat_stride_bytes = repeat_stride_bytes_in;
+        burst_bready_hold_cycles  = bready_hold_cycles_in;
+    endfunction
+
+    // ------------------------------------------------------------
+    // Setup: RAW_READ_BURST
+    // ------------------------------------------------------------
+    function void setup_raw_read_burst(
+        input bit [31:0] addr_in,
+        input int unsigned beat_count_in,
+        input bit [2:0]  size_in,
+        input bit [1:0]  burst_in,
+        input op_role_e role_in = AXI_HOST_ROLE_GENERIC
+    );
+        op_kind           = AXI_HOST_OP_RAW_READ_BURST;
+        op_role           = role_in;
+        addr              = addr_in;
+        element_count     = beat_count_in;
+        bytes_per_element = (1 << size_in);
+
+        burst_len                  = (beat_count_in > 0) ? (beat_count_in - 1) : 0;
+        burst_size                 = size_in;
+        burst_type                 = burst_in;
+        burst_repeat_count         = 1;
+        burst_repeat_stride_bytes  = 0;
+        burst_bready_hold_cycles   = 0;
+
+        write_data_s8     = new[0];
+        fill_value_u32    = 32'h0000_0000;
+        burst_write_data  = new[0];
+        burst_write_strb  = new[0];
+
         clear_response();
     endfunction
 
@@ -238,6 +410,41 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     function int unsigned total_byte_count();
         return (element_count * bytes_per_element);
+    endfunction
+
+    // ------------------------------------------------------------
+    // Raw AXI burst common sanity check
+    // ------------------------------------------------------------
+    function bit is_raw_burst_common_valid();
+        int unsigned beat_count;
+        int unsigned beat_bytes;
+
+        beat_count = int'(burst_len) + 1;
+
+        if ((element_count == 0) || (element_count > 256))
+            return 1'b0;
+        if (beat_count != element_count)
+            return 1'b0;
+        if (burst_size > 3)
+            return 1'b0;
+        if (burst_type == 2'b11)
+            return 1'b0;
+
+        beat_bytes = (1 << burst_size);
+        if (bytes_per_element != beat_bytes)
+            return 1'b0;
+        if ((addr % beat_bytes) != 0)
+            return 1'b0;
+
+        if (burst_type == 2'b10) begin
+            if (!((beat_count == 2) ||
+                  (beat_count == 4) ||
+                  (beat_count == 8) ||
+                  (beat_count == 16)))
+                return 1'b0;
+        end
+
+        return 1'b1;
     endfunction
 
     // ------------------------------------------------------------
@@ -265,6 +472,38 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
                 return 1'b1;
             end
 
+            AXI_HOST_OP_RAW_WRITE_BURST: begin
+                int unsigned beat_bytes;
+                int unsigned repeat_idx;
+                bit [31:0] repeated_addr;
+
+                if (!is_raw_burst_common_valid())
+                    return 1'b0;
+                if (burst_write_data.size() != element_count)
+                    return 1'b0;
+                if (burst_write_strb.size() != element_count)
+                    return 1'b0;
+                if (burst_repeat_count == 0)
+                    return 1'b0;
+
+                beat_bytes = (1 << burst_size);
+                for (repeat_idx = 0;
+                     repeat_idx < burst_repeat_count;
+                     repeat_idx++) begin
+                    repeated_addr = addr + (repeat_idx * burst_repeat_stride_bytes);
+                    if ((repeated_addr % beat_bytes) != 0)
+                        return 1'b0;
+                end
+
+                return 1'b1;
+            end
+
+            AXI_HOST_OP_RAW_READ_BURST: begin
+                if (!is_raw_burst_common_valid())
+                    return 1'b0;
+                return 1'b1;
+            end
+
             default: begin
                 return 1'b0;
             end
@@ -276,7 +515,7 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
     // ------------------------------------------------------------
     virtual function string convert2string();
         return $sformatf(
-            "case_id=%0d test_kind=%0d test_name=%s job_idx=%0d op_kind=%0d op_role=%0d addr=0x%08h element_count=%0d bytes_per_element=%0d total_byte_count=%0d write_bytes=%0d fill_value_u32=0x%08h response_valid=%0d read_s32_count=%0d",
+            "case_id=%0d test_kind=%0d test_name=%s job_idx=%0d op_kind=%0d op_role=%0d addr=0x%08h element_count=%0d bytes_per_element=%0d total_byte_count=%0d write_bytes=%0d fill_value_u32=0x%08h burst_len=%0d burst_size=%0d burst_type=%0d burst_write_beats=%0d burst_repeat_count=%0d burst_repeat_stride_bytes=%0d burst_bready_hold_cycles=%0d response_valid=%0d read_s32_count=%0d burst_read_beats=%0d",
             case_id,
             test_kind,
             test_name,
@@ -289,8 +528,16 @@ class axi_mm_host_seq_item extends uvm_sequence_item;
             total_byte_count(),
             write_data_s8.size(),
             fill_value_u32,
+            burst_len,
+            burst_size,
+            burst_type,
+            burst_write_data.size(),
+            burst_repeat_count,
+            burst_repeat_stride_bytes,
+            burst_bready_hold_cycles,
             response_valid,
-            read_data_s32.size()
+            read_data_s32.size(),
+            burst_read_data.size()
         );
     endfunction
 

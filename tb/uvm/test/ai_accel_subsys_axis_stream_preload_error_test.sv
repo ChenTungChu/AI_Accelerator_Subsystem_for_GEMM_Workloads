@@ -176,6 +176,47 @@ class ai_accel_subsys_axis_stream_preload_error_test
     endtask
 
     // ------------------------------------------------------------
+    // G7-I3 reachable code-coverage case:
+    // early AXIS-source RRESP error on a multi-beat request
+    //
+    // The parent converts the MM2S-side error into a synthetic TLAST
+    // beat.  Keeping the loader expectation at four beats makes that
+    // synthetic TLAST terminal before the programmed end and therefore
+    // exercises axi_stream_loader terminal_error_on_accept.
+    // ------------------------------------------------------------
+    task automatic run_axis_source_early_rresp_terminal_error();
+        int unsigned beats;
+    begin
+        beats = 4;
+
+        `uvm_info("CODE_COV_C1_2G7_I3",
+            $sformatf("Starting multi-beat early-RRESP terminal-error target: src=0x%08h dst=0x%08h beats=%0d error_beat=0",
+                dma_src_a, base_a, beats),
+            UVM_MEDIUM)
+
+        vif.axis_src_set_rresp_error(1'b1, 0);
+
+        repeat (2) @(vif.cb_drv);
+
+        run_axis_preload_expect_error(
+            "g7_i3_multi_beat_early_rresp_terminal_error",
+            dma_src_a,
+            base_a,
+            beats
+        );
+
+        vif.axis_src_set_rresp_error(1'b0, -1);
+
+        repeat (5) @(vif.cb_drv);
+
+        `uvm_info("CODE_COV_C1_2G7_I3/TERMINAL_ERROR_TARGET_PASS",
+            $sformatf("Completed multi-beat early-RRESP terminal-error target: beats=%0d error_beat=0",
+                beats),
+            UVM_LOW)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Valid recovery path after AXIS preload errors
     //
     // Full recovery path:
@@ -260,6 +301,11 @@ class ai_accel_subsys_axis_stream_preload_error_test
         run_unaligned_source_error();
         run_unaligned_destination_error();
         run_axis_source_rresp_error();
+
+        // G7-I3: preserve the existing single-beat/source-error probe,
+        // then add one legal multi-beat early-error request so the
+        // synthetic TLAST reaches the loader before expected_beats.
+        run_axis_source_early_rresp_terminal_error();
 
         // --------------------------------------------------------
         // Recovery:

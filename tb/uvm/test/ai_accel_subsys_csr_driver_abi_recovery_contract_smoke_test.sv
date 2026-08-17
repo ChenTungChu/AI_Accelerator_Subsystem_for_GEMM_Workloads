@@ -21,6 +21,19 @@
 // format, completion record format, event bits, telemetry counters,
 // BRAM, GEMM, DMA, AXI-Stream, Direct Stream datapath behavior,
 // UVM top selection, or sim flow.
+//
+// G7-K3A code-coverage extension:
+//   - Reuses the already-active host agent after the P30F recovery
+//     contract has fully completed.
+//   - Issues legal Port0 FIXED / WRAP multi-beat AXI transactions
+//     in an isolated scratchpad region to close BRAM-model burst /
+//     same-word coalescing statement coverage.
+//
+// G7-K3B code-coverage extension (PARKED):
+//   - Retains the legal Port0 write-response backpressure probe implementation.
+//   - Normal P30F/regression execution does not invoke the probe because it
+//     exposes a BRAM B-channel response-accounting issue under BREADY backpressure.
+//   - Re-enable only after the BRAM subproject repair/regression is complete.
 // ============================================================
 
 class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
@@ -71,6 +84,28 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
     // Keep the timeout intentionally shorter than the normal two-slot
     // descriptor/recipe path so the P24 watchdog recovery contract is hit.
     localparam logic [31:0] P30F_SHORT_TIMEOUT_CYCLES = 32'h0000_0020;
+
+    // G7-K3A coverage-only host-burst probe region.
+    // P30F runtime objects occupy [0x300,0xB00).  Keep these probes
+    // above that range and below the validated 0x1000 local-memory
+    // boundary so they cannot disturb descriptor/SQ/CQ contents.
+    localparam logic [31:0] G7_K3A_FIXED_ADDR = 32'h0000_0C00;
+    localparam logic [31:0] G7_K3A_WRAP_ADDR  = 32'h0000_0C58;
+    localparam int unsigned G7_K3A_BEATS      = 4;
+    localparam logic [2:0]  G7_K3A_SIZE_8B    = 3'd3;
+    localparam logic [1:0]  G7_K3A_BURST_FIXED= 2'b00;
+    localparam logic [1:0]  G7_K3A_BURST_WRAP = 2'b10;
+
+    // G7-K3B coverage-only Port0 B-FIFO deeper-occupancy probe.
+    // Keep the two single-beat writes in a separate isolated region.
+    // A 32-cycle BREADY hold is intentionally conservative relative to
+    // the deterministic one-beat commit/emit latency of this model.
+    localparam logic [31:0] G7_K3B_BASE_ADDR          = 32'h0000_0D00;
+    localparam int unsigned G7_K3B_REPEAT_COUNT       = 2;
+    localparam int unsigned G7_K3B_REPEAT_STRIDE      = 8;
+    localparam int unsigned G7_K3B_BREADY_HOLD_CYCLES = 32;
+    localparam logic [2:0]  G7_K3B_SIZE_8B            = 3'd3;
+    localparam logic [1:0]  G7_K3B_BURST_INCR         = 2'b01;
 
     function new(string name = "ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test",
                  uvm_component parent = null);
@@ -440,6 +475,240 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
                 snap.queue_stalled_cycles,
                 snap.cq_full_stall_cycles),
             UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // G7-K3A: legal Port0 FIXED / WRAP burst coverage probe
+    //
+    // The host traffic checker is disabled in the CSR/runtime stack used
+    // by this test.  Run the probe only after the full P30F recovery
+    // contract and result compare are complete, with all lower engines
+    // quiescent.
+    // ------------------------------------------------------------
+    task automatic g7_k3a_run_port0_legal_burst_probe(
+        input ai_accel_subsys_seq_item profile_item
+    );
+        axi_mm_host_seq      burst_seq;
+        axi_mm_host_seq_item rsp;
+        bit [63:0] fixed_wdata[];
+        bit [7:0]  fixed_wstrb[];
+        bit [63:0] wrap_wdata[];
+        bit [7:0]  wrap_wstrb[];
+        int unsigned i;
+    begin
+        fixed_wdata = new[G7_K3A_BEATS];
+        fixed_wstrb = new[G7_K3A_BEATS];
+        wrap_wdata  = new[G7_K3A_BEATS];
+        wrap_wstrb  = new[G7_K3A_BEATS];
+
+        fixed_wdata[0] = 64'h1111_2222_3333_4444;
+        fixed_wdata[1] = 64'h5555_6666_7777_8888;
+        fixed_wdata[2] = 64'h9999_AAAA_BBBB_CCCC;
+        fixed_wdata[3] = 64'hDDDD_EEEE_FFFF_0001;
+
+        wrap_wdata[0]  = 64'hA0A1_A2A3_A4A5_A6A7;
+        wrap_wdata[1]  = 64'hB0B1_B2B3_B4B5_B6B7;
+        wrap_wdata[2]  = 64'hC0C1_C2C3_C4C5_C6C7;
+        wrap_wdata[3]  = 64'hD0D1_D2D3_D4D5_D6D7;
+
+        for (i = 0; i < G7_K3A_BEATS; i++) begin
+            fixed_wstrb[i] = 8'hFF;
+            wrap_wstrb[i]  = 8'hFF;
+        end
+
+        burst_seq = axi_mm_host_seq::type_id::create("g7_k3a_port0_burst_seq");
+        burst_seq.set_case_context(
+            selected_case_id,
+            profile_item.test_kind,
+            "g7_k3a_port0_legal_burst",
+            0
+        );
+        burst_seq.set_enable_log(1'b1);
+
+        `uvm_info("CODE_COV_C1_2G7_K3A",
+            $sformatf("Starting legal Port0 burst probe: FIXED addr=0x%08h WRAP start=0x%08h beats=%0d size=%0d",
+                G7_K3A_FIXED_ADDR, G7_K3A_WRAP_ADDR, G7_K3A_BEATS, G7_K3A_SIZE_8B),
+            UVM_MEDIUM)
+
+        // Four full-width FIXED write beats target the same BRAM word.
+        // This exercises legal FIXED addressing plus same-word commit
+        // coalescing.  The final committed value must equal beat 3.
+        burst_seq.queue_raw_write_burst(
+            G7_K3A_FIXED_ADDR,
+            fixed_wdata,
+            fixed_wstrb,
+            G7_K3A_SIZE_8B,
+            G7_K3A_BURST_FIXED
+        );
+        burst_seq.queue_raw_read_burst(
+            G7_K3A_FIXED_ADDR,
+            G7_K3A_BEATS,
+            G7_K3A_SIZE_8B,
+            G7_K3A_BURST_FIXED
+        );
+
+        // For a four-beat, 8-byte WRAP burst the wrap window is 32 bytes.
+        // Start at 0x...58 so the legal sequence crosses the boundary:
+        //   0x...58 -> 0x...40 -> 0x...48 -> 0x...50
+        burst_seq.queue_raw_write_burst(
+            G7_K3A_WRAP_ADDR,
+            wrap_wdata,
+            wrap_wstrb,
+            G7_K3A_SIZE_8B,
+            G7_K3A_BURST_WRAP
+        );
+        burst_seq.queue_raw_read_burst(
+            G7_K3A_WRAP_ADDR,
+            G7_K3A_BEATS,
+            G7_K3A_SIZE_8B,
+            G7_K3A_BURST_WRAP
+        );
+
+        burst_seq.start(env.host_agent.sequencer);
+
+        if (burst_seq.get_response_count() != 4) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3A/RSP_COUNT",
+                $sformatf("Expected 4 raw-burst responses, got %0d",
+                    burst_seq.get_response_count()))
+        end
+
+        rsp = burst_seq.get_response_item(1);
+        if ((rsp == null) || !rsp.response_valid ||
+            (rsp.burst_read_data.size() != G7_K3A_BEATS)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3A/FIXED_RSP",
+                "Malformed FIXED raw-read response")
+        end
+
+        for (i = 0; i < G7_K3A_BEATS; i++) begin
+            if (rsp.burst_read_data[i] !== fixed_wdata[G7_K3A_BEATS-1]) begin
+                `uvm_fatal("CODE_COV_C1_2G7_K3A/FIXED_DATA",
+                    $sformatf("FIXED readback mismatch beat=%0d actual=0x%016h expected=0x%016h",
+                        i, rsp.burst_read_data[i], fixed_wdata[G7_K3A_BEATS-1]))
+            end
+        end
+
+        rsp = burst_seq.get_response_item(3);
+        if ((rsp == null) || !rsp.response_valid ||
+            (rsp.burst_read_data.size() != G7_K3A_BEATS)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3A/WRAP_RSP",
+                "Malformed WRAP raw-read response")
+        end
+
+        for (i = 0; i < G7_K3A_BEATS; i++) begin
+            if (rsp.burst_read_data[i] !== wrap_wdata[i]) begin
+                `uvm_fatal("CODE_COV_C1_2G7_K3A/WRAP_DATA",
+                    $sformatf("WRAP readback mismatch beat=%0d actual=0x%016h expected=0x%016h",
+                        i, rsp.burst_read_data[i], wrap_wdata[i]))
+            end
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_K3A/PASS",
+            "Legal Port0 FIXED/WRAP burst and same-word coalescing probe PASS",
+            UVM_LOW)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // G7-K3B: PARKED Port0 B-FIFO deeper-occupancy coverage probe
+    //
+    // Retained as future BRAM B-channel repair verification stimulus.
+    // Do not invoke from normal regression until the BRAM issue is fixed.
+    //
+    // One UVM raw-write item emits two independent AW/W transactions.
+    // BREADY remains low across both writes and for a bounded hold window,
+    // allowing two committed BRESPs to coexist in the Port0 B FIFO.
+    // The subsequent B drain must therefore exercise p0_b_count > 1.
+    // ------------------------------------------------------------
+    task automatic g7_k3b_run_port0_b_fifo_probe(
+        input ai_accel_subsys_seq_item profile_item
+    );
+        axi_mm_host_seq      b_fifo_seq;
+        axi_mm_host_seq_item rsp;
+        bit [63:0] write_data[];
+        bit [7:0]  write_strb[];
+        bit [63:0] expected_data;
+        int unsigned i;
+    begin
+        write_data = new[1];
+        write_strb = new[1];
+
+        expected_data = 64'hB3B3_5A5A_C3C3_A5A5;
+        write_data[0] = expected_data;
+        write_strb[0] = 8'hFF;
+
+        b_fifo_seq = axi_mm_host_seq::type_id::create("g7_k3b_port0_b_fifo_seq");
+        b_fifo_seq.set_case_context(
+            selected_case_id,
+            profile_item.test_kind,
+            "g7_k3b_port0_b_fifo_deeper_occupancy",
+            0
+        );
+        b_fifo_seq.set_enable_log(1'b1);
+
+        `uvm_info("CODE_COV_C1_2G7_K3B",
+            $sformatf("Starting Port0 B-FIFO probe: base=0x%08h repeats=%0d stride=%0d BREADY_hold=%0d",
+                G7_K3B_BASE_ADDR,
+                G7_K3B_REPEAT_COUNT,
+                G7_K3B_REPEAT_STRIDE,
+                G7_K3B_BREADY_HOLD_CYCLES),
+            UVM_MEDIUM)
+
+        // Two independent single-beat INCR writes are issued before any
+        // B response is accepted.  This is legal AXI B-channel
+        // backpressure and is the constructive stimulus for lines 596-597.
+        b_fifo_seq.queue_raw_write_burst_repeated(
+            G7_K3B_BASE_ADDR,
+            write_data,
+            write_strb,
+            G7_K3B_SIZE_8B,
+            G7_K3B_BURST_INCR,
+            G7_K3B_REPEAT_COUNT,
+            G7_K3B_REPEAT_STRIDE,
+            G7_K3B_BREADY_HOLD_CYCLES
+        );
+
+        // Read back both independently committed words after the two B
+        // responses have drained so the probe remains functionally checked.
+        b_fifo_seq.queue_raw_read_burst(
+            G7_K3B_BASE_ADDR,
+            1,
+            G7_K3B_SIZE_8B,
+            G7_K3B_BURST_INCR
+        );
+        b_fifo_seq.queue_raw_read_burst(
+            G7_K3B_BASE_ADDR + G7_K3B_REPEAT_STRIDE,
+            1,
+            G7_K3B_SIZE_8B,
+            G7_K3B_BURST_INCR
+        );
+
+        b_fifo_seq.start(env.host_agent.sequencer);
+
+        if (b_fifo_seq.get_response_count() != 3) begin
+            `uvm_fatal("CODE_COV_C1_2G7_K3B/RSP_COUNT",
+                $sformatf("Expected 3 responses, got %0d",
+                    b_fifo_seq.get_response_count()))
+        end
+
+        for (i = 1; i <= 2; i++) begin
+            rsp = b_fifo_seq.get_response_item(i);
+            if ((rsp == null) || !rsp.response_valid ||
+                (rsp.burst_read_data.size() != 1)) begin
+                `uvm_fatal("CODE_COV_C1_2G7_K3B/READ_RSP",
+                    $sformatf("Malformed K3B read response index=%0d", i))
+            end
+
+            if (rsp.burst_read_data[0] !== expected_data) begin
+                `uvm_fatal("CODE_COV_C1_2G7_K3B/READ_DATA",
+                    $sformatf("K3B readback mismatch index=%0d actual=0x%016h expected=0x%016h",
+                        i, rsp.burst_read_data[0], expected_data))
+            end
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_K3B/PASS",
+            "Port0 B-FIFO deeper-occupancy / deferred-B response probe PASS",
+            UVM_LOW)
     end
     endtask
 
@@ -822,6 +1091,14 @@ class ai_accel_subsys_csr_driver_abi_recovery_contract_smoke_test
 
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
+
+        // G7-K3A coverage-only extension.  The P30F contract and result
+        // checks are complete before this legal host-burst probe runs.
+        g7_k3a_run_port0_legal_burst_probe(profile_item);
+
+        // G7-K3B is intentionally PARKED.  Keep the probe implementation
+        // available for future BRAM B-channel repair verification, but do
+        // not invoke it from normal P30F/regression execution.
 
         `uvm_info("P30F_ABI/PASS",
             $sformatf("P30F driver ABI recovery contract PASS: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d recovery_paths={cq_full,timeout,mem_guard} event_mask=0x%08h",

@@ -31,6 +31,68 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
     localparam logic [31:0] DMA_DST_C_BASE = 32'h0000_0000;
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-L2 targeted operand-buffer overflow probe
+    //
+    // The operand buffer is 1024 bytes per operand and the Direct
+    // Stream write path is 64 bits / 8 bytes per beat.  129 beats
+    // therefore makes the final beat the first out-of-range write.
+    //
+    // This probe is intentionally manual-only because the RTL
+    // simulation diagnostic emits $error for the expected overflow.
+    // Standard regression behavior is unchanged unless the plusarg
+    // below is explicitly supplied to the simulator.
+    // ------------------------------------------------------------
+    localparam int unsigned G7_L2_OPERAND_BUFFER_BYTES = 1024;
+    localparam int unsigned G7_L2_OVERFLOW_BEATS =
+        (G7_L2_OPERAND_BUFFER_BYTES / BYTES_PER_BEAT) + 1;
+    localparam int unsigned G7_L2_OVERFLOW_BYTES =
+        G7_L2_OVERFLOW_BEATS * BYTES_PER_BEAT;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-L3-A targeted operand-buffer tail-read probe
+    //
+    // Direct Stream A/B routing uses the read START address while the
+    // operand buffer requires the full 32-bit / 4-byte read container to
+    // fit inside its 1024-byte storage.  M=7, N=1, K=146 makes the final
+    // A element start at local byte offset 1021:
+    //
+    //   A bytes        = 7 * 146 = 1022
+    //   A padded bytes = round_up(1022, 8) = 1024
+    //   final A offset = (6 * 146) + 145 = 1021
+    //
+    // The 128-beat A preload is fully legal; only the final GEMM A read
+    // crosses the 1024-byte operand-buffer read-container boundary.
+    //
+    // This probe is manual-only because gemm_operand_buffer intentionally
+    // emits a simulation $error when the read-error pulse is observed.
+    // ------------------------------------------------------------
+    localparam int unsigned G7_L3A_DIM_M = 7;
+    localparam int unsigned G7_L3A_DIM_N = 1;
+    localparam int unsigned G7_L3A_DIM_K = 146;
+
+    localparam int unsigned G7_L3A_A_BYTES =
+        G7_L3A_DIM_M * G7_L3A_DIM_K;
+    localparam int unsigned G7_L3A_B_BYTES =
+        G7_L3A_DIM_K * G7_L3A_DIM_N;
+
+    localparam int unsigned G7_L3A_A_PADDED_BYTES =
+        ((G7_L3A_A_BYTES + BYTES_PER_BEAT - 1) / BYTES_PER_BEAT) * BYTES_PER_BEAT;
+    localparam int unsigned G7_L3A_B_PADDED_BYTES =
+        ((G7_L3A_B_BYTES + BYTES_PER_BEAT - 1) / BYTES_PER_BEAT) * BYTES_PER_BEAT;
+
+    localparam int unsigned G7_L3A_A_BEATS =
+        G7_L3A_A_PADDED_BYTES / BYTES_PER_BEAT;
+    localparam int unsigned G7_L3A_B_BEATS =
+        G7_L3A_B_PADDED_BYTES / BYTES_PER_BEAT;
+
+    localparam logic [31:0] G7_L3A_SRC_A_BASE = 32'h0000_0000;
+    localparam logic [31:0] G7_L3A_SRC_B_BASE = 32'h0000_0400;
+
+    localparam logic [31:0] G7_L3A_BASE_A = 32'h0000_0000;
+    localparam logic [31:0] G7_L3A_BASE_B = 32'h0000_0800;
+    localparam logic [31:0] G7_L3A_BASE_C = 32'h0000_1000;
+
+    // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
     function new(string name = "ai_accel_subsys_csr_direct_stream_load_store_smoke_test",
@@ -147,6 +209,73 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
                 DS_SRC_B_BASE,
                 b_flat.size(),
                 DMA_DST_C_BASE),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic prepare_g7_l2_overflow_source(
+        input logic [31:0] base_addr,
+        input logic [7:0]  seed,
+        input string       tag
+    );
+        int unsigned i;
+        logic [7:0] byte_value;
+    begin
+        for (i = 0; i < G7_L2_OVERFLOW_BYTES; i++) begin
+            byte_value = seed + i;
+            vif.dma_src_mem_write_byte(
+                base_addr + 32'(i),
+                byte_value
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_L2/SRC",
+            $sformatf("Prepared %s overflow source: base=0x%08h bytes=%0d beats=%0d",
+                tag, base_addr, G7_L2_OVERFLOW_BYTES, G7_L2_OVERFLOW_BEATS),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic prepare_g7_l3a_tail_read_source();
+        int unsigned i;
+        logic [7:0] byte_value;
+    begin
+        vif.dma_src_mem_clear();
+        vif.dma_dst_mem_clear();
+
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+        vif.dma_dst_set_bresp_error(1'b0, -1);
+
+        // Use deterministic nonzero operand data for the real matrix
+        // footprint and zero-fill only the stream-beat padding bytes.
+        for (i = 0; i < G7_L3A_A_PADDED_BYTES; i++) begin
+            byte_value = (i < G7_L3A_A_BYTES) ? 8'h01 : 8'h00;
+            vif.dma_src_mem_write_byte(
+                G7_L3A_SRC_A_BASE + 32'(i),
+                byte_value
+            );
+        end
+
+        for (i = 0; i < G7_L3A_B_PADDED_BYTES; i++) begin
+            byte_value = (i < G7_L3A_B_BYTES) ? 8'h01 : 8'h00;
+            vif.dma_src_mem_write_byte(
+                G7_L3A_SRC_B_BASE + 32'(i),
+                byte_value
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_L3A/SRC",
+            $sformatf("Prepared tail-read source payloads: A src=0x%08h actual=%0d padded=%0d beats=%0d, B src=0x%08h actual=%0d padded=%0d beats=%0d",
+                G7_L3A_SRC_A_BASE,
+                G7_L3A_A_BYTES,
+                G7_L3A_A_PADDED_BYTES,
+                G7_L3A_A_BEATS,
+                G7_L3A_SRC_B_BASE,
+                G7_L3A_B_BYTES,
+                G7_L3A_B_PADDED_BYTES,
+                G7_L3A_B_BEATS),
             UVM_MEDIUM)
     end
     endtask
@@ -488,6 +617,312 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-L2 operand-buffer write-overflow probe
+    //
+    // This task intentionally drives one beat beyond the selected
+    // operand-buffer capacity.  The expected P14 Direct Stream error
+    // is checked architecturally.  The gemm_operand_buffer simulation
+    // diagnostic is intentionally NOT suppressed or downgraded.
+    // ------------------------------------------------------------
+    task automatic run_g7_l2_ds_operand_overflow_probe(
+        input logic [31:0] src_base,
+        input logic [31:0] dst_base,
+        input logic        operand_sel,
+        input string       tag
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] expected_error;
+        logic [31:0] expected_done;
+        int unsigned cnt;
+    begin
+        expected_error = 32'h0000_0001 << 2;
+        expected_done  = 32'h0000_0001 << ai_accel_csr_access_helper::DONE_DS_LOAD;
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr_write_ds_load_config(
+            src_base,
+            dst_base,
+            G7_L2_OVERFLOW_BEATS,
+            operand_sel,
+            {"G7_L2_", tag, "_OVERFLOW"}
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_L2/START",
+            $sformatf("Starting %s operand-buffer overflow probe: operand=%0d dst=0x%08h beats=%0d first_overflow_byte=%0d",
+                tag, operand_sel, dst_base, G7_L2_OVERFLOW_BEATS, G7_L2_OPERAND_BUFFER_BYTES),
+            UVM_MEDIUM)
+
+        csr_start_ds_load({"G7_L2_", tag, "_OVERFLOW"});
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/REJECT",
+                    $sformatf("%s overflow probe was unexpectedly rejected: reject=0x%08h status=0x%08h",
+                        tag, reject_status, status))
+            end
+
+            if ((error_status != 32'h0000_0000) &&
+                (error_status != expected_error)) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/BAD_ERROR",
+                    $sformatf("%s overflow probe observed unexpected P14 error bits: expected=0x%08h actual=0x%08h",
+                        tag, expected_error, error_status))
+            end
+
+            if (error_status == expected_error) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/ERROR_TIMEOUT",
+                    $sformatf("Timed out waiting for %s operand-buffer overflow to propagate after %0d cycles",
+                        tag, done_timeout_cycles))
+            end
+        end
+
+        // Wait for the failed Direct Stream transaction to retire before
+        // attempting recovery.  At this point the CSR sticky error is still
+        // asserted because the lower operand-buffer error source is sticky.
+        cnt = 0;
+        while (status[C1D1_P14_STATUS_DS_LOAD_BUSY]) begin
+            @(posedge csr_vif.clk);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/BUSY_TIMEOUT",
+                    $sformatf("%s Direct Stream engine remained busy after operand-buffer overflow", tag))
+            end
+        end
+
+        // Clear only DONE before re-arm.  Do not W1C ERROR yet because the
+        // lower operand-buffer sticky source is still asserted.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            expected_done
+        );
+
+        // Mirror the proven D2 recovery ordering.  The next same-operand
+        // Direct Stream start reaches C_START, which asserts
+        // operand_buf_clear_status plus clear_a/clear_b.  Only after that
+        // lower source is cleared is it safe to W1C CSR_ERROR_STATUS.
+        csr_write_ds_load_config(
+            src_base,
+            dst_base,
+            1,
+            operand_sel,
+            {"G7_L2_", tag, "_RECOVERY"}
+        );
+        csr_start_ds_load({"G7_L2_", tag, "_RECOVERY"});
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/RECOVERY_REJECT",
+                    $sformatf("%s overflow recovery start was rejected: reject=0x%08h status=0x%08h",
+                        tag, reject_status, status))
+            end
+
+            if (status[C1D1_P14_STATUS_DS_LOAD_BUSY] ||
+                ((done_status & expected_done) != 32'h0000_0000)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_L2/RECOVERY_START_TIMEOUT",
+                    $sformatf("%s overflow recovery never became active or completed", tag))
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_error
+        );
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_L2/CLEAR",
+                $sformatf("%s overflow/recovery sticky cleanup failed: error=0x%08h reject=0x%08h",
+                    tag, error_status, reject_status))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DS_LOAD,
+            {"G7_L2_", tag, "_RECOVERY"}
+        );
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1_2G7_L2/EXPECTED_ERROR_PASS",
+            $sformatf("%s operand-buffer overflow propagated and recovered as expected: operand=%0d beats=%0d P14_ERROR=0x%08h",
+                tag, operand_sel, G7_L2_OVERFLOW_BEATS, expected_error),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_g7_l2_write_overflow_probes(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[]
+    );
+    begin
+        `uvm_info("CODE_COV_C1_2G7_L2",
+            $sformatf("Manual targeted probe enabled: operand_buffer_bytes=%0d bytes_per_beat=%0d overflow_beats=%0d. Expected RTL $error diagnostics are intentionally preserved.",
+                G7_L2_OPERAND_BUFFER_BYTES, BYTES_PER_BEAT, G7_L2_OVERFLOW_BEATS),
+            UVM_MEDIUM)
+
+        prepare_g7_l2_overflow_source(DS_SRC_A_BASE, 8'hA0, "A");
+        run_g7_l2_ds_operand_overflow_probe(
+            DS_SRC_A_BASE,
+            profile_item.base_addr_a,
+            OPERAND_A,
+            "A"
+        );
+
+        prepare_g7_l2_overflow_source(DS_SRC_B_BASE, 8'hB0, "B");
+        run_g7_l2_ds_operand_overflow_probe(
+            DS_SRC_B_BASE,
+            profile_item.base_addr_b,
+            OPERAND_B,
+            "B"
+        );
+
+        // The synthetic 1032-byte sources overlap the normal compact
+        // payload regions.  Restore the original A/B source payloads so
+        // the representative GEMM + DMA-store flow below remains unchanged.
+        prepare_direct_stream_source_and_destination(a_flat, b_flat);
+
+        `uvm_info("CODE_COV_C1_2G7_L2/PASS",
+            "A/B 129-beat operand-buffer overflow, architectural error propagation, cleanup, and recovery probes completed",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-L3-A operand-buffer tail-read constructive probe
+    // ------------------------------------------------------------
+    task automatic run_g7_l3a_tail_read_probe(
+        input int signed normal_a_flat[],
+        input int signed normal_b_flat[]
+    );
+        ai_accel_subsys_seq_item g7_l3a_profile;
+    begin
+        g7_l3a_profile = ai_accel_subsys_seq_item::type_id::create("g7_l3a_profile");
+
+        g7_l3a_profile.case_id            = selected_case_id;
+        g7_l3a_profile.base_addr_a        = G7_L3A_BASE_A;
+        g7_l3a_profile.base_addr_b        = G7_L3A_BASE_B;
+        g7_l3a_profile.base_addr_c        = G7_L3A_BASE_C;
+        g7_l3a_profile.dim_m              = G7_L3A_DIM_M;
+        g7_l3a_profile.dim_n              = G7_L3A_DIM_N;
+        g7_l3a_profile.dim_k              = G7_L3A_DIM_K;
+        g7_l3a_profile.accumulate_enable  = 1'b0;
+
+        `uvm_info("CODE_COV_C1_2G7_L3A",
+            $sformatf("Manual targeted tail-read probe enabled: dim=(%0d,%0d,%0d) A_bytes=%0d A_padded=%0d A_beats=%0d final_A_offset=%0d B_bytes=%0d B_padded=%0d B_beats=%0d. Expected gemm_operand_buffer read $error is intentionally preserved.",
+                G7_L3A_DIM_M,
+                G7_L3A_DIM_N,
+                G7_L3A_DIM_K,
+                G7_L3A_A_BYTES,
+                G7_L3A_A_PADDED_BYTES,
+                G7_L3A_A_BEATS,
+                G7_L3A_A_BYTES - 1,
+                G7_L3A_B_BYTES,
+                G7_L3A_B_PADDED_BYTES,
+                G7_L3A_B_BEATS),
+            UVM_MEDIUM)
+
+        prepare_g7_l3a_tail_read_source();
+
+        // These preloads are intentionally legal.  A uses exactly the full
+        // 1024-byte operand-buffer capacity (128 beats), so no write-side
+        // overflow is involved in the L3-A proof.
+        run_one_ds_load(
+            G7_L3A_SRC_A_BASE,
+            G7_L3A_BASE_A,
+            G7_L3A_A_BYTES,
+            OPERAND_A,
+            "G7_L3A_A"
+        );
+
+        run_one_ds_load(
+            G7_L3A_SRC_B_BASE,
+            G7_L3A_BASE_B,
+            G7_L3A_B_BYTES,
+            OPERAND_B,
+            "G7_L3A_B"
+        );
+
+        csr_clear_sticky_status();
+        csr_write_direct_stream_gemm_config(g7_l3a_profile);
+
+        `uvm_info("CODE_COV_C1_2G7_L3A/START",
+            $sformatf("Starting tail-read GEMM: A=[0x%08h,+%0d padded bytes) B=[0x%08h,+%0d padded bytes) final A read start=0x%08h local_offset=%0d",
+                G7_L3A_BASE_A,
+                G7_L3A_A_PADDED_BYTES,
+                G7_L3A_BASE_B,
+                G7_L3A_B_PADDED_BYTES,
+                G7_L3A_BASE_A + G7_L3A_A_BYTES - 1,
+                G7_L3A_A_BYTES - 1),
+            UVM_MEDIUM)
+
+        csr_start_gemm();
+        csr_poll_gemm_done(done_timeout_cycles);
+        csr_check_perf_snapshot();
+
+        repeat (5) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1_2G7_L3A/EXPECTED_ERROR_PASS",
+            $sformatf("Tail-read GEMM completed after the expected operand-buffer read-container boundary event: local A offset=%0d requires bytes [%0d..%0d] against 1024-byte capacity",
+                G7_L3A_A_BYTES - 1,
+                G7_L3A_A_BYTES - 1,
+                (G7_L3A_A_BYTES - 1) + 3),
+            UVM_MEDIUM)
+
+        // The manual source payloads overwrite the normal CASE_ID=102 source
+        // regions.  Restore them so the representative smoke flow below is
+        // unchanged.  The next normal Direct Stream A start also provides
+        // the architectural operand-buffer status clear/re-arm.
+        prepare_direct_stream_source_and_destination(
+            normal_a_flat,
+            normal_b_flat
+        );
+
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1_2G7_L3A/PASS",
+            "Operand-buffer tail-read constructive probe completed; normal CASE_ID=102 source payloads restored",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // CSR GEMM config in Direct Stream input mode
     // ------------------------------------------------------------
     task automatic csr_write_direct_stream_gemm_config(
@@ -736,6 +1171,21 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
             (selected_case_id == 102)) begin
             run_d1_ds_reject_probes(profile_item.base_addr_a);
             run_d2_ds_error_probe(profile_item.base_addr_a, a_flat.size());
+
+            if ($test$plusargs("CODE_COV_G7_L2_WRITE_OVERFLOW")) begin
+                run_g7_l2_write_overflow_probes(
+                    profile_item,
+                    a_flat,
+                    b_flat
+                );
+            end
+
+            if ($test$plusargs("CODE_COV_G7_L3A_TAIL_READ")) begin
+                run_g7_l3a_tail_read_probe(
+                    a_flat,
+                    b_flat
+                );
+            end
         end
 
         run_one_ds_load(
