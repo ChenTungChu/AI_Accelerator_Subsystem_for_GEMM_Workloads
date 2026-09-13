@@ -30,6 +30,24 @@ class ai_accel_subsys_csr_job_frontend_mode_smoke_base extends ai_accel_subsys_c
     localparam logic [31:0] JOB_SRC_B_BASE = 32'h0000_0100;
     localparam logic [31:0] JOB_DST_C_BASE = 32'h0000_0000;
 
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A-R3-B
+    // Direct-Stream job-path committed-extent negative proof.
+    //
+    // The existing Direct-Stream regression class executes this preflight
+    // before its normal positive CASE_ID=102 flow.  Keeping the proof inside
+    // the existing carrier preserves the 150-test regression inventory while
+    // ensuring the shared-launch reject / sequencer-error path is represented
+    // in the merged full-regression UCDB.
+    // ------------------------------------------------------------
+    localparam int unsigned G8_R3_JOB_DIM_M = 1;
+    localparam int unsigned G8_R3_JOB_DIM_N = 1;
+    localparam int unsigned G8_R3_JOB_DIM_K = 16;
+    localparam int unsigned G8_R3_JOB_PRELOAD_BYTES = 8;
+    localparam logic [31:0] G8_R3_JOB_SEQUENCE_ERROR_MASK = 32'h0000_0100;
+    localparam logic [31:0] G8_R3_JOB_STATE_ERROR = 32'h0000_000E;
+
     // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
@@ -284,6 +302,176 @@ class ai_accel_subsys_csr_job_frontend_mode_smoke_base extends ai_accel_subsys_c
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A-R3-B
+    // P15 Direct-Stream undersized-extent shared-launch rejection proof
+    // ------------------------------------------------------------
+    task automatic run_g8_r3_direct_stream_extent_reject_probe();
+        ai_accel_subsys_seq_item profile_item;
+        int signed               a_flat[];
+        int signed               b_flat[];
+        logic [31:0]             job_status;
+        logic [31:0]             job_done_status;
+        logic [31:0]             job_error_status;
+        logic [31:0]             job_reject_status;
+        logic [31:0]             job_state;
+        logic [31:0]             job_mac_count;
+        int unsigned             poll_count;
+        int unsigned             i;
+    begin
+        `uvm_info("CODE_COV_C1P2_G8_A_R3_B/P15_START",
+            "Starting P15 Direct-Stream undersized-extent shared-launch rejection proof",
+            UVM_MEDIUM)
+
+        profile_item = ai_accel_subsys_seq_item::type_id::create("g8_r3_job_extent_profile");
+        profile_item.case_id            = selected_case_id;
+        profile_item.base_addr_a        = 32'h0000_0000;
+        profile_item.base_addr_b        = 32'h0000_0100;
+        profile_item.base_addr_c        = 32'h0000_0200;
+        profile_item.dim_m              = G8_R3_JOB_DIM_M;
+        profile_item.dim_n              = G8_R3_JOB_DIM_N;
+        profile_item.dim_k              = G8_R3_JOB_DIM_K;
+        profile_item.accumulate_enable  = 1'b0;
+
+        a_flat = new[G8_R3_JOB_PRELOAD_BYTES];
+        b_flat = new[G8_R3_JOB_PRELOAD_BYTES];
+        for (i = 0; i < G8_R3_JOB_PRELOAD_BYTES; i++) begin
+            a_flat[i] = 1;
+            b_flat[i] = 1;
+        end
+
+        prepare_frontend_source_and_destination(a_flat, b_flat);
+
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_check_job_idle_ready("before R3-B P15 extent-negative START_JOB");
+
+        csr_write_frontend_job_descriptor(
+            profile_item,
+            G8_R3_JOB_PRELOAD_BYTES,
+            G8_R3_JOB_PRELOAD_BYTES,
+            4
+        );
+
+        csr_start_job();
+
+        poll_count = 0;
+        forever begin
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_JOB_STATUS,
+                job_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS,
+                job_done_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS,
+                job_error_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS,
+                job_reject_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_JOB_STATE,
+                job_state
+            );
+
+            if (job_reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_UNEXPECTED_REJECT",
+                    $sformatf("P15 job was rejected before reaching the shared GEMM guard: reject=0x%08h state=0x%08h",
+                        job_reject_status, job_state))
+            end
+
+            if (job_done_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_UNEXPECTED_DONE",
+                    $sformatf("Undersized P15 Direct-Stream job must not reach JOB_DONE: done=0x%08h state=0x%08h",
+                        job_done_status, job_state))
+            end
+
+            if (job_error_status[8]) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            poll_count++;
+            if (poll_count > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_TIMEOUT",
+                    $sformatf("P15 shared launch rejection did not terminate the job; possible GEMM_WAIT hang. status=0x%08h error=0x%08h state=0x%08h polls=%0d",
+                        job_status, job_error_status, job_state, poll_count))
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATUS, job_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_DONE_STATUS, job_done_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, job_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_STATE, job_state);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_PERF_MAC_COUNT, job_mac_count);
+
+        if (job_error_status != G8_R3_JOB_SEQUENCE_ERROR_MASK) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_ERROR_MISMATCH",
+                $sformatf("Expected only P15 JOB_SEQUENCE_ERROR bit8 after shared extent rejection: error=0x%08h",
+                    job_error_status))
+        end
+
+        if (job_reject_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_REJECT_MISMATCH",
+                $sformatf("Shared actual-state guard is a post-START_JOB sequence failure, not a P15 descriptor reject: reject=0x%08h",
+                    job_reject_status))
+        end
+
+        if (job_done_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_DONE_MISMATCH",
+                $sformatf("No P15 done bits may assert for extent-rejected GEMM: done=0x%08h",
+                    job_done_status))
+        end
+
+        if (job_status[0]) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_BUSY_STUCK",
+                $sformatf("P15 job remained busy after shared extent rejection: status=0x%08h state=0x%08h",
+                    job_status, job_state))
+        end
+
+        if (!job_status[2] || (job_state != G8_R3_JOB_STATE_ERROR)) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_TERMINAL_STATE",
+                $sformatf("Expected terminal JOB_ERROR state with error summary set: status=0x%08h state=0x%08h",
+                    job_status, job_state))
+        end
+
+        if (job_mac_count != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_MAC_ACTIVITY",
+                $sformatf("Extent-rejected P15 job must not execute GEMM MACs: job_mac_count=%0d",
+                    job_mac_count))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G8_A_R3_B/P15_EXTENT_REJECT_PASS",
+            $sformatf("P15 undersized A/B preloads completed, shared GEMM launch guard rejected the request, sequencer terminated with sequence-error bit8, and no GEMM MAC activity occurred (polls=%0d)",
+                poll_count),
+            UVM_MEDIUM)
+
+        csr_job_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_ERROR_STATUS, job_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_JOB_REJECT_STATUS, job_reject_status);
+
+        if ((job_error_status != 32'h0000_0000) ||
+            (job_reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1P2_G8_A_R3_B/P15_CLEAR_FAIL",
+                $sformatf("P15 sticky clear failed after extent rejection: error=0x%08h reject=0x%08h",
+                    job_error_status, job_reject_status))
+        end
+
+        csr_check_job_idle_ready("after R3-B P15 extent-reject clear");
+
+        `uvm_info("CODE_COV_C1P2_G8_A_R3_B/P15_PASS",
+            "P15 Direct-Stream extent-negative shared-guard proof PASS; proceeding to normal positive job",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Run phase
     // ------------------------------------------------------------
     task run_phase(uvm_phase phase);
@@ -305,6 +493,10 @@ class ai_accel_subsys_csr_job_frontend_mode_smoke_base extends ai_accel_subsys_c
         wait_for_reset_release();
         csr.init_bus();
         csr.wait_reset_release();
+
+        if (get_job_mode_value() == JOB_MODE_DS_LOAD_DMA_STORE) begin
+            run_g8_r3_direct_stream_extent_reject_probe();
+        end
 
         build_selected_payload(
             profile_item,
@@ -409,5 +601,6 @@ class ai_accel_subsys_csr_job_direct_stream_load_store_smoke_test extends ai_acc
     endfunction
 
 endclass
+
 
 `endif

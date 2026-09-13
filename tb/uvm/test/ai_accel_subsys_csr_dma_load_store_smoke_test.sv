@@ -133,6 +133,7 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
         vif.axis_src_set_rresp_error(1'b0, -1);
         vif.ds_src_set_rresp_error(1'b0, -1);
         vif.dma_dst_set_bresp_error(1'b0, -1);
+        vif.dma_dst_set_aw_w_backpressure(1'b0, -1, -1);
 
         write_u8_payload_to_dma_src(DMA_SRC_A_BASE, a_flat);
         write_u8_payload_to_dma_src(DMA_SRC_B_BASE, b_flat);
@@ -375,6 +376,312 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
         );
 
         repeat (5) @(posedge csr_vif.clk);
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-V4-B DMA-store destination AW/W
+    // independent-handshake / backpressure probe
+    //
+    // Relative destination beats:
+    //   beat 0 -> AW-first  (WREADY held low until AW is accepted)
+    //   beat 1 -> W-first   (AWREADY held low until W is accepted)
+    // ------------------------------------------------------------
+    task automatic run_g7_v4_dma_store_aw_w_backpressure_probe(
+        input logic [31:0] src_base,
+        input logic [31:0] dst_base,
+        input int unsigned byte_count
+    );
+        int unsigned aw_first_before;
+        int unsigned w_first_before;
+        int unsigned aw_first_after;
+        int unsigned w_first_after;
+    begin
+        if (bytes_to_beats(byte_count) < 2) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_V4/TOO_SHORT",
+                $sformatf("G7-V4 requires at least two DMA-store destination beats, got byte_count=%0d beats=%0d",
+                    byte_count, bytes_to_beats(byte_count)))
+        end
+
+        aw_first_before = vif.dma_dst_aw_first_observed_count;
+        w_first_before  = vif.dma_dst_w_first_observed_count;
+
+        vif.dma_dst_set_aw_w_backpressure(
+            1'b1,
+            0,
+            1
+        );
+
+        // Allow the responder to capture its transaction-relative
+        // AW/W base counters before issuing START_DMA_STORE.
+        repeat (2) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1P2_G7_V4/START",
+            $sformatf("Starting DMA-store AW/W backpressure probe: src=0x%08h dst=0x%08h bytes=%0d beat0=AW-first beat1=W-first",
+                src_base, dst_base, byte_count),
+            UVM_MEDIUM)
+
+        run_dma_store(src_base, dst_base, byte_count);
+
+        vif.dma_dst_set_aw_w_backpressure(1'b0, -1, -1);
+        repeat (2) @(posedge csr_vif.clk);
+
+        aw_first_after = vif.dma_dst_aw_first_observed_count;
+        w_first_after  = vif.dma_dst_w_first_observed_count;
+
+        if (aw_first_after <= aw_first_before) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_V4/AW_FIRST_MISS",
+                $sformatf("DMA destination AW-first ordering was not observed: before=%0d after=%0d",
+                    aw_first_before, aw_first_after))
+        end
+
+        if (w_first_after <= w_first_before) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_V4/W_FIRST_MISS",
+                $sformatf("DMA destination W-first ordering was not observed: before=%0d after=%0d",
+                    w_first_before, w_first_after))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_V4/PASS",
+            $sformatf("DMA-store destination independent-handshake probe PASS: AW-first delta=%0d W-first delta=%0d",
+                aw_first_after - aw_first_before,
+                w_first_after - w_first_before),
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Y1 DMA load/store cross-owner
+    // mutual-exclusion constructive validation
+    //
+    // Exercise both legal frontend rejection directions without
+    // intentionally creating the illegal simultaneous-busy state:
+    //
+    //   START_DMA_LOAD
+    //     -> immediately START_DMA_STORE
+    //     -> REJ_DMA_STORE_BUSY
+    //
+    //   START_DMA_STORE
+    //     -> immediately START_DMA_LOAD
+    //     -> REJ_DMA_LOAD_BUSY
+    //
+    // No busy poll or inserted delay is allowed between the first
+    // accepted START and the adjacent cross-owner START.  This keeps
+    // the probe focused on the accepted-start -> busy-visibility
+    // reservation window while continuously checking that the two
+    // DMA owners never become busy at the same time.
+    // ------------------------------------------------------------
+    task automatic run_g7_y1_dma_load_store_cross_owner_reject_probe(
+        input logic [31:0] scratchpad_c_base
+    );
+        bit load_busy_seen;
+        bit store_busy_seen;
+        bit overlap_seen;
+        bit monitor_done;
+    begin
+        `uvm_info("CODE_COV_C1P2_G7_Y1/START",
+            "Starting DMA load/store cross-owner mutual-exclusion probe",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // Probe A:
+        //   DMA Load owns Port0.
+        //   Adjacent START_DMA_STORE must be rejected.
+        // --------------------------------------------------------
+        csr_clear_sticky_status();
+
+        csr_write_dma_load_config(
+            DMA_SRC_A_BASE,
+            32'h0000_0000,
+            8,
+            "G7_Y1_LOAD_OWNER"
+        );
+
+        csr_write_dma_store_config(
+            scratchpad_c_base,
+            DMA_DST_C_BASE,
+            64
+        );
+
+        load_busy_seen  = 1'b0;
+        store_busy_seen = 1'b0;
+        overlap_seen    = 1'b0;
+        monitor_done    = 1'b0;
+
+        fork
+            begin : g7_y1_load_owner_monitor
+                while (!monitor_done) begin
+                    @(posedge csr_vif.clk);
+
+                    if (vif.dma_load_busy) begin
+                        load_busy_seen = 1'b1;
+                    end
+
+                    if (vif.dma_store_busy) begin
+                        store_busy_seen = 1'b1;
+                    end
+
+                    if (vif.dma_load_busy && vif.dma_store_busy) begin
+                        overlap_seen = 1'b1;
+                    end
+                end
+            end
+
+            begin : g7_y1_load_owner_sequence
+                csr_start_dma_load("G7_Y1_LOAD_OWNER");
+
+                `uvm_info("CODE_COV_C1P2_G7_Y1/LOAD_OWNER_START",
+                    "START_DMA_LOAD write completed; issuing START_DMA_STORE immediately with no busy poll or inserted delay",
+                    UVM_MEDIUM)
+
+                csr_start_dma_store();
+
+                repeat (2) @(posedge csr_vif.clk);
+
+                csr_expect_p14_reject_bit(
+                    C1D1_P14_REJ_DMA_STORE_BUSY,
+                    "G7-Y1 START_DMA_STORE while DMA load owns Port0"
+                );
+
+                csr_clear_p14_reject_status(
+                    "after G7-Y1 LOAD-owner blocks STORE reject"
+                );
+
+                csr_poll_done_bit(
+                    done_timeout_cycles,
+                    ai_accel_csr_access_helper::DONE_DMA_LOAD,
+                    "G7_Y1_DMA_LOAD_OWNER"
+                );
+
+                repeat (2) @(posedge csr_vif.clk);
+                monitor_done = 1'b1;
+            end
+        join
+
+        if (!load_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/LOAD_OWNER_NOT_BUSY",
+                "DMA load owner was never observed busy during LOAD->STORE cross-owner probe")
+        end
+
+        if (store_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/STORE_LAUNCHED",
+                "DMA store became busy even though adjacent START_DMA_STORE was required to be rejected")
+        end
+
+        if (overlap_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/OVERLAP_LOAD_OWNER",
+                "Observed illegal simultaneous DMA load/store busy during LOAD->STORE probe")
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Y1/LOAD_BLOCKS_STORE_PASS",
+            $sformatf("Adjacent START_DMA_STORE rejected with REJ_DMA_STORE_BUSY: dma_load_busy_seen=%0d dma_store_busy_seen=%0d overlap_seen=%0d",
+                load_busy_seen,
+                store_busy_seen,
+                overlap_seen),
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // Probe B:
+        //   DMA Store owns Port0.
+        //   Adjacent START_DMA_LOAD must be rejected.
+        // --------------------------------------------------------
+        csr_clear_sticky_status();
+
+        csr_write_dma_load_config(
+            DMA_SRC_A_BASE,
+            32'h0000_0000,
+            8,
+            "G7_Y1_ADJACENT_LOAD"
+        );
+
+        csr_write_dma_store_config(
+            scratchpad_c_base,
+            DMA_DST_C_BASE,
+            64
+        );
+
+        load_busy_seen  = 1'b0;
+        store_busy_seen = 1'b0;
+        overlap_seen    = 1'b0;
+        monitor_done    = 1'b0;
+
+        fork
+            begin : g7_y1_store_owner_monitor
+                while (!monitor_done) begin
+                    @(posedge csr_vif.clk);
+
+                    if (vif.dma_load_busy) begin
+                        load_busy_seen = 1'b1;
+                    end
+
+                    if (vif.dma_store_busy) begin
+                        store_busy_seen = 1'b1;
+                    end
+
+                    if (vif.dma_load_busy && vif.dma_store_busy) begin
+                        overlap_seen = 1'b1;
+                    end
+                end
+            end
+
+            begin : g7_y1_store_owner_sequence
+                csr_start_dma_store();
+
+                `uvm_info("CODE_COV_C1P2_G7_Y1/STORE_OWNER_START",
+                    "START_DMA_STORE write completed; issuing START_DMA_LOAD immediately with no busy poll or inserted delay",
+                    UVM_MEDIUM)
+
+                csr_start_dma_load("G7_Y1_ADJACENT_LOAD");
+
+                repeat (2) @(posedge csr_vif.clk);
+
+                csr_expect_p14_reject_bit(
+                    C1D1_P14_REJ_DMA_LOAD_BUSY,
+                    "G7-Y1 START_DMA_LOAD while DMA store owns Port0"
+                );
+
+                csr_clear_p14_reject_status(
+                    "after G7-Y1 STORE-owner blocks LOAD reject"
+                );
+
+                csr_poll_done_bit(
+                    done_timeout_cycles,
+                    ai_accel_csr_access_helper::DONE_DMA_STORE,
+                    "G7_Y1_DMA_STORE_OWNER"
+                );
+
+                repeat (2) @(posedge csr_vif.clk);
+                monitor_done = 1'b1;
+            end
+        join
+
+        if (!store_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/STORE_OWNER_NOT_BUSY",
+                "DMA store owner was never observed busy during STORE->LOAD cross-owner probe")
+        end
+
+        if (load_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/LOAD_LAUNCHED",
+                "DMA load became busy even though adjacent START_DMA_LOAD was required to be rejected")
+        end
+
+        if (overlap_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y1/OVERLAP_STORE_OWNER",
+                "Observed illegal simultaneous DMA load/store busy during STORE->LOAD probe")
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Y1/STORE_BLOCKS_LOAD_PASS",
+            $sformatf("Adjacent START_DMA_LOAD rejected with REJ_DMA_LOAD_BUSY: dma_store_busy_seen=%0d dma_load_busy_seen=%0d overlap_seen=%0d",
+                store_busy_seen,
+                load_busy_seen,
+                overlap_seen),
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1P2_G7_Y1/PASS",
+            "DMA load/store cross-owner mutual exclusion PASS",
+            UVM_MEDIUM)
     end
     endtask
 
@@ -638,6 +945,7 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
         if ((get_type_name() == "ai_accel_subsys_csr_dma_load_store_smoke_test") &&
             (selected_case_id == 102)) begin
             run_d1_dma_load_store_reject_probes(profile_item.base_addr_c);
+            run_g7_y1_dma_load_store_cross_owner_reject_probe(profile_item.base_addr_c);
             run_d2_dma_store_error_probe(profile_item.base_addr_c, c_bytes);
         end
 
@@ -661,11 +969,21 @@ class ai_accel_subsys_csr_dma_load_store_smoke_test extends ai_accel_subsys_csr_
         csr_poll_gemm_done(done_timeout_cycles);
         csr_check_perf_snapshot();
 
-        run_dma_store(
-            profile_item.base_addr_c,
-            DMA_DST_C_BASE,
-            c_bytes
-        );
+        if ((get_type_name() == "ai_accel_subsys_csr_dma_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_g7_v4_dma_store_aw_w_backpressure_probe(
+                profile_item.base_addr_c,
+                DMA_DST_C_BASE,
+                c_bytes
+            );
+        end
+        else begin
+            run_dma_store(
+                profile_item.base_addr_c,
+                DMA_DST_C_BASE,
+                c_bytes
+            );
+        end
 
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);

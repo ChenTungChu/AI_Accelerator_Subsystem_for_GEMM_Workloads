@@ -15,6 +15,7 @@
 //   - Validates START_QUEUE busy/sticky/underlying-busy policy.
 //   - Validates busy queue-configuration write rejection and retention.
 //   - Validates that queue activity blocks manual P14/P15/P16/P17/P18 starts.
+//   - Validates Q_PRESENT/manual-P17 collision ready-deassert/retry policy.
 //   - After CQ-full recovery, reuses the P19E end-to-end flow and
 //     confirms the completion record is written into the CQ slot.
 //   - Confirms a manual P15 job can run after queue ownership ends.
@@ -61,6 +62,11 @@ class ai_accel_subsys_csr_queue_reject_error_test
     localparam int P16_REJ_MANUAL_CMD         = 7;
     localparam int P17_REJ_BUSY               = 0;
     localparam int P18_REJ_ENGINE             = 0;
+
+    // Queue controller state encodings used only for passive Z3-A timing
+    // observation.  These values match ai_accel_queue_fetch_controller.sv.
+    localparam logic [3:0] Q_STATE_VALIDATE   = 4'd4;
+    localparam logic [3:0] Q_STATE_PRESENT    = 4'd5;
 
     localparam logic [31:0] ERR_DISABLED        = 32'h0000_0001;
     localparam logic [31:0] ERR_INVALID_CFG     = 32'h0000_0002;
@@ -1002,6 +1008,213 @@ class ai_accel_subsys_csr_queue_reject_error_test
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Z3-A
+    // Queue-PRESENT / manual-P17 START collision constructive probe.
+    //
+    // Timing strategy:
+    //   - Arm the manual P17 AXI-Lite write at the falling edge while the
+    //     queue controller is in Q_VALIDATE.
+    //   - On the next rising edge, Q_VALIDATE advances to Q_PRESENT while
+    //     the CSR write applies and raises csr_desc_fetch_start_pulse.
+    //   - During that Q_PRESENT cycle the manual pulse must make
+    //     queue_cmd_ready_i=0, preventing the queue-owned P17 launch.
+    //   - On the following cycle the manual pulse clears, the queue remains
+    //     in Q_PRESENT, and the queue-owned P17 launch retries normally.
+    //
+    // This is a legal interface-level collision.  No DUT force/deposit or
+    // hierarchical state corruption is used.
+    // ------------------------------------------------------------
+    task automatic p19f_g7_z3a_queue_present_manual_p17_collision();
+        logic [31:0] cmd;
+        logic [31:0] reject_status;
+        logic [31:0] expected_reject;
+        int unsigned cnt;
+        bit          armed;
+    begin
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/START",
+            "Starting Queue-PRESENT / manual-P17 START collision probe",
+            UVM_MEDIUM)
+
+        p19f_clear_queue_sticky_and_wait_idle();
+        csr_desc_fetch_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+
+        p19f_program_valid_sq_command_entry(0, P19F_CMD_CONTROL_STOP);
+        p19f_program_base_queue(
+            32'd1,
+            32'd0,
+            32'(P19F_QUEUE_DEPTH),
+            32'(P19F_QUEUE_DEPTH),
+            32'h0000_0005
+        );
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::DESC_FETCH_CMD_START] = 1'b1;
+
+        p19f_start_queue();
+
+        // Wait on falling edges so the CSR AW/W request can be presented
+        // cleanly ahead of the exact Q_VALIDATE -> Q_PRESENT rising edge.
+        cnt   = 0;
+        armed = 1'b0;
+        while (!armed) begin
+            @(negedge csr_vif.clk);
+
+            if (p17d_ctrl_vif.queue_state_obs[3:0] == Q_STATE_VALIDATE) begin
+                if ((csr_vif.awready !== 1'b1) ||
+                    (csr_vif.wready  !== 1'b1) ||
+                    (csr_vif.bvalid  !== 1'b0)) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z3A/CSR_NOT_READY",
+                        $sformatf("Reached Q_VALIDATE but CSR frontend was not idle: AWREADY=%0b WREADY=%0b BVALID=%0b",
+                            csr_vif.awready, csr_vif.wready, csr_vif.bvalid))
+                end
+
+                csr_vif.awaddr  <= ai_accel_csr_access_helper::CSR_DESC_FETCH_COMMAND;
+                csr_vif.awprot  <= 3'b000;
+                csr_vif.awvalid <= 1'b1;
+                csr_vif.wdata   <= cmd;
+                csr_vif.wstrb   <= 4'hF;
+                csr_vif.wvalid  <= 1'b1;
+                csr_vif.bready  <= 1'b1;
+
+                armed = 1'b1;
+
+                `uvm_info("CODE_COV_C1P2_G7_Z3A/ARMED_AT_VALIDATE",
+                    $sformatf("Manual P17 START armed in Q_VALIDATE: state=%0d AWREADY=%0b WREADY=%0b",
+                        p17d_ctrl_vif.queue_state_obs[3:0],
+                        csr_vif.awready,
+                        csr_vif.wready),
+                    UVM_MEDIUM)
+            end
+            else begin
+                cnt++;
+                if (cnt > done_timeout_cycles) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z3A/VALIDATE_TIMEOUT",
+                        $sformatf("Timed out waiting for Q_VALIDATE: state=%0d valid=%0b ready=%0b reject=%0b",
+                            p17d_ctrl_vif.queue_state_obs[3:0],
+                            p17d_ctrl_vif.queue_cmd_valid_obs,
+                            p17d_ctrl_vif.queue_cmd_ready_obs,
+                            p17d_ctrl_vif.queue_cmd_reject_obs))
+                end
+            end
+        end
+
+        // The pre-edge request must be consumed as a same-cycle AW/W write.
+        @(posedge csr_vif.clk);
+        if (!((csr_vif.awvalid === 1'b1) && (csr_vif.awready === 1'b1) &&
+              (csr_vif.wvalid  === 1'b1) && (csr_vif.wready  === 1'b1))) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z3A/WRITE_HANDSHAKE",
+                $sformatf("Manual P17 START did not handshake AW/W together on Q_VALIDATE->Q_PRESENT edge: AWV/AWR=%0b/%0b WV/WR=%0b/%0b",
+                    csr_vif.awvalid, csr_vif.awready,
+                    csr_vif.wvalid, csr_vif.wready))
+        end
+        csr_vif.awvalid <= 1'b0;
+        csr_vif.wvalid  <= 1'b0;
+
+        // After NBA updates from the edge above, the exact FEC collision
+        // tuple must be visible for the whole Q_PRESENT cycle.
+        @(negedge csr_vif.clk);
+        if ((p17d_ctrl_vif.queue_state_obs[3:0] !== Q_STATE_PRESENT) ||
+            (p17d_ctrl_vif.queue_cmd_valid_obs !== 1'b1) ||
+            (p17d_ctrl_vif.queue_cmd_reject_obs !== 1'b0) ||
+            (p17d_ctrl_vif.desc_fetch_start_blocked_obs !== 1'b0) ||
+            (p17d_ctrl_vif.csr_desc_fetch_start_blocked_obs !== 1'b1) ||
+            (p17d_ctrl_vif.csr_desc_fetch_start_pulse_obs !== 1'b1) ||
+            (p17d_ctrl_vif.queue_cmd_ready_obs !== 1'b0) ||
+            (p17d_ctrl_vif.queue_desc_fetch_start_pulse_obs !== 1'b0) ||
+            (p17d_ctrl_vif.desc_fetch_start_to_engine_obs !== 1'b0)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z3A/COLLISION_MISMATCH",
+                $sformatf("Expected Q_PRESENT collision tuple state=5 valid=1 reject=0 raw_blocked=0 csr_blocked=1 csr_p17=1 ready=0 queue_p17=0 engine_start=0; got state=%0d valid=%0b reject=%0b raw_blocked=%0b csr_blocked=%0b csr_p17=%0b ready=%0b queue_p17=%0b engine_start=%0b",
+                    p17d_ctrl_vif.queue_state_obs[3:0],
+                    p17d_ctrl_vif.queue_cmd_valid_obs,
+                    p17d_ctrl_vif.queue_cmd_reject_obs,
+                    p17d_ctrl_vif.desc_fetch_start_blocked_obs,
+                    p17d_ctrl_vif.csr_desc_fetch_start_blocked_obs,
+                    p17d_ctrl_vif.csr_desc_fetch_start_pulse_obs,
+                    p17d_ctrl_vif.queue_cmd_ready_obs,
+                    p17d_ctrl_vif.queue_desc_fetch_start_pulse_obs,
+                    p17d_ctrl_vif.desc_fetch_start_to_engine_obs))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/COLLISION_PASS",
+            "Q_PRESENT collision PASS: non-rejected queue command held ready=0 while manual P17 START was ownership-blocked",
+            UVM_MEDIUM)
+
+        // The write response is architectural OKAY; rejection is reported by
+        // the P17 sticky reject status, as in the existing ownership tests.
+        @(posedge csr_vif.clk);
+        if ((csr_vif.bvalid !== 1'b1) ||
+            (csr_vif.bresp  !== ai_accel_csr_access_helper::AXI_RESP_OKAY)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z3A/BRESP",
+                $sformatf("Expected manual P17 AXI-Lite BRESP OKAY, got BVALID=%0b BRESP=%0b",
+                    csr_vif.bvalid, csr_vif.bresp))
+        end
+        csr_vif.bready <= 1'b0;
+        csr_vif.awaddr <= '0;
+        csr_vif.awprot <= '0;
+        csr_vif.wdata  <= '0;
+        csr_vif.wstrb  <= '0;
+
+        // queue_cmd_ready was 0 on the edge above, so Q_PRESENT must be
+        // retained.  Once the one-cycle manual pulse clears, the queue-owned
+        // P17 launch becomes ready and reaches the engine normally.
+        @(negedge csr_vif.clk);
+        if ((p17d_ctrl_vif.queue_state_obs[3:0] !== Q_STATE_PRESENT) ||
+            (p17d_ctrl_vif.queue_cmd_valid_obs !== 1'b1) ||
+            (p17d_ctrl_vif.queue_cmd_reject_obs !== 1'b0) ||
+            (p17d_ctrl_vif.csr_desc_fetch_start_pulse_obs !== 1'b0) ||
+            (p17d_ctrl_vif.queue_cmd_ready_obs !== 1'b1) ||
+            (p17d_ctrl_vif.queue_desc_fetch_start_pulse_obs !== 1'b1) ||
+            (p17d_ctrl_vif.desc_fetch_start_to_engine_obs !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z3A/QUEUE_RETRY_MISMATCH",
+                $sformatf("Expected retained Q_PRESENT retry tuple state=5 valid=1 reject=0 csr_p17=0 ready=1 queue_p17=1 engine_start=1; got state=%0d valid=%0b reject=%0b csr_p17=%0b ready=%0b queue_p17=%0b engine_start=%0b",
+                    p17d_ctrl_vif.queue_state_obs[3:0],
+                    p17d_ctrl_vif.queue_cmd_valid_obs,
+                    p17d_ctrl_vif.queue_cmd_reject_obs,
+                    p17d_ctrl_vif.csr_desc_fetch_start_pulse_obs,
+                    p17d_ctrl_vif.queue_cmd_ready_obs,
+                    p17d_ctrl_vif.queue_desc_fetch_start_pulse_obs,
+                    p17d_ctrl_vif.desc_fetch_start_to_engine_obs))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/QUEUE_RETRY_PASS",
+            "Queue command remained in Q_PRESENT for one cycle, then retried and launched queue-owned P17 normally",
+            UVM_MEDIUM)
+
+        p19f_wait_one_completion_epoch(done_timeout_cycles * 4);
+
+        expected_reject = 32'h0000_0000;
+        expected_reject[P17_REJ_BUSY] = 1'b1;
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DESC_FETCH_REJECT_STATUS,
+                               reject_status);
+        if (reject_status !== expected_reject) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z3A/P17_OWNER_REJECT",
+                $sformatf("Expected exact P17 ownership reject=0x%08h after collision, got=0x%08h",
+                    expected_reject, reject_status))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/OWNERSHIP_REJECT_PASS",
+            $sformatf("Manual P17 collision produced exact ownership reject 0x%08h without losing the queue command",
+                reject_status),
+            UVM_MEDIUM)
+
+        p19f_clear_queue_sticky_and_wait_idle();
+        csr_desc_fetch_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+        repeat (3) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/RECOVERY_PASS",
+            "Z3-A collision cleanup/recovery PASS",
+            UVM_MEDIUM)
+        `uvm_info("CODE_COV_C1P2_G7_Z3A/PASS",
+            "Queue-PRESENT / manual-P17 one-cycle ready-deassert ownership-reject constructive probe PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic p19f_wait_cq_full_stall(input int unsigned timeout_cycles);
         logic [31:0] status;
         logic [31:0] state;
@@ -1670,6 +1883,11 @@ class ai_accel_subsys_csr_queue_reject_error_test
         p19f_case_disable_during_check_ready();
         p19f_case_bad_live_pointer_during_check_ready();
         p19f_case_run_until_empty_without_stop_on_error();
+
+        // CODE-COV-C1.2-G7-Z3-A: align a legal manual P17 START with the
+        // queue command's Q_PRESENT cycle.  This constructively exercises the
+        // one-cycle queue-ready deassertion / ownership-reject arbitration.
+        p19f_g7_z3a_queue_present_manual_p17_collision();
 
         csr_job_clear_sticky_status();
         csr_write_job_descriptor(

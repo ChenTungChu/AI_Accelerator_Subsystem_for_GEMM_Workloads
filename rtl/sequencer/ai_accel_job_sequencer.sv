@@ -49,6 +49,7 @@ module ai_accel_job_sequencer #(
     // ------------------------------------------------------------
     input  logic acc_busy,
     input  logic acc_done,
+    input  logic acc_start_reject,
 
     input  logic dma_load_busy,
     input  logic dma_load_done,
@@ -558,7 +559,16 @@ module ai_accel_job_sequencer #(
                     end
 
                     JOB_STATE_GEMM_WAIT: begin
-                        if (acc_done) begin
+                        // The shared subsystem launch boundary is the final
+                        // authority for GEMM acceptance.  A Direct Stream
+                        // extent/readiness failure (or any other late launch
+                        // conflict) must terminate the job instead of leaving
+                        // the sequencer waiting forever for acc_done.
+                        if (acc_start_reject) begin
+                            state_q <= JOB_STATE_ERROR;
+                            job_sequence_error <= 1'b1;
+                        end
+                        else if (acc_done) begin
                             job_gemm_done <= 1'b1;
 
                             perf_busy_cycles_q  <= gemm_perf_busy_cycles;

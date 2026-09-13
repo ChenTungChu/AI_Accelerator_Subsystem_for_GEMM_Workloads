@@ -1,0 +1,83 @@
+CODE-COV-C1.2-G8-C1 — Statement Exclusion Manifest
+========================================================
+Post-R3 current-source approved statement source-line records: 174
+Policy: only G8-B approved statement misses; no toggle exclusions.
+
+Protected RAW misses intentionally NOT excluded (constructively covered elsewhere):
+  ../rtl/csr/ai_accel_csr_regs.sv: 3966
+  ../rtl/mem/axi_mm_dual_port_bram.sv: 1202, 1226, 1240
+  ../rtl/subsystem/direct_stream_preload_engine.sv: 718
+  ../rtl/subsystem/gemm_operand_buffer.sv: 224, 229, 394, 395, 398, 401, 477
+  ../rtl/subsystem/gemm_operand_buffer_write_adapter.sv: 253, 254, 255, 271
+
+Approved statement source-line records:
+  ../rtl/csr/ai_accel_csr_regs.sv: 9
+    1325, 1448, 1499, 2683, 2691, 3850, 3854, 3858, 3862
+  ../rtl/dma/axi_mm2s_dma.sv: 3
+    103, 200, 269
+  ../rtl/dma/axi_stream_loader.sv: 4
+    102, 198, 213, 277
+  ../rtl/gemm/gemm_top.sv: 5
+    456, 480, 504, 1486, 1500
+  ../rtl/mem/axi_mm_dual_port_bram.sv: 18
+    773, 775, 856, 858, 966, 995, 1209, 1211, 1227, 1242, 1316, 1318, 1319, 1324, 1325, 1326, 1457, 1474
+  ../rtl/sequencer/ai_accel_completion_wb_engine.sv: 8
+    236, 431, 432, 433, 434, 435, 436, 437
+  ../rtl/sequencer/ai_accel_desc_fetch_engine.sv: 3
+    524, 525, 526
+  ../rtl/sequencer/ai_accel_job_sequencer.sv: 28
+    372, 373, 384, 385, 395, 396, 406, 407, 416, 417, 455, 456, 469, 470, 480, 481, 491, 492, 501, 502, 540, 541, 552, 553, 594, 595, 616, 617
+  ../rtl/sequencer/ai_accel_queue_fetch_controller.sv: 6
+    650, 651, 652, 653, 669, 845
+  ../rtl/sequencer/ai_accel_recipe_sequencer.sv: 21
+    254, 260, 265, 270, 275, 485, 486, 489, 491, 493, 502, 504, 506, 509, 510, 511, 525, 526, 527, 572, 573
+  ../rtl/subsystem/axis_async_fifo.sv: 1
+    113
+  ../rtl/subsystem/axis_preload_engine.sv: 9
+    263, 445, 446, 456, 457, 478, 479, 497, 627
+  ../rtl/subsystem/axis_scratchpad_write_adapter.sv: 7
+    154, 252, 329, 330, 353, 354, 368
+  ../rtl/subsystem/direct_stream_preload_engine.sv: 9
+    285, 491, 492, 502, 503, 521, 522, 537, 737
+  ../rtl/subsystem/dma_load_engine.sv: 1
+    205
+  ../rtl/subsystem/dma_scratchpad_write_adapter.sv: 2
+    124, 320
+  ../rtl/subsystem/dma_store_engine.sv: 8
+    161, 346, 445, 451, 458, 477, 492, 513
+  ../rtl/subsystem/gemm_input_mem_router.sv: 15
+    271, 372, 373, 434, 435, 440, 455, 456, 457, 458, 462, 463, 464, 465, 483
+  ../rtl/subsystem/gemm_operand_buffer.sv: 11
+    136, 217, 248, 278, 381, 382, 383, 452, 453, 454, 486
+  ../rtl/subsystem/gemm_operand_buffer_write_adapter.sv: 1
+    127
+  ../rtl/subsystem/scratchpad_port0_owner_mux.sv: 1
+    310
+  ../rtl/subsystem/scratchpad_port1_owner_mux.sv: 1
+    336
+  ../rtl/top/ai_accel_subsys.sv: 1
+    604
+  ../rtl/top/ai_accel_subsys_csr_top.sv: 2
+    1084, 1085
+
+Expected statement-only accounting if Questa maps each approved line to one active statement bin:
+  RAW:       Active=5285 Hits=5095 Misses=190 Coverage=96.4049%
+  EFFECTIVE: Active=5111 Hits=5095 Misses=16  Coverage=99.6869%
+  Expected active reduction: 174
+  Expected covered-hit reduction: 0
+
+Important physical-bin audit:
+  ../rtl/mem/axi_mm_dual_port_bram.sv line 1316 is printed by Questa statement details with a leading "2" marker.
+  G8-C1 must empirically verify the exact denominator delta after line-based exclusion; do NOT silently accept an off-by-one.
+  If the effective active reduction is not exactly 174, inspect line 1316 first and reconcile source-line records vs Questa physical statement bins.
+
+G8-C1 Rev-C physical normalization
+---------------------------------
+Questa line 1316 in rtl/mem/axi_mm_dual_port_bram.sv contains two statement items:
+  item 1: covered (10991 hits) -- protected / NOT excluded
+  item 2: zero-hit -- approved structural candidate
+Rev-C applies: -linerange 1316 -item s 2
+This preserves the G8-C hard gate that covered-hit loss must equal 0.
+Expected totals after Rev-C:
+  RAW       active=5285 hits=5095 misses=190
+  EFFECTIVE active=5111 hits=5095 misses=16

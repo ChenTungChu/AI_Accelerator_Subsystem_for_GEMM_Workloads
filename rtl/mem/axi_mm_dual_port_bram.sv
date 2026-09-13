@@ -19,6 +19,8 @@
 // - Write response timing
 // --  Port0: B is enqueued only after commit_if emission completes
 // --  Port1: Last beat ACK back to core_clk is deferred until commit+emit completes; core-side B is then generated
+// --  B responses remain stable under BREADY backpressure and dequeue only on external BVALID && BREADY
+// --  Per-port B FIFO enqueue/dequeue accounting is atomic, including same-cycle push+pop
 //
 // Clocking / domains
 // - Port0 runs on dma_clk (AXI slave interface axi0_if)
@@ -259,8 +261,16 @@ module axi_mm_dual_port_bram #(
     assign p0_b_full  = (p0_b_count == WR_B_DEPTH[WR_B_CNT_W-1:0]);
     assign p0_b_empty = (p0_b_count == '0);
 
-    logic                   p0_b_out_valid;
-    b_item_t                p0_b_out;
+    logic                   p0_b_push;
+    logic                   p0_b_pop;
+    logic                   p0_b_can_push;
+
+    assign axi0_if.bvalid = dma_rst_n && !p0_b_empty;
+    assign axi0_if.bid    = (!dma_rst_n || p0_b_empty) ? '0 : p0_b_fifo[p0_b_rptr].bid;
+    assign axi0_if.bresp  = (!dma_rst_n || p0_b_empty) ? 2'b00 : p0_b_fifo[p0_b_rptr].bresp;
+
+    assign p0_b_pop      = axi0_if.bvalid && axi0_if.bready;
+    assign p0_b_can_push = !p0_b_full || p0_b_pop;
 
     // Active AW
     logic [IDW-1:0]         p0_awid;
@@ -309,8 +319,16 @@ module axi_mm_dual_port_bram #(
     assign p1_b_full  = (p1_b_count == WR_B_DEPTH[WR_B_CNT_W-1:0]);
     assign p1_b_empty = (p1_b_count == '0);
 
-    logic                     p1_b_out_valid;
-    b_item_t                  p1_b_out;
+    logic                     p1_b_push;
+    logic                     p1_b_pop;
+    logic                     p1_b_can_push;
+
+    assign axi1_if.bvalid = core_rst_n && !p1_b_empty;
+    assign axi1_if.bid    = (!core_rst_n || p1_b_empty) ? '0 : p1_b_fifo[p1_b_rptr].bid;
+    assign axi1_if.bresp  = (!core_rst_n || p1_b_empty) ? 2'b00 : p1_b_fifo[p1_b_rptr].bresp;
+
+    assign p1_b_pop      = axi1_if.bvalid && axi1_if.bready;
+    assign p1_b_can_push = !p1_b_full || p1_b_pop;
 
     // Active AW in core domain
     logic [IDW-1:0]           p1_awid;
@@ -469,16 +487,6 @@ module axi_mm_dual_port_bram #(
             p0_aw_rptr           <= '0;
             p0_aw_count          <= '0;
 
-            p0_b_wptr            <= '0;
-            p0_b_rptr            <= '0;
-            p0_b_count           <= '0;
-
-            p0_b_out_valid       <= 1'b0;
-            p0_b_out             <= '0;
-            axi0_if.bvalid       <= 1'b0;
-            axi0_if.bresp        <= 2'b00;
-            axi0_if.bid          <= '0;
-
             p0_aw_active         <= 1'b0;
             p0_wbeat_cnt         <= 0;
 
@@ -516,8 +524,7 @@ module axi_mm_dual_port_bram #(
                 int unsigned reserved;
                 reserved = int'(p0_aw_count)
                            + (p0_aw_active ? 1 : 0)
-                           + (p0_burst_ready ? 1 : 0)
-                           + (p0_b_out_valid ? 1 : 0);
+                           + (p0_burst_ready ? 1 : 0);
                 awready_next = (!p0_aw_full) && ((int'(p0_b_count) + reserved) < WR_B_DEPTH);
                 axi0_if.awready <= awready_next;
             end
@@ -574,36 +581,6 @@ module axi_mm_dual_port_bram #(
                     p0_burst_id    <= p0_awid;
                     p0_aw_active   <= 1'b0;
                 end
-            end
-
-            begin
-                logic hs;
-                hs = p0_b_out_valid && axi0_if.bready;
-
-                if (!p0_b_out_valid) begin
-                    if (!p0_b_empty) begin
-                        p0_b_out       <= p0_b_fifo[p0_b_rptr];
-                        p0_b_out_valid <= 1'b1;
-                    end else begin
-                        p0_b_out       <= '0;
-                        p0_b_out_valid <= 1'b0;
-                    end
-                end else if (hs) begin
-                    p0_b_rptr  <= p0_b_rptr + 1'b1;
-                    p0_b_count <= p0_b_count - 1'b1;
-
-                    if (p0_b_count > 1) begin
-                        p0_b_out       <= p0_b_fifo[p0_b_rptr + 1'b1];
-                        p0_b_out_valid <= 1'b1;
-                    end else begin
-                        p0_b_out       <= '0;
-                        p0_b_out_valid <= 1'b0;
-                    end
-                end
-
-                axi0_if.bvalid <= p0_b_out_valid;
-                axi0_if.bid    <= p0_b_out.bid;
-                axi0_if.bresp  <= p0_b_out.bresp;
             end
 
             if (!p0_ar_active) begin
@@ -705,16 +682,6 @@ module axi_mm_dual_port_bram #(
             p1_aw_rptr                   <= '0;
             p1_aw_count                  <= '0;
 
-            p1_b_wptr                    <= '0;
-            p1_b_rptr                    <= '0;
-            p1_b_count                   <= '0;
-
-            p1_b_out_valid               <= 1'b0;
-            p1_b_out                     <= '0;
-            axi1_if.bvalid               <= 1'b0;
-            axi1_if.bresp                <= 2'b00;
-            axi1_if.bid                  <= '0;
-
             axi1_if.arready              <= 1'b1;
 
             p1_aw_active                 <= 1'b0;
@@ -767,8 +734,7 @@ module axi_mm_dual_port_bram #(
                 logic awready_next;
                 int unsigned reserved;
                 reserved = int'(p1_aw_count)
-                           + (p1_aw_active ? 1 : 0)
-                           + (p1_b_out_valid ? 1 : 0);
+                           + (p1_aw_active ? 1 : 0);
                 awready_next = (!p1_aw_full) && ((int'(p1_b_count) + reserved) < WR_B_DEPTH);
                 axi1_if.awready <= awready_next;
             end
@@ -837,50 +803,20 @@ module axi_mm_dual_port_bram #(
             end
 
             if (p1_ack_toggle_sync2_core != p1_ack_toggle_last_seen_core) begin
-                p1_ack_toggle_last_seen_core <= p1_ack_toggle_sync2_core;
+                // A final-beat ACK is not retired until the B-response FIFO
+                // can accept the matching response.  This keeps the CDC ACK
+                // and AXI B accounting one-to-one even if the response FIFO
+                // is momentarily full.  A same-cycle B pop frees capacity.
+                if (!p1_sent_is_last || p1_b_can_push) begin
+                    p1_ack_toggle_last_seen_core <= p1_ack_toggle_sync2_core;
 
-                p1_req_outstanding <= 1'b0;
-                p1_local_wr_valid  <= 1'b0;
+                    p1_req_outstanding <= 1'b0;
+                    p1_local_wr_valid  <= 1'b0;
 
-                if (p1_sent_is_last) begin
-                    if (!p1_b_full) begin
-                        p1_b_fifo[p1_b_wptr].bid   <= p1_sent_awid;
-                        p1_b_fifo[p1_b_wptr].bresp <= 2'b00;
-                        p1_b_wptr                  <= p1_b_wptr + 1'b1;
-                        p1_b_count                 <= p1_b_count + 1'b1;
-                    end
-                    p1_aw_active <= 1'b0;
-                end
-            end
-
-            begin
-                logic hs;
-                hs = p1_b_out_valid && axi1_if.bready;
-
-                if (!p1_b_out_valid) begin
-                    if (!p1_b_empty) begin
-                        p1_b_out       <= p1_b_fifo[p1_b_rptr];
-                        p1_b_out_valid <= 1'b1;
-                    end else begin
-                        p1_b_out       <= '0;
-                        p1_b_out_valid <= 1'b0;
-                    end
-                end else if (hs) begin
-                    p1_b_rptr  <= p1_b_rptr + 1'b1;
-                    p1_b_count <= p1_b_count - 1'b1;
-
-                    if (p1_b_count > 1) begin
-                        p1_b_out       <= p1_b_fifo[p1_b_rptr + 1'b1];
-                        p1_b_out_valid <= 1'b1;
-                    end else begin
-                        p1_b_out       <= '0;
-                        p1_b_out_valid <= 1'b0;
+                    if (p1_sent_is_last) begin
+                        p1_aw_active <= 1'b0;
                     end
                 end
-
-                axi1_if.bvalid <= p1_b_out_valid;
-                axi1_if.bid    <= p1_b_out.bid;
-                axi1_if.bresp  <= p1_b_out.bresp;
             end
 
             if (!p1_ar_active) begin
@@ -1105,12 +1041,10 @@ module axi_mm_dual_port_bram #(
 
     ce_state_e ce_state;
 
-    assign ce_idle = (ce_state == CE_IDLE);
-
     int unsigned           ce_idx;
     int unsigned           ce_total;
     logic [IDW-1:0]        ce_bid;
-    logic                  ce_apply_sent;          
+    logic                  ce_apply_sent;
 
     int unsigned           ce_uniq_cnt;
     int unsigned           ce_find_j;
@@ -1119,6 +1053,73 @@ module axi_mm_dual_port_bram #(
     logic [DATA_WIDTH-1:0] ce_upd_word [0:MAX_BURST_BEATS-1];
 
     int unsigned           p0_quota_left;
+
+    assign ce_idle = (ce_state == CE_IDLE);
+
+    // ------------------------------------------------------------
+    // B response queues
+    // - AXI BVALID/BID/BRESP are driven directly from each FIFO head.
+    // - Dequeue is therefore defined by the externally visible AXI
+    //   handshake, not by a private one-cycle-ahead staging register.
+    // - Each FIFO has a single sequential owner for wptr/rptr/count.
+    // - Simultaneous push+pop keeps occupancy unchanged atomically.
+    // ------------------------------------------------------------
+    assign p0_b_push = (ce_state == CE_EMIT_P0)
+                    && ce_apply_sent
+                    && (ce_idx >= ce_total)
+                    && p0_b_can_push;
+
+    assign p1_b_push = (p1_ack_toggle_sync2_core != p1_ack_toggle_last_seen_core)
+                    && p1_sent_is_last
+                    && p1_b_can_push;
+
+    always_ff @(posedge dma_clk or negedge dma_rst_n) begin
+        if (!dma_rst_n) begin
+            p0_b_wptr  <= '0;
+            p0_b_rptr  <= '0;
+            p0_b_count <= '0;
+        end else begin
+            if (p0_b_push) begin
+                p0_b_fifo[p0_b_wptr].bid   <= ce_bid;
+                p0_b_fifo[p0_b_wptr].bresp <= 2'b00;
+                p0_b_wptr                  <= p0_b_wptr + 1'b1;
+            end
+
+            if (p0_b_pop) begin
+                p0_b_rptr <= p0_b_rptr + 1'b1;
+            end
+
+            unique case ({p0_b_push, p0_b_pop})
+                2'b10:   p0_b_count <= p0_b_count + 1'b1;
+                2'b01:   p0_b_count <= p0_b_count - 1'b1;
+                default: p0_b_count <= p0_b_count;
+            endcase
+        end
+    end
+
+    always_ff @(posedge core_clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            p1_b_wptr  <= '0;
+            p1_b_rptr  <= '0;
+            p1_b_count <= '0;
+        end else begin
+            if (p1_b_push) begin
+                p1_b_fifo[p1_b_wptr].bid   <= p1_sent_awid;
+                p1_b_fifo[p1_b_wptr].bresp <= 2'b00;
+                p1_b_wptr                  <= p1_b_wptr + 1'b1;
+            end
+
+            if (p1_b_pop) begin
+                p1_b_rptr <= p1_b_rptr + 1'b1;
+            end
+
+            unique case ({p1_b_push, p1_b_pop})
+                2'b10:   p1_b_count <= p1_b_count + 1'b1;
+                2'b01:   p1_b_count <= p1_b_count - 1'b1;
+                default: p1_b_count <= p1_b_count;
+            endcase
+        end
+    end
 
     logic [31:0]           p1_starve_cnt;
     logic                  p1_starve_asserted;
@@ -1384,21 +1385,19 @@ module axi_mm_dual_port_bram #(
                             ce_idx                          <= ce_idx + 1;
                         end
                     end else begin
-                        if (!p0_b_full) begin
-                            p0_b_fifo[p0_b_wptr].bid   <= ce_bid;
-                            p0_b_fifo[p0_b_wptr].bresp <= 2'b00;
-                            p0_b_wptr                  <= p0_b_wptr + 1'b1;
-                            p0_b_count                 <= p0_b_count + 1'b1;
+                        // Do not retire the committed burst until the matching
+                        // B response can be enqueued.  p0_b_can_push also
+                        // permits full->full replacement on a same-cycle pop.
+                        if (p0_b_can_push) begin
+                            p0_burst_ready       <= 1'b0;
+                            p0_buf_beats_written <= 0;
+                            p0_buf_beats_total   <= 0;
+                            ce_apply_sent        <= 1'b0;
+                            ce_idx               <= 0;
+
+                            perf_p0_bursts <= perf_p0_bursts + 1;
+                            ce_state <= CE_IDLE;
                         end
-
-                        p0_burst_ready       <= 1'b0;
-                        p0_buf_beats_written <= 0;
-                        p0_buf_beats_total   <= 0;
-                        ce_apply_sent        <= 1'b0;
-                        ce_idx               <= 0;
-
-                        perf_p0_bursts <= perf_p0_bursts + 1;
-                        ce_state <= CE_IDLE;
                     end
                 end
 

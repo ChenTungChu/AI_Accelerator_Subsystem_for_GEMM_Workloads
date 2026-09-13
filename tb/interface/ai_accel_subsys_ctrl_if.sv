@@ -35,6 +35,68 @@ interface ai_accel_subsys_ctrl_if #(
     logic desc_fetch_start_to_engine_obs;
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Z3-A Queue-PRESENT / manual-P17 collision
+    // observation
+    //
+    // Passive testbench observations only.  These expose the exact queue
+    // arbitration terms needed to prove that a manual P17 START presented
+    // while a legal queue command is in Q_PRESENT stalls queue acceptance
+    // for one cycle without reaching the descriptor-fetch engine.
+    // ------------------------------------------------------------
+    logic [31:0] queue_state_obs;
+    logic        queue_cmd_valid_obs;
+    logic        queue_cmd_ready_obs;
+    logic        queue_cmd_reject_obs;
+    logic        desc_fetch_start_blocked_obs;
+    logic        csr_desc_fetch_start_blocked_obs;
+    logic        queue_desc_fetch_start_pulse_obs;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Z4-C2-B queue auto-continue control-window
+    // observation
+    //
+    // Passive testbench observations only.  These expose the queue
+    // completion/auto-continue state used by the legal CSR timing
+    // probes; they never drive or alter DUT state.
+    // ------------------------------------------------------------
+    logic        completion_wb_busy_obs;
+    logic        queue_completion_commit_pulse_obs;
+    logic        queue_auto_continue_pending_obs;
+    logic        queue_enable_obs;
+    logic        queue_run_until_empty_obs;
+    logic        queue_busy_obs;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Z4-C2-C P18/watchdog terminal-boundary
+    // observation
+    //
+    // Passive testbench observations only.  These expose the exact
+    // watchdog / queue-completion / auto-P18 terms used by the legal
+    // phase-tolerant constructive probes.  They never drive DUT state.
+    // ------------------------------------------------------------
+    logic        queue_timeout_watchdog_active_obs;
+    logic [31:0] queue_timeout_budget_obs;
+    logic [31:0] queue_timeout_count_obs;
+    logic        queue_timeout_pulse_obs;
+    logic [31:0] queue_timeout_error_status_obs;
+    logic        queue_completion_commit_raw_obs;
+    logic        queue_completion_error_raw_obs;
+    logic        completion_wb_auto_pending_obs;
+    logic        completion_wb_enable_obs;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-X2 Port1 owner-overlap observation
+    //
+    // Passive testbench observations only.  These expose the exact
+    // core-domain owner inputs and the mux defensive overlap signal;
+    // they do not drive or alter DUT state.
+    // ------------------------------------------------------------
+    logic        axis_stream_load_active_obs;
+    logic        acc_busy_core_obs;
+    logic        port1_illegal_overlap_obs;
+    int unsigned port1_illegal_overlap_observed_count;
+
+    // ------------------------------------------------------------
     // Testbench reset override control
     // ------------------------------------------------------------
     logic tb_reset_override_en;
@@ -441,6 +503,36 @@ interface ai_accel_subsys_ctrl_if #(
     begin
         dma_dst_inject_bresp_error      = enable;
         dma_dst_inject_bresp_error_beat = beat_index;
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-V4-B DMA destination AW/W backpressure
+    // injection and observation control
+    //
+    // Beat indices are relative to the first DMA destination write
+    // accepted after injection is enabled.  Use -1 to disable an
+    // individual ordering probe.
+    //
+    //   aw_first_beat: hold WREADY low until AW handshakes first
+    //   w_first_beat : hold AWREADY low until W handshakes first
+    // ------------------------------------------------------------
+    logic      dma_dst_inject_aw_w_backpressure;
+    int signed dma_dst_aw_first_beat;
+    int signed dma_dst_w_first_beat;
+
+    int unsigned dma_dst_aw_first_observed_count;
+    int unsigned dma_dst_w_first_observed_count;
+
+    task automatic dma_dst_set_aw_w_backpressure(
+        input bit        enable,
+        input int signed aw_first_beat,
+        input int signed w_first_beat
+    );
+    begin
+        dma_dst_inject_aw_w_backpressure = enable;
+        dma_dst_aw_first_beat            = aw_first_beat;
+        dma_dst_w_first_beat             = w_first_beat;
     end
     endtask
 

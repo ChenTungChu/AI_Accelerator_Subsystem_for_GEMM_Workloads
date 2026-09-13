@@ -53,6 +53,19 @@ module direct_stream_preload_engine #(
     output logic                         ds_load_error,
 
     // ============================================================
+    // Successfully committed operand extents, dma_clk domain
+    //
+    // These metadata values describe the most recent successful preload
+    // completion for each operand.  The selected operand is invalidated as
+    // soon as a new preload transaction starts, and becomes valid again only
+    // after that transaction reaches a clean terminal completion.
+    // ============================================================
+    output logic                         ds_a_extent_valid,
+    output logic                         ds_b_extent_valid,
+    output logic [31:0]                  ds_a_completed_beats,
+    output logic [31:0]                  ds_b_completed_beats,
+
+    // ============================================================
     // AXI-MM source read master port, dma_clk domain
     // ============================================================
     output logic [ID_WIDTH-1:0]          ds_src_axi_arid,
@@ -167,6 +180,8 @@ module direct_stream_preload_engine #(
 
     logic                  core_ack_seen_dma_q;
     logic                  core_done_seen_dma_q;
+
+    logic                  completion_error_dma;
 
     logic                  mm2s_start_pulse;
     logic                  mm2s_busy;
@@ -309,6 +324,22 @@ module direct_stream_preload_engine #(
                 "direct_stream_preload_engine: BYTES_PER_BEAT must be a power of two"
             );
         end
+    end
+
+    // ============================================================
+    // Terminal completion error view, dma_clk domain
+    //
+    // Use the full terminal-error expression when committing extent
+    // metadata.  dma_error_q itself is updated by nonblocking assignment on
+    // the same core-done edge, so using only its old value would be one cycle
+    // too early for a newly observed core-side failure.
+    // ============================================================
+    always_comb begin
+        completion_error_dma = dma_error_q              ||
+                               mm2s_error_seen_q         ||
+                               start_while_busy_error_q  ||
+                               core_error_sync_d2        ||
+                               ((dma_state == D_WAIT_CORE) && ds_load_start);
     end
 
     // ============================================================
@@ -494,10 +525,7 @@ module direct_stream_preload_engine #(
                     if (core_done_sync_d2 != core_done_seen_dma_q) begin
                         core_done_seen_dma_q <= core_done_sync_d2;
 
-                        dma_error_q <= dma_error_q              ||
-                                       mm2s_error_seen_q         ||
-                                       start_while_busy_error_q  ||
-                                       core_error_sync_d2;
+                        dma_error_q <= completion_error_dma;
                     end
                 end
 
@@ -509,6 +537,52 @@ module direct_stream_preload_engine #(
                     dma_state <= D_IDLE;
                 end
             endcase
+        end
+    end
+
+    // ============================================================
+    // Committed operand-extent ownership, dma_clk domain
+    //
+    // A new transaction immediately invalidates the selected operand's
+    // previous extent.  This prevents stale successfully loaded data from
+    // remaining launch-eligible while a replacement preload is in flight or
+    // after that replacement preload fails.
+    //
+    // On the terminal core-done handshake, commit the latched requested beat
+    // count only when the entire transaction completed without any source,
+    // loader, adapter, operand-buffer, or start-while-busy error.
+    // ============================================================
+    always_ff @(posedge dma_clk or negedge dma_rst_n or negedge core_rst_n) begin
+        if (!dma_rst_n || !core_rst_n) begin
+            ds_a_extent_valid    <= 1'b0;
+            ds_b_extent_valid    <= 1'b0;
+            ds_a_completed_beats <= 32'h0000_0000;
+            ds_b_completed_beats <= 32'h0000_0000;
+        end
+        else begin
+            if ((dma_state == D_IDLE) && ds_load_start) begin
+                if (ds_operand_sel === OPERAND_A) begin
+                    ds_a_extent_valid    <= 1'b0;
+                    ds_a_completed_beats <= 32'h0000_0000;
+                end
+                else if (ds_operand_sel === OPERAND_B) begin
+                    ds_b_extent_valid    <= 1'b0;
+                    ds_b_completed_beats <= 32'h0000_0000;
+                end
+            end
+
+            if ((dma_state == D_WAIT_CORE) &&
+                (core_done_sync_d2 != core_done_seen_dma_q) &&
+                !completion_error_dma) begin
+                if (operand_sel_dma_q == OPERAND_A) begin
+                    ds_a_extent_valid    <= 1'b1;
+                    ds_a_completed_beats <= beats_dma_q;
+                end
+                else begin
+                    ds_b_extent_valid    <= 1'b1;
+                    ds_b_completed_beats <= beats_dma_q;
+                end
+            end
         end
     end
 

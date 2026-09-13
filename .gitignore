@@ -23,6 +23,11 @@ sim/coverage/**
 !sim/coverage/*_cov/code_cov_summary.txt
 !sim/coverage/*_cov/code_cov_details.txt
 
+# G8-C generated coverage artifacts
+coverage/code_cov/g8_c/*.ucdb
+coverage/code_cov/g8_c/*_summary.txt
+coverage/code_cov/g8_c/*_details.txt
+
 # Optimization output
 @_opt/
 */@_opt/

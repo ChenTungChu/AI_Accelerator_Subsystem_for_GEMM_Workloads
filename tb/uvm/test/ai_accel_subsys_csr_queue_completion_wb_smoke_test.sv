@@ -14,9 +14,20 @@
 //   - Verifies CSR SQ_HEAD and CQ_TAIL advance after the completion
 //     record commits successfully.
 //
-// P19E remains single-outstanding.  It does not add interrupts,
-// multi-outstanding command execution, or completion queue error
-// injection.
+// P19E remains single-outstanding.  It does not add interrupts or
+// multi-outstanding command execution.
+//
+// CODE-COV-C1.2-G7-Z4-B reuses the existing TB-only P18 BRESP fault
+// injection interface to prove queue-owned completion-writeback error
+// propagation, pointer non-commit behavior, sticky cleanup, and recovery.
+// No RTL, BRAM, CSR-map, or standalone test flow changes are required.
+//
+// CODE-COV-C1.2-G7-Z4-C2-B adds legal queue-control timing probes for:
+//   - completion commit while QUEUE_ENABLE is deasserted (line 1192),
+//   - same-edge commit / QUEUE_ENABLE clear (line 1287), and
+//   - same-edge commit / RUN_UNTIL_EMPTY clear (line 1287).
+// The same-edge cases use the architectural AXI-Lite CSR bus; no force,
+// deposit, hierarchical state mutation, or RTL modification is used.
 // ============================================================
 
 class ai_accel_subsys_csr_queue_completion_wb_smoke_test
@@ -40,9 +51,43 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
     localparam logic [31:0] EXP_RECIPE_DONE    = 32'h0000_0007;
     localparam logic [31:0] EXP_SLOT_MASKS     = 32'h0000_0003;
 
+    // CODE-COV-C1.2-G7-Z4-B queue-owned P18 error propagation target.
+    localparam int unsigned G7_Z4_B_QUEUE_COMP_WB_ERROR_BIT = 4;
+    localparam int unsigned G7_Z4_B_P18_BRESP_ERROR_BIT     = 0;
+
+    // CODE-COV-C1.2-G7-Z4-C2-B control-window probes.
+    // This probe intentionally varies only bit0 ENABLE and bit1 RUN_UNTIL_EMPTY.
+    // It preserves the existing P19E test policy: STOP_ON_ERROR(bit2)=1 and bits3/4=0.
+    localparam logic [31:0] G7_Z4_C2_B_CTRL_ENABLE_RUE      = 32'h0000_0007;
+    localparam logic [31:0] G7_Z4_C2_B_CTRL_DISABLE_RUE     = 32'h0000_0006;
+    localparam logic [31:0] G7_Z4_C2_B_CTRL_ENABLE_NO_RUE   = 32'h0000_0005;
+    localparam logic [31:0] G7_Z4_C2_B_CTRL_DISABLE_NO_RUE  = 32'h0000_0004;
+
+    // R1 stimulus correction: P19E_CMD_CONTROL=0x00000303 carries
+    // STOP_AFTER_THIS.  Auto-continue coverage probes require the
+    // architecturally normal continue-capable command form with that
+    // bit clear, while preserving the remaining command policy bits.
+    localparam logic [31:0] G7_Z4_C2_B_CMD_CONTROL_CONTINUE = 32'h0000_0103;
+
+    localparam logic [31:0] G7_Z4_C2_B_TAG_ENABLE_AT_COMMIT = 32'hD19E_C2B1;
+    localparam logic [31:0] G7_Z4_C2_B_TAG_ENABLE_COLLISION = 32'hD19E_C2B2;
+    localparam logic [31:0] G7_Z4_C2_B_TAG_RUE_COLLISION    = 32'hD19E_C2B3;
+
+    virtual comp_wb_inject_if comp_wb_inject_vif;
+
     function new(string name = "ai_accel_subsys_csr_queue_completion_wb_smoke_test",
                  uvm_component parent = null);
         super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+
+        if (!uvm_config_db#(virtual comp_wb_inject_if)::get(
+                this, "", "comp_wb_inject_vif", comp_wb_inject_vif)) begin
+            `uvm_fatal("G7_Z4_B/NO_COMP_WB_INJECT_VIF",
+                "comp_wb_inject_vif not found in UVM config DB")
+        end
     endfunction
 
     task automatic program_sq_command_entry();
@@ -283,6 +328,685 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
     end
     endtask
 
+    task automatic g7_z4b_poll_queue_owned_completion_wb_error(
+        input int unsigned timeout_cycles
+    );
+        logic [31:0] comp_status;
+        logic [31:0] comp_done_status;
+        logic [31:0] comp_error_status;
+        logic [31:0] comp_reject_status;
+        logic [31:0] queue_status;
+        logic [31:0] queue_error_status;
+        logic [31:0] queue_reject_status;
+        int unsigned cnt;
+    begin
+        cnt = 0;
+
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_STATUS, comp_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_DONE_STATUS, comp_done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, comp_error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, comp_reject_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS, queue_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, queue_error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, queue_reject_status);
+
+            if (comp_reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/UNEXPECTED_P18_REJECT",
+                    $sformatf("Queue-owned BRESP-error probe unexpectedly produced P18 reject: comp_status=0x%08h comp_error=0x%08h comp_reject=0x%08h queue_error=0x%08h queue_reject=0x%08h",
+                        comp_status,
+                        comp_error_status,
+                        comp_reject_status,
+                        queue_error_status,
+                        queue_reject_status))
+            end
+
+            if (queue_reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/UNEXPECTED_QUEUE_REJECT",
+                    $sformatf("Queue-owned BRESP-error probe unexpectedly produced queue reject: queue_status=0x%08h queue_error=0x%08h queue_reject=0x%08h comp_error=0x%08h",
+                        queue_status,
+                        queue_error_status,
+                        queue_reject_status,
+                        comp_error_status))
+            end
+
+            if (comp_error_status[G7_Z4_B_P18_BRESP_ERROR_BIT] &&
+                queue_error_status[G7_Z4_B_QUEUE_COMP_WB_ERROR_BIT]) begin
+                if ((comp_error_status & ~(32'h1 << G7_Z4_B_P18_BRESP_ERROR_BIT)) != 32'h0000_0000) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/UNEXPECTED_P18_ERROR_BITS",
+                        $sformatf("Expected only P18 BRESP error bit %0d, got comp_error=0x%08h",
+                            G7_Z4_B_P18_BRESP_ERROR_BIT,
+                            comp_error_status))
+                end
+
+                if ((queue_error_status & ~(32'h1 << G7_Z4_B_QUEUE_COMP_WB_ERROR_BIT)) != 32'h0000_0000) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/UNEXPECTED_QUEUE_ERROR_BITS",
+                        $sformatf("Expected only queue COMPLETION_WB_ERROR bit %0d, got queue_error=0x%08h",
+                            G7_Z4_B_QUEUE_COMP_WB_ERROR_BIT,
+                            queue_error_status))
+                end
+
+                if (comp_done_status != 32'h0000_0000) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/UNEXPECTED_P18_DONE",
+                        $sformatf("P18 DONE must remain clear on injected BRESP failure: done=0x%08h error=0x%08h",
+                            comp_done_status,
+                            comp_error_status))
+                end
+
+                `uvm_info("CODE_COV_C1P2_G7_Z4_B/ERROR_PROP_PASS",
+                    $sformatf("Queue-owned P18 BRESP error propagated after %0d poll(s): comp_status=0x%08h comp_error=0x%08h queue_status=0x%08h queue_error=0x%08h",
+                        cnt,
+                        comp_status,
+                        comp_error_status,
+                        queue_status,
+                        queue_error_status),
+                    UVM_MEDIUM)
+                return;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/ERROR_PROP_TIMEOUT",
+                    $sformatf("Timed out waiting for queue-owned P18 BRESP error propagation: comp_status=0x%08h comp_done=0x%08h comp_error=0x%08h comp_reject=0x%08h queue_status=0x%08h queue_error=0x%08h queue_reject=0x%08h",
+                        comp_status,
+                        comp_done_status,
+                        comp_error_status,
+                        comp_reject_status,
+                        queue_status,
+                        queue_error_status,
+                        queue_reject_status))
+            end
+        end
+    end
+    endtask
+
+    task automatic g7_z4b_check_error_no_cq_commit();
+        logic [31:0] sq_head;
+        logic [31:0] cq_tail;
+        logic [31:0] cq_occ;
+        logic [31:0] commit_word;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_OCCUPANCY, cq_occ);
+        commit_word = read_queue_comp_word(16'h00);
+
+        if ((sq_head !== 32'h0000_0000) ||
+            (cq_tail !== 32'h0000_0000) ||
+            (cq_occ  !== 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/POINTER_COMMIT_ON_ERROR",
+                $sformatf("Queue pointers must not advance on P18 error: SQ_HEAD=0x%08h CQ_TAIL=0x%08h CQ_OCC=0x%08h",
+                    sq_head,
+                    cq_tail,
+                    cq_occ))
+        end
+
+        if (commit_word !== 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/CQ_COMMIT_ON_ERROR",
+                $sformatf("CQ VALID/commit word must remain zero after first-beat BRESP failure, got 0x%08h",
+                    commit_word))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/NO_COMMIT_PASS",
+            $sformatf("Injected P18 error suppressed CQ commit and pointer advance: SQ_HEAD=0x%08h CQ_TAIL=0x%08h CQ_OCC=0x%08h commit=0x%08h",
+                sq_head,
+                cq_tail,
+                cq_occ,
+                commit_word),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_z4b_verify_cleanup();
+        logic [31:0] comp_error_status;
+        logic [31:0] comp_reject_status;
+        logic [31:0] queue_error_status;
+        logic [31:0] queue_reject_status;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_ERROR_STATUS, comp_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_COMPLETION_WB_REJECT_STATUS, comp_reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, queue_error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, queue_reject_status);
+
+        if ((comp_error_status != 32'h0000_0000) ||
+            (comp_reject_status != 32'h0000_0000) ||
+            (queue_error_status != 32'h0000_0000) ||
+            (queue_reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_B/CLEANUP_FAILED",
+                $sformatf("Sticky cleanup failed: comp_error=0x%08h comp_reject=0x%08h queue_error=0x%08h queue_reject=0x%08h",
+                    comp_error_status,
+                    comp_reject_status,
+                    queue_error_status,
+                    queue_reject_status))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/CLEANUP_PASS",
+            "P18 and queue error/reject sticky state cleared after injected queue-owned completion error",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_z4b_queue_owned_completion_wb_bresp_error_probe();
+    begin
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/START",
+            "Starting legal queue-owned P18 BRESP-error propagation probe",
+            UVM_MEDIUM)
+
+        comp_wb_inject_vif.clear();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_completion_wb_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+
+        csr_program_completion_wb();
+        csr_program_queue();
+        csr_check_recipe_idle_ready("before G7-Z4-B queue-owned P18 error probe");
+
+        // Relative write beat 0 is the first queue-owned completion-memory
+        // AW after arming.  The integrated responder accepts AW/W and returns
+        // SLVERR without modifying completion memory for that beat.
+        comp_wb_inject_vif.set_bresp_error(1'b1, 0);
+        repeat (2) @(posedge csr_vif.clk);
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/INJECT_ARMED",
+            "Armed completion-memory SLVERR on relative queue-owned P18 write beat 0",
+            UVM_MEDIUM)
+
+        csr_start_queue();
+        g7_z4b_poll_queue_owned_completion_wb_error(done_timeout_cycles * 3);
+
+        comp_wb_inject_vif.clear();
+        repeat (2) @(posedge csr_vif.clk);
+        g7_z4b_check_error_no_cq_commit();
+
+        csr_completion_wb_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_clear_sticky_status();
+        repeat (5) @(posedge csr_vif.clk);
+
+        g7_z4b_verify_cleanup();
+        csr_check_recipe_idle_ready("after G7-Z4-B queue-owned P18 error cleanup");
+    end
+    endtask
+
+    // ============================================================
+    // CODE-COV-C1.2-G7-Z4-C2-B
+    // Queue auto-continue control-window constructive probes
+    // ============================================================
+
+    task automatic g7_z4_c2b_program_sq_command_entry(
+        input int unsigned entry_index,
+        input logic [31:0] command_tag
+    );
+        int unsigned base;
+    begin
+        if (entry_index >= P19E_QUEUE_DEPTH) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/BAD_SQ_INDEX",
+                $sformatf("SQ entry index %0d exceeds queue depth %0d",
+                    entry_index, P19E_QUEUE_DEPTH))
+        end
+
+        base = P19E_SQ_BASE + (entry_index * P19E_ENTRY_STRIDE);
+
+        write_src_word_le(base + 16'h00, G7_Z4_C2_B_CMD_CONTROL_CONTINUE);
+        write_src_word_le(base + 16'h04, command_tag);
+        write_src_word_le(base + 16'h08, 32'(P17D_DESC_BASE));
+        write_src_word_le(base + 16'h0C, 32'h0000_0002);
+        write_src_word_le(base + 16'h10, 32'(P17D_DESC_STRIDE));
+        write_src_word_le(base + 16'h14, P19E_COMP_FLAGS);
+        write_src_word_le(base + 16'h18, 32'h0000_0000);
+
+        for (int unsigned w = 7; w < 16; w++) begin
+            write_src_word_le(base + (w * 4), 32'h0000_0000);
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/SQ_PROGRAM",
+            $sformatf("Programmed continue-capable follow-up SQ[%0d] at 0x%08h tag=0x%08h control=0x%08h",
+                entry_index, base, command_tag, G7_Z4_C2_B_CMD_CONTROL_CONTINUE),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_z4_c2b_clear_command_sticky(input string tag);
+    begin
+        csr_completion_wb_clear_sticky_status();
+        csr_desc_fetch_clear_sticky_status();
+        csr_recipe_clear_sticky_status();
+        csr_job_clear_sticky_status();
+        csr_clear_sticky_status();
+        csr_queue_clear_sticky_status();
+        repeat (5) @(posedge csr_vif.clk);
+
+        csr_check_recipe_idle_ready($sformatf("G7-Z4-C2-B cleanup: %s", tag));
+    end
+    endtask
+
+    task automatic g7_z4_c2b_poll_queue_validated_tag(
+        input logic [31:0] expected_tag,
+        input int unsigned timeout_cycles,
+        input string       tag
+    );
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] last_tag;
+        int unsigned cnt;
+    begin
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS,
+                done_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS,
+                error_status
+            );
+            csr.read32_expect_okay(
+                ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS,
+                reject_status
+            );
+
+            if ((error_status != 32'h0000_0000) ||
+                (reject_status != 32'h0000_0000)) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/QUEUE_FAIL",
+                    $sformatf("%s: queue error/reject while waiting validation: error=0x%08h reject=0x%08h",
+                        tag, error_status, reject_status))
+            end
+
+            if (done_status[3]) begin
+                csr.read32_expect_okay(
+                    ai_accel_csr_access_helper::CSR_QUEUE_LAST_CMD_TAG,
+                    last_tag
+                );
+                if (last_tag !== expected_tag) begin
+                    `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/TAG_MISMATCH",
+                        $sformatf("%s: expected last tag=0x%08h got=0x%08h",
+                            tag, expected_tag, last_tag))
+                end
+
+                `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/VALIDATED",
+                    $sformatf("%s: queue command validated tag=0x%08h after %0d poll(s)",
+                        tag, last_tag, cnt),
+                    UVM_MEDIUM)
+                return;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/VALIDATE_TIMEOUT",
+                    $sformatf("%s: timeout waiting queue validation tag=0x%08h",
+                        tag, expected_tag))
+            end
+        end
+    end
+    endtask
+
+    task automatic g7_z4_c2b_wait_completion_wb_busy(
+        input int unsigned timeout_cycles,
+        input string       tag
+    );
+        bit seen;
+    begin
+        seen = 1'b0;
+        fork : wait_p18_busy_fork
+            begin
+                wait (p17d_ctrl_vif.completion_wb_busy_obs === 1'b1);
+                seen = 1'b1;
+            end
+            begin
+                repeat (timeout_cycles) @(posedge csr_vif.clk);
+            end
+        join_any
+        disable wait_p18_busy_fork;
+
+        if (!seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/P18_BUSY_TIMEOUT",
+                $sformatf("%s: timeout waiting for queue-owned P18 busy", tag))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/P18_BUSY",
+            $sformatf("%s: observed queue-owned P18 busy", tag),
+            UVM_LOW)
+    end
+    endtask
+
+    task automatic g7_z4_c2b_wait_commit_pulse(
+        input int unsigned timeout_cycles,
+        input string       tag
+    );
+        bit seen;
+    begin
+        seen = 1'b0;
+        fork : wait_commit_fork
+            begin
+                wait (p17d_ctrl_vif.queue_completion_commit_pulse_obs === 1'b1);
+                seen = 1'b1;
+            end
+            begin
+                repeat (timeout_cycles) @(posedge csr_vif.clk);
+            end
+        join_any
+        disable wait_commit_fork;
+
+        if (!seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/COMMIT_TIMEOUT",
+                $sformatf("%s: timeout waiting queue completion commit pulse", tag))
+        end
+    end
+    endtask
+
+    // Drive one ordinary AXI-Lite CSR write so its write_apply edge is the
+    // exact dma_clk edge on which the queue wrapper consumes the already-high
+    // completion commit pulse.  This is architectural bus stimulus, not a
+    // direct DUT-state mutation.
+    task automatic g7_z4_c2b_write_queue_control_on_commit(
+        input logic [31:0] control_value,
+        input logic        expected_enable,
+        input logic        expected_rue,
+        input string       tag
+    );
+        bit commit_seen;
+    begin
+        commit_seen = 1'b0;
+        fork : arm_commit_collision_fork
+            begin
+                wait (p17d_ctrl_vif.queue_completion_commit_pulse_obs === 1'b1);
+                commit_seen = 1'b1;
+            end
+            begin
+                repeat (done_timeout_cycles * 2) @(posedge csr_vif.clk);
+            end
+        join_any
+        disable arm_commit_collision_fork;
+
+        if (!commit_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/COLLISION_COMMIT_TIMEOUT",
+                $sformatf("%s: commit pulse never arrived", tag))
+        end
+
+        // Commit is a full-cycle combinational pulse.  Stage AW/W at the
+        // intervening falling edge so the next rising edge simultaneously
+        // samples commit in the queue wrapper and applies CSR_QUEUE_CONTROL.
+        @(negedge csr_vif.clk);
+
+        if (p17d_ctrl_vif.queue_completion_commit_pulse_obs !== 1'b1) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/COMMIT_WINDOW_LOST",
+                $sformatf("%s: commit pulse dropped before collision write could be staged", tag))
+        end
+
+        if ((csr_vif.awvalid !== 1'b0) ||
+            (csr_vif.wvalid  !== 1'b0) ||
+            (csr_vif.bvalid  !== 1'b0)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/CSR_BUS_NOT_IDLE",
+                $sformatf("%s: CSR write channel not idle before collision write: AWVALID=%0b WVALID=%0b BVALID=%0b",
+                    tag, csr_vif.awvalid, csr_vif.wvalid, csr_vif.bvalid))
+        end
+
+        csr_vif.awaddr  = ai_accel_csr_access_helper::CSR_QUEUE_CONTROL;
+        csr_vif.awvalid = 1'b1;
+        csr_vif.wdata   = control_value;
+        csr_vif.wstrb   = '1;
+        csr_vif.wvalid  = 1'b1;
+        csr_vif.bready  = 1'b1;
+
+        #1ps;
+        if ((csr_vif.awready !== 1'b1) || (csr_vif.wready !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/CSR_NOT_READY",
+                $sformatf("%s: CSR_QUEUE_CONTROL collision write not accepted on next edge: AWREADY=%0b WREADY=%0b",
+                    tag, csr_vif.awready, csr_vif.wready))
+        end
+
+        @(posedge csr_vif.clk);
+        #1ps;
+        csr_vif.awvalid = 1'b0;
+        csr_vif.wvalid  = 1'b0;
+
+        // This is the exact post-edge state required by the line-1287 FEC
+        // target: pending was created from OLD enabled/RUE state while the
+        // architectural CSR write installed the NEW control state.
+        if (p17d_ctrl_vif.queue_auto_continue_pending_obs !== 1'b1) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/PENDING_NOT_SET",
+                $sformatf("%s: expected auto-continue pending=1 immediately after commit/control collision", tag))
+        end
+        if (p17d_ctrl_vif.queue_enable_obs !== expected_enable) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/ENABLE_STATE",
+                $sformatf("%s: expected queue_enable=%0b got=%0b",
+                    tag, expected_enable, p17d_ctrl_vif.queue_enable_obs))
+        end
+        if (p17d_ctrl_vif.queue_run_until_empty_obs !== expected_rue) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/RUE_STATE",
+                $sformatf("%s: expected run_until_empty=%0b got=%0b",
+                    tag, expected_rue, p17d_ctrl_vif.queue_run_until_empty_obs))
+        end
+        if (p17d_ctrl_vif.queue_busy_obs !== 1'b0) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/QUEUE_BUSY_STATE",
+                $sformatf("%s: expected raw queue controller idle at auto-continue boundary, queue_busy=%0b",
+                    tag, p17d_ctrl_vif.queue_busy_obs))
+        end
+
+        if (csr_vif.bvalid !== 1'b1) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/NO_BVALID",
+                $sformatf("%s: CSR_QUEUE_CONTROL collision write did not produce BVALID", tag))
+        end
+        if (csr_vif.bresp !== 2'b00) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/BRESP",
+                $sformatf("%s: CSR_QUEUE_CONTROL collision write BRESP=%0b expected OKAY", tag, csr_vif.bresp))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/COLLISION_STATE_PASS",
+            $sformatf("%s: post-edge pending=1 enable=%0b RUE=%0b busy=0",
+                tag, expected_enable, expected_rue),
+            UVM_MEDIUM)
+
+        // Consume the normal AXI-Lite write response.
+        @(posedge csr_vif.clk);
+        #1ps;
+        csr_vif.bready = 1'b0;
+    end
+    endtask
+
+    task automatic g7_z4_c2b_expect_pointers(
+        input logic [31:0] expected_sq_head,
+        input logic [31:0] expected_cq_tail,
+        input string       tag
+    );
+        logic [31:0] sq_head;
+        logic [31:0] cq_tail;
+        logic [31:0] queue_error;
+        logic [31:0] queue_reject;
+    begin
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_SQ_HEAD, sq_head);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_CQ_TAIL, cq_tail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, queue_error);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, queue_reject);
+
+        if ((sq_head !== expected_sq_head) || (cq_tail !== expected_cq_tail)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/POINTER_MISMATCH",
+                $sformatf("%s: expected SQ_HEAD/CQ_TAIL=%0d/%0d got=%0d/%0d",
+                    tag, expected_sq_head, expected_cq_tail, sq_head, cq_tail))
+        end
+        if ((queue_error != 32'h0000_0000) || (queue_reject != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/QUEUE_STICKY",
+                $sformatf("%s: unexpected queue error/reject after legal probe: error=0x%08h reject=0x%08h",
+                    tag, queue_error, queue_reject))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/POINTER_PASS",
+            $sformatf("%s: SQ_HEAD=%0d CQ_TAIL=%0d", tag, sq_head, cq_tail),
+            UVM_LOW)
+    end
+    endtask
+
+    task automatic g7_z4_c2b_queue_control_window_probe();
+    begin
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/START",
+            "Starting queue auto-continue control-window constructive probe",
+            UVM_MEDIUM)
+
+        // The original P19E success path already committed SQ/CQ index 0.
+        // Add three legal ring entries and publish tail=4.  The queue
+        // controller uses modulo-depth indices while host pointers remain
+        // monotonic, so the next commands are SQ indices 1, 2, and 3.
+        g7_z4_c2b_program_sq_command_entry(1, G7_Z4_C2_B_TAG_ENABLE_AT_COMMIT);
+        g7_z4_c2b_program_sq_command_entry(2, G7_Z4_C2_B_TAG_ENABLE_COLLISION);
+        g7_z4_c2b_program_sq_command_entry(3, G7_Z4_C2_B_TAG_RUE_COLLISION);
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_SQ_TAIL,
+            32'h0000_0004
+        );
+
+        // --------------------------------------------------------
+        // Probe 1: line1192 csr_queue_enable=0 decisive term.
+        // Let queue-owned P18 start first, then legally disable the queue
+        // while the 16-word completion record is still in flight.  P18
+        // ownership remains active, so the eventual commit is genuine;
+        // only auto-continue admission is disabled at commit time.
+        // --------------------------------------------------------
+        g7_z4_c2b_clear_command_sticky("before line1192 enable-low probe");
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_ENABLE_RUE
+        );
+        csr_start_queue();
+        g7_z4_c2b_poll_queue_validated_tag(
+            G7_Z4_C2_B_TAG_ENABLE_AT_COMMIT,
+            done_timeout_cycles,
+            "line1192 enable-low"
+        );
+        g7_z4_c2b_wait_completion_wb_busy(
+            done_timeout_cycles * 2,
+            "line1192 enable-low"
+        );
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_DISABLE_RUE
+        );
+        if ((p17d_ctrl_vif.queue_enable_obs !== 1'b0) ||
+            (p17d_ctrl_vif.queue_run_until_empty_obs !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/LINE1192_CONTROL",
+                $sformatf("Expected enable/RUE=0/1 before commit, got=%0b/%0b",
+                    p17d_ctrl_vif.queue_enable_obs,
+                    p17d_ctrl_vif.queue_run_until_empty_obs))
+        end
+
+        g7_z4_c2b_wait_commit_pulse(done_timeout_cycles, "line1192 enable-low");
+        if (p17d_ctrl_vif.queue_enable_obs !== 1'b0) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/LINE1192_ENABLE_NOT_LOW",
+                "Queue enable was not low while completion commit pulse was asserted")
+        end
+        @(posedge csr_vif.clk);
+        repeat (2) @(posedge csr_vif.clk);
+        g7_z4_c2b_expect_pointers(32'd2, 32'd2, "line1192 enable-low");
+        expect_queue_comp_word(P19E_ENTRY_STRIDE + 16'h00,
+                               EXP_COMMIT_SUCCESS,
+                               "C2-B line1192 CQ[1] commit");
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/LINE1192_PASS",
+            "Legal completion commit observed with QUEUE_ENABLE=0",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // Probe 2: line1287 csr_queue_enable=0 decisive term.
+        // The queue wrapper samples OLD enable/RUE=1/1 and sets pending on
+        // the same edge that the AXI-Lite write installs NEW enable/RUE=0/1.
+        // --------------------------------------------------------
+        g7_z4_c2b_clear_command_sticky("before line1287 enable collision");
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_ENABLE_RUE
+        );
+        csr_start_queue();
+        g7_z4_c2b_poll_queue_validated_tag(
+            G7_Z4_C2_B_TAG_ENABLE_COLLISION,
+            done_timeout_cycles,
+            "line1287 enable collision"
+        );
+        g7_z4_c2b_write_queue_control_on_commit(
+            G7_Z4_C2_B_CTRL_DISABLE_RUE,
+            1'b0,
+            1'b1,
+            "line1287 enable collision"
+        );
+        repeat (2) @(posedge csr_vif.clk);
+        if (p17d_ctrl_vif.queue_auto_continue_pending_obs !== 1'b0) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/ENABLE_PENDING_NOT_CLEARED",
+                "Auto-continue pending did not clear after QUEUE_ENABLE=0")
+        end
+        g7_z4_c2b_expect_pointers(32'd3, 32'd3, "line1287 enable collision");
+        expect_queue_comp_word((2 * P19E_ENTRY_STRIDE) + 16'h00,
+                               EXP_COMMIT_SUCCESS,
+                               "C2-B line1287 enable CQ[2] commit");
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/LINE1287_ENABLE_PASS",
+            "Same-edge commit / QUEUE_ENABLE clear produced pending=1, enable=0, RUE=1, busy=0",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // Probe 3: line1287 RUN_UNTIL_EMPTY=0 decisive term.
+        // Same collision mechanism, but keep ENABLE=1 and clear only RUE.
+        // Pending remains parked (no auto-start) until the test disables
+        // the queue for one clean cycle to retire it.
+        // --------------------------------------------------------
+        g7_z4_c2b_clear_command_sticky("before line1287 RUE collision");
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_ENABLE_RUE
+        );
+        csr_start_queue();
+        g7_z4_c2b_poll_queue_validated_tag(
+            G7_Z4_C2_B_TAG_RUE_COLLISION,
+            done_timeout_cycles,
+            "line1287 RUE collision"
+        );
+        g7_z4_c2b_write_queue_control_on_commit(
+            G7_Z4_C2_B_CTRL_ENABLE_NO_RUE,
+            1'b1,
+            1'b0,
+            "line1287 RUE collision"
+        );
+        g7_z4_c2b_expect_pointers(32'd4, 32'd4, "line1287 RUE collision");
+        expect_queue_comp_word((3 * P19E_ENTRY_STRIDE) + 16'h00,
+                               EXP_COMMIT_SUCCESS,
+                               "C2-B line1287 RUE CQ[3] commit");
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/LINE1287_RUE_PASS",
+            "Same-edge commit / RUN_UNTIL_EMPTY clear produced pending=1, enable=1, RUE=0, busy=0",
+            UVM_MEDIUM)
+
+        // With RUE=0 the pending latch is intentionally parked.  Disable
+        // the queue through the normal CSR path, allow the wrapper's
+        // !csr_queue_enable cleanup term to clear pending, then restore the
+        // original P19E control policy (ENABLE + STOP_ON_ERROR, RUE=0).
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_DISABLE_NO_RUE
+        );
+        repeat (2) @(posedge csr_vif.clk);
+        if (p17d_ctrl_vif.queue_auto_continue_pending_obs !== 1'b0) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Z4_C2_B/RUE_PENDING_NOT_CLEARED",
+                "Auto-continue pending did not clear after cleanup disable")
+        end
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_QUEUE_CONTROL,
+            G7_Z4_C2_B_CTRL_ENABLE_NO_RUE
+        );
+
+        g7_z4_c2b_clear_command_sticky("after C2-B control-window probes");
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_C2_B/PASS",
+            "Queue control-window constructive probe completed: line1192 enable-low + line1287 enable/RUE same-edge collisions",
+            UVM_MEDIUM)
+    end
+    endtask
+
     task run_phase(uvm_phase phase);
         ai_accel_subsys_seq_item profile_item;
         int signed               a_flat[];
@@ -338,6 +1062,11 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
 
         program_sq_command_entry();
 
+        // CODE-COV-C1.2-G7-Z4-B: create one legal queue-owned P18 BRESP
+        // failure, verify queue-level propagation/no CQ commit, clean it,
+        // then run the original P19E success path unchanged as recovery.
+        g7_z4b_queue_owned_completion_wb_bresp_error_probe();
+
         csr_clear_sticky_status();
         csr_job_clear_sticky_status();
         csr_recipe_clear_sticky_status();
@@ -364,6 +1093,20 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
 
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
+
+        // CODE-COV-C1.2-G7-Z4-C2-B: after the original P19E recovery
+        // has proven the normal queue-owned completion path, reuse the
+        // remaining three ring entries for legal queue-control timing
+        // probes.  No existing success-path expectation is weakened.
+        g7_z4_c2b_queue_control_window_probe();
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/RECOVERY_PASS",
+            "Normal queue-owned P18 CQ writeback completed successfully after injected BRESP error cleanup",
+            UVM_MEDIUM)
+
+        `uvm_info("CODE_COV_C1P2_G7_Z4_B/PASS",
+            "Queue-owned completion-writeback ERROR propagation / no-commit / cleanup / recovery probe PASS",
+            UVM_MEDIUM)
 
         `uvm_info("P19E_QUEUE_CQ_WB/PASS",
             $sformatf("P19E CQ completion writeback completed: CASE_ID=%0d A_bytes=%0d B_bytes=%0d C_words=%0d",

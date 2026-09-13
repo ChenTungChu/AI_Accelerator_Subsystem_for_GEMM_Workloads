@@ -941,6 +941,9 @@ module ai_accel_subsys_csr_top #(
     logic                      ds_load_busy_i;
     logic                      ds_load_done_i;
     logic                      ds_load_error_i;
+    logic                      ds_operands_ready_i;
+    logic                      ds_gemm_extent_ok_i;
+    logic                      acc_start_reject_i;
 
     logic                      dma_store_busy_i;
     logic                      dma_store_done_i;
@@ -1602,6 +1605,8 @@ module ai_accel_subsys_csr_top #(
         .ds_load_busy           (ds_load_busy_i),
         .ds_load_done           (ds_load_done_i),
         .ds_load_error          (ds_load_error_i),
+        .ds_operands_ready      (ds_operands_ready_i),
+        .ds_gemm_extent_ok      (ds_gemm_extent_ok_i),
 
         .dma_store_busy         (dma_store_busy_i),
         .dma_store_done         (dma_store_done_i),
@@ -2551,6 +2556,7 @@ module ai_accel_subsys_csr_top #(
 
         .acc_busy               (acc_busy_i),
         .acc_done               (acc_done_i),
+        .acc_start_reject       (acc_start_reject_i),
 
         .dma_load_busy          (dma_load_busy_i),
         .dma_load_done          (dma_load_done_i),
@@ -2762,6 +2768,9 @@ module ai_accel_subsys_csr_top #(
         .ds_load_busy        (ds_load_busy_i),
         .ds_load_done        (ds_load_done_i),
         .ds_load_error       (ds_load_error_i),
+        .ds_operands_ready   (ds_operands_ready_i),
+        .ds_gemm_extent_ok   (ds_gemm_extent_ok_i),
+        .acc_start_reject    (acc_start_reject_i),
 
         .dma_src_axi_arid    (dma_src_axi_arid),
         .dma_src_axi_araddr  (dma_src_axi_araddr),

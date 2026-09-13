@@ -344,6 +344,8 @@ module ai_accel_csr_regs #(
     input  logic ds_load_busy,
     input  logic ds_load_done,
     input  logic ds_load_error,
+    input  logic ds_operands_ready,
+    input  logic ds_gemm_extent_ok,
 
     input  logic dma_store_busy,
     input  logic dma_store_done,
@@ -825,12 +827,14 @@ module ai_accel_csr_regs #(
     localparam int ERR_DMA_STORE_BIT  = 3;
     localparam int ERR_GEMM_RSVD_BIT  = 4;
 
-    localparam int REJ_GEMM_BUSY_BIT      = 0;
-    localparam int REJ_DMA_LOAD_BUSY_BIT  = 1;
-    localparam int REJ_AXIS_BUSY_BIT      = 2;
-    localparam int REJ_DS_BUSY_BIT        = 3;
-    localparam int REJ_DMA_STORE_BUSY_BIT = 4;
-    localparam int REJ_UNSUPPORTED_BIT    = 8;
+    localparam int REJ_GEMM_BUSY_BIT              = 0;
+    localparam int REJ_DMA_LOAD_BUSY_BIT          = 1;
+    localparam int REJ_AXIS_BUSY_BIT              = 2;
+    localparam int REJ_DS_BUSY_BIT                = 3;
+    localparam int REJ_DMA_STORE_BUSY_BIT         = 4;
+    localparam int REJ_GEMM_OPERAND_NOT_READY_BIT = 5;
+    localparam int REJ_GEMM_OPERAND_EXTENT_BIT    = 6;
+    localparam int REJ_UNSUPPORTED_BIT            = 8;
     localparam int REJ_ZERO_LENGTH_BIT    = 9;
 
     // ------------------------------------------------------------
@@ -3953,6 +3957,20 @@ CSR_QUEUE_VERSION_ADDR,
                                                  (dim_n_q == 32'h0000_0000) ||
                                                  (dim_k_q == 32'h0000_0000)) begin
                                             reject_status_q[REJ_ZERO_LENGTH_BIT] <= 1'b1;
+                                        end
+                                        else if (mode_q[0] && !ds_operands_ready) begin
+                                            // CODE-COV-C1.2-G8-A-R2: Direct Stream mode is a
+                                            // preloaded-operand execution contract.  Reject a
+                                            // manual GEMM launch before the core can consume
+                                            // synthetic router error data when A/B are not ready.
+                                            reject_status_q[REJ_GEMM_OPERAND_NOT_READY_BIT] <= 1'b1;
+                                        end
+                                        else if (mode_q[0] && !ds_gemm_extent_ok) begin
+                                            // CODE-COV-C1.2-G8-A-R3-B: completed A/B preloads
+                                            // must also cover the dimension-derived operand
+                                            // footprint and remain within physical buffer
+                                            // capacity.  Reject before emitting acc_start.
+                                            reject_status_q[REJ_GEMM_OPERAND_EXTENT_BIT] <= 1'b1;
                                         end
                                         else begin
                                             acc_start_pulse <= 1'b1;

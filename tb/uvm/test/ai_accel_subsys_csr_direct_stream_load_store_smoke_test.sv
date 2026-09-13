@@ -49,22 +49,28 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
         G7_L2_OVERFLOW_BEATS * BYTES_PER_BEAT;
 
     // ------------------------------------------------------------
-    // CODE-COV-C1.2-G7-L3-A targeted operand-buffer tail-read probe
+    // CODE-COV-C1.2-G8-A-R1 operand-buffer tail-read repair validation
     //
-    // Direct Stream A/B routing uses the read START address while the
-    // operand buffer requires the full 32-bit / 4-byte read container to
-    // fit inside its 1024-byte storage.  M=7, N=1, K=146 makes the final
-    // A element start at local byte offset 1021:
+    // G7-L3-A proved that a legal final int8 A element could be rejected
+    // solely because its 32-bit read container straddled the 1024-byte
+    // operand-buffer tail.  M=7, N=1, K=146 keeps the original boundary:
     //
     //   A bytes        = 7 * 146 = 1022
     //   A padded bytes = round_up(1022, 8) = 1024
     //   final A offset = (6 * 146) + 145 = 1021
     //
-    // The 128-beat A preload is fully legal; only the final GEMM A read
-    // crosses the 1024-byte operand-buffer read-container boundary.
+    // Post-repair, a read is legal when its START byte is in range; upper
+    // container lanes beyond the physical buffer tail are zero-filled by
+    // gemm_operand_buffer.  The final A element is deliberately changed from
+    // 1 to a nonzero marker so the final C result proves that the tail byte
+    // participated in the GEMM rather than being silently substituted by 0.
     //
-    // This probe is manual-only because gemm_operand_buffer intentionally
-    // emits a simulation $error when the read-error pulse is observed.
+    // Manual enable:
+    //   +CODE_COV_G8_A_R1_TAIL_READ
+    //
+    // The historical +CODE_COV_G7_L3A_TAIL_READ plusarg is retained as a
+    // compatibility alias, but now validates repaired behavior instead of an
+    // expected read error.
     // ------------------------------------------------------------
     localparam int unsigned G7_L3A_DIM_M = 7;
     localparam int unsigned G7_L3A_DIM_N = 1;
@@ -91,6 +97,161 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
     localparam logic [31:0] G7_L3A_BASE_A = 32'h0000_0000;
     localparam logic [31:0] G7_L3A_BASE_B = 32'h0000_0800;
     localparam logic [31:0] G7_L3A_BASE_C = 32'h0000_1000;
+
+    localparam logic [7:0] G8_R1_TAIL_MARKER = 8'h07;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-M2 targeted write-adapter address-wrap probe
+    //
+    // The Direct Stream launch contract checks nonzero beats, alignment,
+    // and operand selection, but it does not reject a transfer whose
+    // logical destination range wraps the 32-bit address space.
+    //
+    // With a 64-bit / 8-byte write beat:
+    //
+    //   dst_base = 0xFFFF_FFF8
+    //   beats    = 2
+    //
+    // Beat 0:
+    //   wr_addr = 0xFFFF_FFF8
+    //   local   = 0
+    //   translation valid
+    //
+    // Beat 1:
+    //   wr_addr wraps to 0x0000_0000
+    //   wr_addr < operand_base_addr
+    //   addr_not_underflow = 0
+    //   translation invalid -> accept-and-drop
+    //
+    // This probe is manual-only because
+    // gemm_operand_buffer_write_adapter intentionally emits a simulation
+    // $error when drop_fire is observed.
+    // ------------------------------------------------------------
+    localparam logic [31:0] G7_M2_SRC_BASE      = 32'h0000_0000;
+    localparam logic [31:0] G7_M2_WRAP_DST_BASE = 32'hFFFF_FFF8;
+    localparam int unsigned G7_M2_WRAP_BEATS     = 2;
+    localparam int unsigned G7_M2_WRAP_BYTES =
+        G7_M2_WRAP_BEATS * BYTES_PER_BEAT;
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A-R2 Direct Stream operand-readiness repair validation
+    //
+    // Historical G7-N2 proved that P14 START_GEMM could accept Direct Stream
+    // mode before either operand had completed preload.  The router then
+    // returned synthetic zero-data responses for the invalid operand reads,
+    // allowing GEMM to reach DONE without a host-visible error.
+    //
+    // R2 changes the contract at the command-acceptance boundary:
+    //
+    //   Direct Stream mode + A/B not ready
+    //     -> no GEMM launch
+    //     -> CSR_CMD_REJECT_STATUS[5]
+    //
+    // This probe must execute before any Direct Stream A/B preload in the
+    // CASE_ID=102 carrier.  The normal representative flow later preloads A/B
+    // and proves that the synchronized readiness gate does not false-reject a
+    // legal launch.
+    //
+    // Manual enable:
+    //   +CODE_COV_G8_A_R2_NO_PRELOAD_REJECT
+    //
+    // The historical +CODE_COV_G7_N2_NO_PRELOAD_INVALID_READ plusarg is
+    // retained as a compatibility alias, but now validates repaired rejection
+    // behavior rather than intentionally running the invalid-read path.
+    // ------------------------------------------------------------
+    localparam int unsigned G7_N2_DIM_M = 1;
+    localparam int unsigned G7_N2_DIM_N = 1;
+    localparam int unsigned G7_N2_DIM_K = 1;
+
+    localparam logic [31:0] G7_N2_BASE_A = 32'h0000_0000;
+    localparam logic [31:0] G7_N2_BASE_B = 32'h0000_0100;
+    localparam logic [31:0] G7_N2_BASE_C = 32'h0000_0300;
+
+    localparam int unsigned G8_R2_REJ_GEMM_OPERAND_NOT_READY_BIT = 5;
+    localparam logic [31:0] G8_R2_REJ_GEMM_OPERAND_NOT_READY_MASK =
+        (32'h0000_0001 << G8_R2_REJ_GEMM_OPERAND_NOT_READY_BIT);
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A-R3-B
+    // Direct-Stream committed-extent / capacity prelaunch validation
+    //
+    // R3-B converts the former Pass 4-B runtime-gap probes into pre-launch
+    // rejection checks.  A/B can both report completed/loaded, yet the
+    // committed preload extent can still be smaller than the footprint
+    // required by the selected GEMM dimensions.  The same launch guard also
+    // rejects dimension footprints beyond the physical 1024-byte A/B buffers.
+    //
+    // This R3-B suite is part of the existing CASE_ID=102 carrier so the
+    // repaired P14 extent/capacity paths remain represented in the normal
+    // 150-test full-regression UCDB without adding a new regression item.
+    //
+    // Required P14 precedence:
+    //   busy -> zero dimension -> not-ready(bit5) -> extent(bit6) -> launch
+    // ------------------------------------------------------------
+    localparam int unsigned G8_P4B_OPERAND_BUFFER_BYTES = 1024;
+
+    localparam int unsigned G8_R3_REJ_GEMM_OPERAND_EXTENT_BIT = 6;
+    localparam logic [31:0] G8_R3_REJ_GEMM_OPERAND_EXTENT_MASK =
+        (32'h0000_0001 << G8_R3_REJ_GEMM_OPERAND_EXTENT_BIT);
+
+    // Successful, but intentionally undersized, preload.
+    localparam int unsigned G8_P4B_SHORT_DIM_M = 1;
+    localparam int unsigned G8_P4B_SHORT_DIM_N = 1;
+    localparam int unsigned G8_P4B_SHORT_DIM_K = 16;
+    localparam int unsigned G8_P4B_SHORT_REQUIRED_A_BYTES =
+        G8_P4B_SHORT_DIM_M * G8_P4B_SHORT_DIM_K;
+    localparam int unsigned G8_P4B_SHORT_REQUIRED_B_BYTES =
+        G8_P4B_SHORT_DIM_K * G8_P4B_SHORT_DIM_N;
+    localparam int unsigned G8_P4B_SHORT_PRELOAD_BYTES = 8;
+
+    localparam logic [31:0] G8_P4B_SHORT_SRC_A_BASE = 32'h0000_0000;
+    localparam logic [31:0] G8_P4B_SHORT_SRC_B_BASE = 32'h0000_0100;
+    localparam logic [31:0] G8_P4B_SHORT_BASE_A     = 32'h0000_0000;
+    localparam logic [31:0] G8_P4B_SHORT_BASE_B     = 32'h0000_0100;
+    localparam logic [31:0] G8_P4B_SHORT_BASE_C     = 32'h0000_0200;
+
+    // A footprint exceeds physical capacity while B remains sufficient.
+    localparam int unsigned G8_P4B_CAP_DIM_M = 7;
+    localparam int unsigned G8_P4B_CAP_DIM_N = 1;
+    localparam int unsigned G8_P4B_CAP_DIM_K = 147;
+    localparam int unsigned G8_P4B_CAP_REQUIRED_A_BYTES =
+        G8_P4B_CAP_DIM_M * G8_P4B_CAP_DIM_K;
+    localparam int unsigned G8_P4B_CAP_REQUIRED_B_BYTES =
+        G8_P4B_CAP_DIM_K * G8_P4B_CAP_DIM_N;
+    localparam int unsigned G8_P4B_CAP_A_PRELOAD_BYTES =
+        G8_P4B_OPERAND_BUFFER_BYTES;
+    localparam int unsigned G8_P4B_CAP_B_PADDED_BYTES =
+        ((G8_P4B_CAP_REQUIRED_B_BYTES + BYTES_PER_BEAT - 1) / BYTES_PER_BEAT) *
+        BYTES_PER_BEAT;
+
+    // Symmetric B footprint exceeds physical capacity while A is sufficient.
+    localparam int unsigned G8_P4B_BCAP_DIM_M = 1;
+    localparam int unsigned G8_P4B_BCAP_DIM_N = 7;
+    localparam int unsigned G8_P4B_BCAP_DIM_K = 147;
+    localparam int unsigned G8_P4B_BCAP_REQUIRED_A_BYTES =
+        G8_P4B_BCAP_DIM_M * G8_P4B_BCAP_DIM_K;
+    localparam int unsigned G8_P4B_BCAP_REQUIRED_B_BYTES =
+        G8_P4B_BCAP_DIM_K * G8_P4B_BCAP_DIM_N;
+    localparam int unsigned G8_P4B_BCAP_A_PADDED_BYTES =
+        ((G8_P4B_BCAP_REQUIRED_A_BYTES + BYTES_PER_BEAT - 1) / BYTES_PER_BEAT) *
+        BYTES_PER_BEAT;
+    localparam int unsigned G8_P4B_BCAP_B_PRELOAD_BYTES =
+        G8_P4B_OPERAND_BUFFER_BYTES;
+
+    // Exact-capacity positive boundary: A footprint is exactly 1024 bytes.
+    localparam int unsigned G8_P4B_EXACT_DIM_M = 8;
+    localparam int unsigned G8_P4B_EXACT_DIM_N = 1;
+    localparam int unsigned G8_P4B_EXACT_DIM_K = 128;
+    localparam int unsigned G8_P4B_EXACT_REQUIRED_A_BYTES =
+        G8_P4B_EXACT_DIM_M * G8_P4B_EXACT_DIM_K;
+    localparam int unsigned G8_P4B_EXACT_REQUIRED_B_BYTES =
+        G8_P4B_EXACT_DIM_K * G8_P4B_EXACT_DIM_N;
+
+    localparam logic [31:0] G8_P4B_CAP_SRC_A_BASE = 32'h0000_0000;
+    localparam logic [31:0] G8_P4B_CAP_SRC_B_BASE = 32'h0000_0400;
+    localparam logic [31:0] G8_P4B_CAP_BASE_A     = 32'h0000_0000;
+    localparam logic [31:0] G8_P4B_CAP_BASE_B     = 32'h0000_0800;
+    localparam logic [31:0] G8_P4B_CAP_BASE_C     = 32'h0000_0200;
 
     // ------------------------------------------------------------
     // Constructor
@@ -250,8 +411,20 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
 
         // Use deterministic nonzero operand data for the real matrix
         // footprint and zero-fill only the stream-beat padding bytes.
+        // The final real A byte is a distinct marker.  With B all ones this
+        // makes the final output row differ from the first six rows, proving
+        // that the legal tail byte was actually consumed by GEMM.
         for (i = 0; i < G7_L3A_A_PADDED_BYTES; i++) begin
-            byte_value = (i < G7_L3A_A_BYTES) ? 8'h01 : 8'h00;
+            if (i >= G7_L3A_A_BYTES) begin
+                byte_value = 8'h00;
+            end
+            else if (i == (G7_L3A_A_BYTES - 1)) begin
+                byte_value = G8_R1_TAIL_MARKER;
+            end
+            else begin
+                byte_value = 8'h01;
+            end
+
             vif.dma_src_mem_write_byte(
                 G7_L3A_SRC_A_BASE + 32'(i),
                 byte_value
@@ -276,6 +449,100 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
                 G7_L3A_B_BYTES,
                 G7_L3A_B_PADDED_BYTES,
                 G7_L3A_B_BEATS),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic prepare_g8_a_pass4b_short_source();
+        int unsigned i;
+    begin
+        vif.dma_src_mem_clear();
+        vif.dma_dst_mem_clear();
+
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+        vif.dma_dst_set_bresp_error(1'b0, -1);
+
+        for (i = 0; i < G8_P4B_SHORT_PRELOAD_BYTES; i++) begin
+            vif.dma_src_mem_write_byte(
+                G8_P4B_SHORT_SRC_A_BASE + 32'(i),
+                8'h01
+            );
+            vif.dma_src_mem_write_byte(
+                G8_P4B_SHORT_SRC_B_BASE + 32'(i),
+                8'h01
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G8_A_PASS4B/SHORT_SRC",
+            $sformatf("Prepared undersized Direct-Stream payloads: A=%0d/%0d required bytes, B=%0d/%0d required bytes, all loaded bytes=1",
+                G8_P4B_SHORT_PRELOAD_BYTES,
+                G8_P4B_SHORT_REQUIRED_A_BYTES,
+                G8_P4B_SHORT_PRELOAD_BYTES,
+                G8_P4B_SHORT_REQUIRED_B_BYTES),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic prepare_g8_a_pass4b_capacity_source();
+        int unsigned i;
+    begin
+        vif.dma_src_mem_clear();
+        vif.dma_dst_mem_clear();
+
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+        vif.dma_dst_set_bresp_error(1'b0, -1);
+
+        // Populate the entire legal physical source footprint for both
+        // operands.  Individual subcases choose how many bytes/beats to
+        // commit, so the probe varies only the architectural extent and not
+        // source-memory availability.
+        for (i = 0; i < G8_P4B_OPERAND_BUFFER_BYTES; i++) begin
+            vif.dma_src_mem_write_byte(
+                G8_P4B_CAP_SRC_A_BASE + 32'(i),
+                8'h01
+            );
+            vif.dma_src_mem_write_byte(
+                G8_P4B_CAP_SRC_B_BASE + 32'(i),
+                8'h01
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/CAP_SRC",
+            $sformatf("Prepared full legal source backing for A/B: %0d bytes per operand",
+                G8_P4B_OPERAND_BUFFER_BYTES),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic prepare_g7_m2_wrap_source();
+        int unsigned i;
+        logic [7:0] byte_value;
+    begin
+        // D2 intentionally injects a Direct Stream source error earlier in
+        // this carrier.  Explicitly return every source/destination error
+        // model to its normal state before the M2 address-wrap probe.
+        vif.dma_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+        vif.dma_dst_set_bresp_error(1'b0, -1);
+
+        for (i = 0; i < G7_M2_WRAP_BYTES; i++) begin
+            byte_value = 8'hC0 + i[7:0];
+            vif.dma_src_mem_write_byte(
+                G7_M2_SRC_BASE + 32'(i),
+                byte_value
+            );
+        end
+
+        `uvm_info("CODE_COV_C1_2G7_M2/SRC",
+            $sformatf("Prepared address-wrap source payload: src=0x%08h bytes=%0d beats=%0d",
+                G7_M2_SRC_BASE,
+                G7_M2_WRAP_BYTES,
+                G7_M2_WRAP_BEATS),
             UVM_MEDIUM)
     end
     endtask
@@ -825,27 +1092,360 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
     endtask
 
     // ------------------------------------------------------------
-    // CODE-COV-C1.2-G7-L3-A operand-buffer tail-read constructive probe
+    // CODE-COV-C1.2-G8-A-R2 no-preload rejection validation
     // ------------------------------------------------------------
-    task automatic run_g7_l3a_tail_read_probe(
+    task automatic run_g8_a_r2_no_preload_reject_probe();
+        ai_accel_subsys_seq_item g8_r2_profile;
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] reject_after_clear;
+    begin
+        g8_r2_profile = ai_accel_subsys_seq_item::type_id::create("g8_r2_profile");
+
+        g8_r2_profile.case_id           = selected_case_id;
+        g8_r2_profile.base_addr_a       = G7_N2_BASE_A;
+        g8_r2_profile.base_addr_b       = G7_N2_BASE_B;
+        g8_r2_profile.base_addr_c       = G7_N2_BASE_C;
+        g8_r2_profile.dim_m             = G7_N2_DIM_M;
+        g8_r2_profile.dim_n             = G7_N2_DIM_N;
+        g8_r2_profile.dim_k             = G7_N2_DIM_K;
+        g8_r2_profile.accumulate_enable = 1'b0;
+
+        `uvm_info("CODE_COV_C1_2G8_A_R2/START",
+            $sformatf("Post-repair no-preload rejection probe: Direct Stream mode, dim=(%0d,%0d,%0d), A=0x%08h, B=0x%08h, C=0x%08h. No A/B preload is issued before START_GEMM.",
+                G7_N2_DIM_M,
+                G7_N2_DIM_N,
+                G7_N2_DIM_K,
+                G7_N2_BASE_A,
+                G7_N2_BASE_B,
+                G7_N2_BASE_C),
+            UVM_MEDIUM)
+
+        // Clear only software-visible sticky state.  The operand buffer is
+        // still at reset readiness 0 because no Direct Stream preload command
+        // has run in this carrier.
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr_write_direct_stream_gemm_config(g8_r2_profile);
+        csr_start_gemm();
+
+        // Give the old buggy acceptance path ample time to launch and complete
+        // a 1x1x1 GEMM.  Post-repair there must be no launch at all.
+        repeat (128) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_STATUS,
+            status
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            done_status
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            error_status
+        );
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            reject_status
+        );
+
+        if (reject_status != G8_R2_REJ_GEMM_OPERAND_NOT_READY_MASK) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R2/REJECT_MISMATCH",
+                $sformatf("Expected only GEMM_OPERAND_NOT_READY_REJECT bit %0d (0x%08h), observed reject=0x%08h status=0x%08h done=0x%08h error=0x%08h",
+                    G8_R2_REJ_GEMM_OPERAND_NOT_READY_BIT,
+                    G8_R2_REJ_GEMM_OPERAND_NOT_READY_MASK,
+                    reject_status,
+                    status,
+                    done_status,
+                    error_status))
+        end
+
+        if (done_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R2/UNEXPECTED_DONE",
+                $sformatf("No-preload START_GEMM must not launch or complete: DONE_STATUS=0x%08h",
+                    done_status))
+        end
+
+        if (error_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R2/UNEXPECTED_ERROR",
+                $sformatf("Operand readiness is a pre-launch reject, not CSR_ERROR_STATUS: ERROR_STATUS=0x%08h",
+                    error_status))
+        end
+
+        if (status[0] || status[8] || status[12] || !status[13]) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R2/STATUS_MISMATCH",
+                $sformatf("Rejected no-preload GEMM must remain idle with ANY_ERROR from reject only: STATUS=0x%08h",
+                    status))
+        end
+
+        `uvm_info("CODE_COV_C1_2G8_A_R2/REJECT_PASS",
+            $sformatf("No-preload Direct-Stream START_GEMM rejected before launch: STATUS=0x%08h DONE=0x%08h ERROR=0x%08h REJECT=0x%08h",
+                status,
+                done_status,
+                error_status,
+                reject_status),
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            reject_after_clear
+        );
+
+        if (reject_after_clear != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R2/CLEAR_FAIL",
+                $sformatf("CLEAR_ERROR did not clear operand-readiness reject: REJECT_STATUS=0x%08h",
+                    reject_after_clear))
+        end
+
+        `uvm_info("CODE_COV_C1_2G8_A_R2/CLEAR_PASS",
+            "Operand-readiness reject cleared; normal A/B preload + GEMM recovery will be validated by the representative flow",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-M2 write-adapter address-wrap constructive probe
+    // ------------------------------------------------------------
+    task automatic run_g7_m2_address_wrap_translation_drop_probe(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               normal_a_flat[],
+        input int signed               normal_b_flat[]
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] expected_error;
+        logic [31:0] expected_done;
+        int unsigned cnt;
+    begin
+        expected_error = 32'h0000_0001 << 2;
+        expected_done  = 32'h0000_0001 << ai_accel_csr_access_helper::DONE_DS_LOAD;
+
+        `uvm_info("CODE_COV_C1_2G7_M2",
+            $sformatf("Manual targeted address-wrap probe enabled: src=0x%08h dst=0x%08h beats=%0d beat_bytes=%0d. Beat1 is expected to wrap to 0x00000000 and trigger adapter accept-and-drop. Expected RTL $error diagnostic is intentionally preserved.",
+                G7_M2_SRC_BASE,
+                G7_M2_WRAP_DST_BASE,
+                G7_M2_WRAP_BEATS,
+                BYTES_PER_BEAT),
+            UVM_MEDIUM)
+
+        prepare_g7_m2_wrap_source();
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr_write_ds_load_config(
+            G7_M2_SRC_BASE,
+            G7_M2_WRAP_DST_BASE,
+            G7_M2_WRAP_BEATS,
+            OPERAND_A,
+            "G7_M2_ADDR_WRAP_DROP"
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_M2/START",
+            $sformatf("Starting accepted Direct Stream address-wrap transfer: beat0 dst=0x%08h beat1 dst=0x00000000 operand=A",
+                G7_M2_WRAP_DST_BASE),
+            UVM_MEDIUM)
+
+        csr_start_ds_load("G7_M2_ADDR_WRAP_DROP");
+
+        // Wait for the adapter/core-side translation error to propagate into
+        // the architectural Direct Stream P14 error bit.  This proves the
+        // transaction was accepted by the frontend and failed downstream,
+        // rather than being rejected by launch prevalidation.
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/REJECT",
+                    $sformatf("Address-wrap probe was unexpectedly rejected: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if ((error_status != 32'h0000_0000) &&
+                (error_status != expected_error)) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/BAD_ERROR",
+                    $sformatf("Address-wrap probe observed unexpected P14 error bits: expected=0x%08h actual=0x%08h",
+                        expected_error, error_status))
+            end
+
+            if (error_status == expected_error) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/ERROR_TIMEOUT",
+                    $sformatf("Timed out waiting for address-wrap translation drop to propagate after %0d cycles",
+                        done_timeout_cycles))
+            end
+        end
+
+        // Let the failed transaction retire completely.  Keep ERROR sticky
+        // asserted until the same-operand recovery start has cleared the
+        // adapter's lower-level sticky error source.
+        cnt = 0;
+        while (status[C1D1_P14_STATUS_DS_LOAD_BUSY]) begin
+            @(posedge csr_vif.clk);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/BUSY_TIMEOUT",
+                    "Direct Stream engine remained busy after address-wrap translation drop")
+            end
+        end
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            expected_done
+        );
+
+        // Same ordering proven by D2 and G7-L2:
+        //   1) launch a clean same-operand Direct Stream recovery
+        //   2) wait until it is active or already complete
+        //   3) only then W1C P14 ERROR_STATUS
+        //
+        // C_START asserts adapter_clear_status and clears the selected
+        // operand-buffer status before the recovery loader runs.
+        csr_write_ds_load_config(
+            G7_M2_SRC_BASE,
+            profile_item.base_addr_a,
+            1,
+            OPERAND_A,
+            "G7_M2_ADDR_WRAP_RECOVERY"
+        );
+        csr_start_ds_load("G7_M2_ADDR_WRAP_RECOVERY");
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/RECOVERY_REJECT",
+                    $sformatf("Address-wrap recovery start was rejected: reject=0x%08h status=0x%08h",
+                        reject_status, status))
+            end
+
+            if (status[C1D1_P14_STATUS_DS_LOAD_BUSY] ||
+                ((done_status & expected_done) != 32'h0000_0000)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1_2G7_M2/RECOVERY_START_TIMEOUT",
+                    "Address-wrap recovery never became active or completed")
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_error
+        );
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G7_M2/CLEAR",
+                $sformatf("Address-wrap/recovery sticky cleanup failed: error=0x%08h reject=0x%08h",
+                    error_status, reject_status))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DS_LOAD,
+            "G7_M2_ADDR_WRAP_RECOVERY"
+        );
+        csr_clear_sticky_status();
+
+        // The M2 source payload overwrote the normal compact CASE_ID=102 A
+        // source region.  Restore the representative smoke payload before
+        // returning to the normal flow below.
+        prepare_direct_stream_source_and_destination(
+            normal_a_flat,
+            normal_b_flat
+        );
+
+        `uvm_info("CODE_COV_C1_2G7_M2/EXPECTED_ERROR_PASS",
+            $sformatf("Address-wrap translation drop propagated and recovered as expected: dst_base=0x%08h beats=%0d expected_wrapped_addr=0x00000000 P14_ERROR=0x%08h",
+                G7_M2_WRAP_DST_BASE,
+                G7_M2_WRAP_BEATS,
+                expected_error),
+            UVM_MEDIUM)
+
+        `uvm_info("CODE_COV_C1_2G7_M2/PASS",
+            "Write-adapter address-wrap accept-and-drop constructive probe completed; normal CASE_ID=102 source payloads restored",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A-R1 operand-buffer tail-read repair validation
+    // ------------------------------------------------------------
+    task automatic run_g8_a_r1_tail_read_repair_probe(
         input int signed normal_a_flat[],
         input int signed normal_b_flat[]
     );
-        ai_accel_subsys_seq_item g7_l3a_profile;
+        ai_accel_subsys_seq_item g8_r1_profile;
+        int signed               expected_c[];
+        int signed               actual_c[];
+        int unsigned             c_elems;
+        int unsigned             c_bytes;
+        int unsigned             i;
+        logic [31:0]             error_status;
+        logic [31:0]             reject_status;
     begin
-        g7_l3a_profile = ai_accel_subsys_seq_item::type_id::create("g7_l3a_profile");
+        g8_r1_profile = ai_accel_subsys_seq_item::type_id::create("g8_r1_profile");
 
-        g7_l3a_profile.case_id            = selected_case_id;
-        g7_l3a_profile.base_addr_a        = G7_L3A_BASE_A;
-        g7_l3a_profile.base_addr_b        = G7_L3A_BASE_B;
-        g7_l3a_profile.base_addr_c        = G7_L3A_BASE_C;
-        g7_l3a_profile.dim_m              = G7_L3A_DIM_M;
-        g7_l3a_profile.dim_n              = G7_L3A_DIM_N;
-        g7_l3a_profile.dim_k              = G7_L3A_DIM_K;
-        g7_l3a_profile.accumulate_enable  = 1'b0;
+        g8_r1_profile.case_id            = selected_case_id;
+        g8_r1_profile.base_addr_a        = G7_L3A_BASE_A;
+        g8_r1_profile.base_addr_b        = G7_L3A_BASE_B;
+        g8_r1_profile.base_addr_c        = G7_L3A_BASE_C;
+        g8_r1_profile.dim_m              = G7_L3A_DIM_M;
+        g8_r1_profile.dim_n              = G7_L3A_DIM_N;
+        g8_r1_profile.dim_k              = G7_L3A_DIM_K;
+        g8_r1_profile.accumulate_enable  = 1'b0;
 
-        `uvm_info("CODE_COV_C1_2G7_L3A",
-            $sformatf("Manual targeted tail-read probe enabled: dim=(%0d,%0d,%0d) A_bytes=%0d A_padded=%0d A_beats=%0d final_A_offset=%0d B_bytes=%0d B_padded=%0d B_beats=%0d. Expected gemm_operand_buffer read $error is intentionally preserved.",
+        c_elems = G7_L3A_DIM_M * G7_L3A_DIM_N;
+        c_bytes = c_elems * 4;
+
+        expected_c = new[c_elems];
+        for (i = 0; i < c_elems; i++) begin
+            expected_c[i] = G7_L3A_DIM_K;
+        end
+
+        // Rows 0..5 are all ones.  Row 6 has 145 ones plus the distinct
+        // tail marker, while B is all ones.
+        expected_c[c_elems - 1] =
+            (G7_L3A_DIM_K - 1) + int'(G8_R1_TAIL_MARKER);
+
+        `uvm_info("CODE_COV_C1_2G8_A_R1/START",
+            $sformatf("Post-repair legal tail-read validation: dim=(%0d,%0d,%0d) A_bytes=%0d A_padded=%0d A_beats=%0d final_A_offset=%0d tail_marker=%0d B_bytes=%0d B_padded=%0d B_beats=%0d",
                 G7_L3A_DIM_M,
                 G7_L3A_DIM_N,
                 G7_L3A_DIM_K,
@@ -853,6 +1453,7 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
                 G7_L3A_A_PADDED_BYTES,
                 G7_L3A_A_BEATS,
                 G7_L3A_A_BYTES - 1,
+                G8_R1_TAIL_MARKER,
                 G7_L3A_B_BYTES,
                 G7_L3A_B_PADDED_BYTES,
                 G7_L3A_B_BEATS),
@@ -860,15 +1461,14 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
 
         prepare_g7_l3a_tail_read_source();
 
-        // These preloads are intentionally legal.  A uses exactly the full
-        // 1024-byte operand-buffer capacity (128 beats), so no write-side
-        // overflow is involved in the L3-A proof.
+        // Both preloads are legal.  A occupies exactly the full 1024-byte
+        // physical operand-buffer footprint after stream-beat padding.
         run_one_ds_load(
             G7_L3A_SRC_A_BASE,
             G7_L3A_BASE_A,
             G7_L3A_A_BYTES,
             OPERAND_A,
-            "G7_L3A_A"
+            "G8_R1_A"
         );
 
         run_one_ds_load(
@@ -876,39 +1476,58 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
             G7_L3A_BASE_B,
             G7_L3A_B_BYTES,
             OPERAND_B,
-            "G7_L3A_B"
+            "G8_R1_B"
         );
 
         csr_clear_sticky_status();
-        csr_write_direct_stream_gemm_config(g7_l3a_profile);
+        csr_write_direct_stream_gemm_config(g8_r1_profile);
 
-        `uvm_info("CODE_COV_C1_2G7_L3A/START",
-            $sformatf("Starting tail-read GEMM: A=[0x%08h,+%0d padded bytes) B=[0x%08h,+%0d padded bytes) final A read start=0x%08h local_offset=%0d",
-                G7_L3A_BASE_A,
-                G7_L3A_A_PADDED_BYTES,
-                G7_L3A_BASE_B,
-                G7_L3A_B_PADDED_BYTES,
+        `uvm_info("CODE_COV_C1_2G8_A_R1/TAIL_CONTRACT",
+            $sformatf("Final legal A read starts at absolute=0x%08h local_offset=%0d; 32-bit container spans local bytes [%0d..%0d], with out-of-range upper lane(s) required to zero-fill rather than raise read_error",
                 G7_L3A_BASE_A + G7_L3A_A_BYTES - 1,
-                G7_L3A_A_BYTES - 1),
+                G7_L3A_A_BYTES - 1,
+                G7_L3A_A_BYTES - 1,
+                (G7_L3A_A_BYTES - 1) + 3),
             UVM_MEDIUM)
 
         csr_start_gemm();
         csr_poll_gemm_done(done_timeout_cycles);
         csr_check_perf_snapshot();
 
-        repeat (5) @(posedge csr_vif.clk);
+        // There must be no host-visible command/reject error for this legal
+        // job.  The result-sensitive tail marker plus the final C compare below
+        // provides the architectural proof that the old zero-substitution bug
+        // is gone.
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
 
-        `uvm_info("CODE_COV_C1_2G7_L3A/EXPECTED_ERROR_PASS",
-            $sformatf("Tail-read GEMM completed after the expected operand-buffer read-container boundary event: local A offset=%0d requires bytes [%0d..%0d] against 1024-byte capacity",
-                G7_L3A_A_BYTES - 1,
-                G7_L3A_A_BYTES - 1,
-                (G7_L3A_A_BYTES - 1) + 3),
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R1/STATUS",
+                $sformatf("Legal tail-read GEMM produced unexpected host-visible status: error=0x%08h reject=0x%08h",
+                    error_status, reject_status))
+        end
+
+        run_dma_store(
+            G7_L3A_BASE_C,
+            DMA_DST_C_BASE,
+            c_bytes
+        );
+
+        collect_dma_destination_c(c_elems, actual_c);
+        compare_result_vectors(expected_c, actual_c);
+
+        `uvm_info("CODE_COV_C1_2G8_A_R1/GOLDEN_PASS",
+            $sformatf("Tail-read GEMM golden compare PASS: C_words=%0d rows0-5=%0d final_row=%0d (145 ones + tail marker %0d)",
+                c_elems,
+                G7_L3A_DIM_K,
+                expected_c[c_elems - 1],
+                G8_R1_TAIL_MARKER),
             UVM_MEDIUM)
 
         // The manual source payloads overwrite the normal CASE_ID=102 source
-        // regions.  Restore them so the representative smoke flow below is
-        // unchanged.  The next normal Direct Stream A start also provides
-        // the architectural operand-buffer status clear/re-arm.
+        // regions.  Restore them so the representative smoke flow below remains
+        // an independent post-repair recovery check.
         prepare_direct_stream_source_and_destination(
             normal_a_flat,
             normal_b_flat
@@ -916,8 +1535,343 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
 
         csr_clear_sticky_status();
 
-        `uvm_info("CODE_COV_C1_2G7_L3A/PASS",
-            "Operand-buffer tail-read constructive probe completed; normal CASE_ID=102 source payloads restored",
+        `uvm_info("CODE_COV_C1_2G8_A_R1/PASS",
+            "Operand-buffer legal tail-read repair validation PASS; normal CASE_ID=102 source payloads restored for post-probe recovery",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G8-A Pass 4-B
+    // Direct-Stream operand length / capacity prelaunch constructive probe
+    // ------------------------------------------------------------
+    task automatic check_g8_r3_extent_reject(
+        input string                    tag,
+        input ai_accel_subsys_seq_item profile_item,
+        input int unsigned              required_a_bytes,
+        input int unsigned              committed_a_bytes,
+        input int unsigned              required_b_bytes,
+        input int unsigned              committed_b_bytes
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] reject_after_clear;
+        logic [31:0] mac_before;
+        logic [31:0] mac_after;
+    begin
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_PERF_MAC_COUNT,
+            mac_before
+        );
+
+        csr_write_direct_stream_gemm_config(profile_item);
+        csr_start_gemm();
+
+        // The prelaunch guard must reject immediately.  Keep a generous
+        // observation window so the historical buggy path would have time to
+        // enter busy or complete a small GEMM.
+        repeat (128) @(posedge csr_vif.clk);
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_PERF_MAC_COUNT, mac_after);
+
+        if (reject_status != G8_R3_REJ_GEMM_OPERAND_EXTENT_MASK) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/REJECT_MISMATCH",
+                $sformatf("%s: expected only GEMM_OPERAND_EXTENT_REJECT bit %0d (0x%08h), got reject=0x%08h status=0x%08h done=0x%08h error=0x%08h",
+                    tag,
+                    G8_R3_REJ_GEMM_OPERAND_EXTENT_BIT,
+                    G8_R3_REJ_GEMM_OPERAND_EXTENT_MASK,
+                    reject_status,
+                    status,
+                    done_status,
+                    error_status))
+        end
+
+        if (reject_status[G8_R2_REJ_GEMM_OPERAND_NOT_READY_BIT]) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/PRECEDENCE",
+                $sformatf("%s: bit5 NOT_READY must remain clear after successful A/B preload; reject=0x%08h",
+                    tag, reject_status))
+        end
+
+        if (done_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/UNEXPECTED_DONE",
+                $sformatf("%s: extent-rejected GEMM must not complete: DONE=0x%08h",
+                    tag, done_status))
+        end
+
+        if (error_status != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/UNEXPECTED_ERROR",
+                $sformatf("%s: extent failure is a prelaunch reject, not CSR_ERROR_STATUS: ERROR=0x%08h",
+                    tag, error_status))
+        end
+
+        if (status[0] || status[8] || status[12] || !status[13]) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/STATUS_MISMATCH",
+                $sformatf("%s: rejected GEMM must stay idle with ANY_ERROR from reject only: STATUS=0x%08h",
+                    tag, status))
+        end
+
+        if (mac_after != mac_before) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/MAC_ACTIVITY",
+                $sformatf("%s: extent-rejected GEMM changed MAC count: before=%0d after=%0d",
+                    tag, mac_before, mac_after))
+        end
+
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/EXTENT_REJECT_PASS",
+            $sformatf("%s: prelaunch extent rejection PASS; A required/committed=%0d/%0d bytes, B required/committed=%0d/%0d bytes, REJECT=0x%08h, MAC=%0d",
+                tag,
+                required_a_bytes,
+                committed_a_bytes,
+                required_b_bytes,
+                committed_b_bytes,
+                reject_status,
+                mac_after),
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            reject_after_clear
+        );
+
+        if (reject_after_clear != 32'h0000_0000) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/CLEAR_FAIL",
+                $sformatf("%s: CLEAR_ERROR did not clear extent reject: 0x%08h",
+                    tag, reject_after_clear))
+        end
+    end
+    endtask
+
+    task automatic run_g8_a_pass4b_length_capacity_probe(
+        input int signed normal_a_flat[],
+        input int signed normal_b_flat[]
+    );
+        ai_accel_subsys_seq_item short_profile;
+        ai_accel_subsys_seq_item cap_a_profile;
+        ai_accel_subsys_seq_item cap_b_profile;
+        ai_accel_subsys_seq_item exact_profile;
+        int signed               actual_c[];
+        int signed               expected_c[];
+        int unsigned             i;
+        logic [31:0]             error_status;
+        logic [31:0]             reject_status;
+    begin
+        short_profile = ai_accel_subsys_seq_item::type_id::create("g8_r3_short_profile");
+        short_profile.case_id           = selected_case_id;
+        short_profile.base_addr_a       = G8_P4B_SHORT_BASE_A;
+        short_profile.base_addr_b       = G8_P4B_SHORT_BASE_B;
+        short_profile.base_addr_c       = G8_P4B_SHORT_BASE_C;
+        short_profile.dim_m             = G8_P4B_SHORT_DIM_M;
+        short_profile.dim_n             = G8_P4B_SHORT_DIM_N;
+        short_profile.dim_k             = G8_P4B_SHORT_DIM_K;
+        short_profile.accumulate_enable = 1'b0;
+
+        cap_a_profile = ai_accel_subsys_seq_item::type_id::create("g8_r3_cap_a_profile");
+        cap_a_profile.case_id           = selected_case_id;
+        cap_a_profile.base_addr_a       = G8_P4B_CAP_BASE_A;
+        cap_a_profile.base_addr_b       = G8_P4B_CAP_BASE_B;
+        cap_a_profile.base_addr_c       = G8_P4B_CAP_BASE_C;
+        cap_a_profile.dim_m             = G8_P4B_CAP_DIM_M;
+        cap_a_profile.dim_n             = G8_P4B_CAP_DIM_N;
+        cap_a_profile.dim_k             = G8_P4B_CAP_DIM_K;
+        cap_a_profile.accumulate_enable = 1'b0;
+
+        cap_b_profile = ai_accel_subsys_seq_item::type_id::create("g8_r3_cap_b_profile");
+        cap_b_profile.case_id           = selected_case_id;
+        cap_b_profile.base_addr_a       = G8_P4B_CAP_BASE_A;
+        cap_b_profile.base_addr_b       = G8_P4B_CAP_BASE_B;
+        cap_b_profile.base_addr_c       = G8_P4B_CAP_BASE_C;
+        cap_b_profile.dim_m             = G8_P4B_BCAP_DIM_M;
+        cap_b_profile.dim_n             = G8_P4B_BCAP_DIM_N;
+        cap_b_profile.dim_k             = G8_P4B_BCAP_DIM_K;
+        cap_b_profile.accumulate_enable = 1'b0;
+
+        exact_profile = ai_accel_subsys_seq_item::type_id::create("g8_r3_exact_profile");
+        exact_profile.case_id           = selected_case_id;
+        exact_profile.base_addr_a       = G8_P4B_CAP_BASE_A;
+        exact_profile.base_addr_b       = G8_P4B_CAP_BASE_B;
+        exact_profile.base_addr_c       = G8_P4B_CAP_BASE_C;
+        exact_profile.dim_m             = G8_P4B_EXACT_DIM_M;
+        exact_profile.dim_n             = G8_P4B_EXACT_DIM_N;
+        exact_profile.dim_k             = G8_P4B_EXACT_DIM_K;
+        exact_profile.accumulate_enable = 1'b0;
+
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/START",
+            "Starting Direct-Stream committed-extent/capacity prelaunch validation",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // 1) Both preloads complete, but both committed extents are short.
+        //    This proves R2 boolean readiness is true while R3 extent fails.
+        // --------------------------------------------------------
+        prepare_g8_a_pass4b_short_source();
+        run_one_ds_load(
+            G8_P4B_SHORT_SRC_A_BASE,
+            G8_P4B_SHORT_BASE_A,
+            G8_P4B_SHORT_PRELOAD_BYTES,
+            OPERAND_A,
+            "G8_R3_SHORT_A"
+        );
+        run_one_ds_load(
+            G8_P4B_SHORT_SRC_B_BASE,
+            G8_P4B_SHORT_BASE_B,
+            G8_P4B_SHORT_PRELOAD_BYTES,
+            OPERAND_B,
+            "G8_R3_SHORT_B"
+        );
+        check_g8_r3_extent_reject(
+            "UNDERSIZED_AB",
+            short_profile,
+            G8_P4B_SHORT_REQUIRED_A_BYTES,
+            G8_P4B_SHORT_PRELOAD_BYTES,
+            G8_P4B_SHORT_REQUIRED_B_BYTES,
+            G8_P4B_SHORT_PRELOAD_BYTES
+        );
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/UNDERSIZED_PASS",
+            "Successful-but-undersized A/B preloads were rejected before GEMM launch",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // 2) A required footprint is 1029 bytes (> 1024 capacity).
+        //    A is fully committed to exactly 1024 bytes; B is sufficient.
+        // --------------------------------------------------------
+        prepare_g8_a_pass4b_capacity_source();
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_A_BASE,
+            G8_P4B_CAP_BASE_A,
+            G8_P4B_CAP_A_PRELOAD_BYTES,
+            OPERAND_A,
+            "G8_R3_A_CAP_A"
+        );
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_B_BASE,
+            G8_P4B_CAP_BASE_B,
+            G8_P4B_CAP_B_PADDED_BYTES,
+            OPERAND_B,
+            "G8_R3_A_CAP_B"
+        );
+        check_g8_r3_extent_reject(
+            "A_OVER_CAPACITY",
+            cap_a_profile,
+            G8_P4B_CAP_REQUIRED_A_BYTES,
+            G8_P4B_CAP_A_PRELOAD_BYTES,
+            G8_P4B_CAP_REQUIRED_B_BYTES,
+            G8_P4B_CAP_B_PADDED_BYTES
+        );
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/A_CAPACITY_PASS",
+            "A dimension footprint beyond 1024-byte physical capacity was rejected before GEMM launch",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // 3) Symmetric B capacity proof.
+        // --------------------------------------------------------
+        prepare_g8_a_pass4b_capacity_source();
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_A_BASE,
+            G8_P4B_CAP_BASE_A,
+            G8_P4B_BCAP_A_PADDED_BYTES,
+            OPERAND_A,
+            "G8_R3_B_CAP_A"
+        );
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_B_BASE,
+            G8_P4B_CAP_BASE_B,
+            G8_P4B_BCAP_B_PRELOAD_BYTES,
+            OPERAND_B,
+            "G8_R3_B_CAP_B"
+        );
+        check_g8_r3_extent_reject(
+            "B_OVER_CAPACITY",
+            cap_b_profile,
+            G8_P4B_BCAP_REQUIRED_A_BYTES,
+            G8_P4B_BCAP_A_PADDED_BYTES,
+            G8_P4B_BCAP_REQUIRED_B_BYTES,
+            G8_P4B_BCAP_B_PRELOAD_BYTES
+        );
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/B_CAPACITY_PASS",
+            "B dimension footprint beyond 1024-byte physical capacity was rejected before GEMM launch",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // 4) Exact-capacity positive boundary.  A consumes exactly 1024
+        //    bytes and B consumes 128 bytes.  Both source payloads are ones,
+        //    so every C output must equal K=128.
+        // --------------------------------------------------------
+        prepare_g8_a_pass4b_capacity_source();
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_A_BASE,
+            G8_P4B_CAP_BASE_A,
+            G8_P4B_EXACT_REQUIRED_A_BYTES,
+            OPERAND_A,
+            "G8_R3_EXACT_A"
+        );
+        run_one_ds_load(
+            G8_P4B_CAP_SRC_B_BASE,
+            G8_P4B_CAP_BASE_B,
+            G8_P4B_EXACT_REQUIRED_B_BYTES,
+            OPERAND_B,
+            "G8_R3_EXACT_B"
+        );
+
+        csr_clear_sticky_status();
+        csr_write_direct_stream_gemm_config(exact_profile);
+        csr_start_gemm();
+        csr_poll_gemm_done(done_timeout_cycles);
+        csr_check_perf_snapshot();
+
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1_2G8_A_R3_B/EXACT_STATUS",
+                $sformatf("Exact-capacity legal GEMM was rejected/errored: ERROR=0x%08h REJECT=0x%08h",
+                    error_status, reject_status))
+        end
+
+        vif.dma_dst_mem_clear();
+        run_dma_store(
+            G8_P4B_CAP_BASE_C,
+            DMA_DST_C_BASE,
+            G8_P4B_EXACT_DIM_M * G8_P4B_EXACT_DIM_N * 4
+        );
+        collect_dma_destination_c(
+            G8_P4B_EXACT_DIM_M * G8_P4B_EXACT_DIM_N,
+            actual_c
+        );
+
+        expected_c = new[G8_P4B_EXACT_DIM_M * G8_P4B_EXACT_DIM_N];
+        for (i = 0; i < expected_c.size(); i++) begin
+            expected_c[i] = G8_P4B_EXACT_DIM_K;
+        end
+        compare_result_vectors(expected_c, actual_c);
+
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/EXACT_CAPACITY_PASS",
+            $sformatf("Exact-capacity legal Direct-Stream GEMM accepted and golden PASS: A=%0d bytes B=%0d bytes C_words=%0d",
+                G8_P4B_EXACT_REQUIRED_A_BYTES,
+                G8_P4B_EXACT_REQUIRED_B_BYTES,
+                expected_c.size()),
+            UVM_MEDIUM)
+
+        // Restore normal CASE_ID=102 source payloads.  R1 legal-tail and the
+        // normal representative flow execute later and independently prove
+        // that R3 does not over-reject legal padded tails or ordinary jobs.
+        prepare_direct_stream_source_and_destination(
+            normal_a_flat,
+            normal_b_flat
+        );
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1_2G8_A_R3_B/P14_PASS",
+            "P14 extent suite PASS: undersized reject, A/B capacity reject, exact-capacity accept/golden; normal source restored",
             UVM_MEDIUM)
     end
     endtask
@@ -1138,6 +2092,7 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
         int signed               actual_c[];
         int unsigned             c_elems;
         int unsigned             c_bytes;
+        bit                      g8_r2_probe_enabled;
     begin
         phase.raise_objection(this);
 
@@ -1167,8 +2122,23 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
 
         prepare_direct_stream_source_and_destination(a_flat, b_flat);
 
+        g8_r2_probe_enabled =
+            (get_type_name() == "ai_accel_subsys_csr_direct_stream_load_store_smoke_test") &&
+            (selected_case_id == 102) &&
+            ($test$plusargs("CODE_COV_G8_A_R2_NO_PRELOAD_REJECT") ||
+             $test$plusargs("CODE_COV_G7_N2_NO_PRELOAD_INVALID_READ"));
+
         if ((get_type_name() == "ai_accel_subsys_csr_direct_stream_load_store_smoke_test") &&
             (selected_case_id == 102)) begin
+            if (g8_r2_probe_enabled) begin
+                run_g8_a_r2_no_preload_reject_probe();
+            end
+
+            run_g8_a_pass4b_length_capacity_probe(
+                a_flat,
+                b_flat
+            );
+
             run_d1_ds_reject_probes(profile_item.base_addr_a);
             run_d2_ds_error_probe(profile_item.base_addr_a, a_flat.size());
 
@@ -1180,8 +2150,17 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
                 );
             end
 
-            if ($test$plusargs("CODE_COV_G7_L3A_TAIL_READ")) begin
-                run_g7_l3a_tail_read_probe(
+            if ($test$plusargs("CODE_COV_G8_A_R1_TAIL_READ") ||
+                $test$plusargs("CODE_COV_G7_L3A_TAIL_READ")) begin
+                run_g8_a_r1_tail_read_repair_probe(
+                    a_flat,
+                    b_flat
+                );
+            end
+
+            if ($test$plusargs("CODE_COV_G7_M2_ADDR_WRAP_DROP")) begin
+                run_g7_m2_address_wrap_translation_drop_probe(
+                    profile_item,
                     a_flat,
                     b_flat
                 );
@@ -1218,6 +2197,15 @@ class ai_accel_subsys_csr_direct_stream_load_store_smoke_test extends ai_accel_s
 
         collect_dma_destination_c(c_elems, actual_c);
         compare_result_vectors(expected_c, actual_c);
+
+        if (g8_r2_probe_enabled) begin
+            `uvm_info("CODE_COV_C1_2G8_A_R2/RECOVERY_PASS",
+                "After operand-readiness reject and clear, normal A/B preloads completed and the legal Direct-Stream GEMM + DMA-store golden compare passed",
+                UVM_MEDIUM)
+            `uvm_info("CODE_COV_C1_2G8_A_R2/PASS",
+                "Direct-Stream operand-readiness pre-launch rejection and legal recovery validation PASS",
+                UVM_MEDIUM)
+        end
 
         `uvm_info("CSR_DS_SMOKE",
             $sformatf("CSR-controlled Direct Stream preload + GEMM + DMA store smoke completed: CASE_ID=%0d test_kind=%0d A_bytes=%0d B_bytes=%0d C_words=%0d",

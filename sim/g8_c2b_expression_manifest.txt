@@ -1,0 +1,65 @@
+CODE-COV-C1.2-G8-C2-B
+Port0 Owner / CSR-Top Expression Physical Normalization
+
+Input artifact
+--------------
+coverage/code_cov/g8_c/code_cov_g8_c2a_multimetric_effective.ucdb
+
+Exact physical expression records
+---------------------------------
+scratchpad_port0_owner_mux.sv:
+  line 109 row 2
+  line 109 row 4
+  line 111 row 4
+  line 175 row 3   (bimodal)
+  line 276 row 3
+  line 301 row 3
+  Total: 6
+
+ai_accel_subsys_csr_top.sv:
+  line 1110 row 6
+  line 1250 row 6
+  line 1253 row 3
+  line 1259 row 3
+  line 1262 row 3
+  line 1290 row 8
+  line 1290 row 9
+  line 1296 row 5
+  line 1932 row 4
+  line 1932 row 7
+  line 1947 row 4   (bimodal)
+  line 1947 row 6   (bimodal)
+  line 1952 row 4   (bimodal)
+  line 1952 row 6   (bimodal)
+  line 2304 row 5
+  line 2304 row 8
+  line 2304 row 10
+  Total: 17
+
+Grand total:
+  23 exact expression FEC rows
+
+Expected effective expression summary
+-------------------------------------
+scratchpad_port0_owner_mux.sv:
+  56 active / 56 covered / 0 miss
+
+ai_accel_subsys_csr_top.sv:
+  134 active / 134 covered / 0 miss
+
+Hard gates
+----------
+1. G8-C1 statement result remains:
+   5111 active / 5095 hits / 16 misses.
+
+2. G8-C2-A branch result remains unchanged.
+   In particular, the 14 G8-B-approved-but-tool-granularity-limited
+   branch misses remain physically visible.
+
+3. Condition and FSM results remain unchanged from C2-A.
+
+4. No toggle exclusion is applied.
+
+5. Canonical RAW UCDB is not modified.
+
+6. Only the 23 exact expression rows above may change.

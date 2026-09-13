@@ -1,0 +1,42 @@
+CODE-COV-C1.2-G8-C2-A Rev-B — physical-safe multi-metric manifest
+
+Why Rev-B exists
+----------------
+The first C2-A artifact proved that Questa 10.7c `-item b` on an IF
+decision can remove the covered companion arm along with the intended
+zero-hit arm. That caused branch covered-hit loss and is not acceptable.
+
+Rev-B policy
+------------
+Physically apply only exclusions whose Questa representation is proven
+not to remove a covered companion object.
+
+Applied in Rev-B:
+  Branch exact bins     : 4
+  Condition FEC rows    : 23
+  Expression FEC rows   : 23
+  FSM transitions       : 15
+  --------------------------------
+  Exact physical records: 65
+
+G8-B-approved branch residues retained physically
+-------------------------------------------------
+14 branch misses remain visible because Questa 10.7c cannot represent
+their true/explicit-arm exclusion at the needed granularity without
+collateral covered-bin removal. This is a tooling granularity limitation,
+not a reversal of G8-B semantic approval.
+
+Deferred to G8-C2-B
+-------------------
+  scratchpad_port0_owner_mux.sv expression: 6 approved terms
+  ai_accel_subsys_csr_top.sv expression:    17 approved terms
+
+Hard gates
+----------
+  - Statement result remains:
+      Active 5111 / Hits 5095 / Misses 16
+  - No covered branch bin may be removed.
+  - No covered FEC row may be removed.
+  - FSM covered-transition count must stay unchanged.
+  - Toggle remains untouched.
+  - Canonical RAW UCDB remains untouched.

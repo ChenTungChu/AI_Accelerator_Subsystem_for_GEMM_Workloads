@@ -142,6 +142,13 @@ module ai_accel_subsys #(
     output logic                      ds_load_busy,
     output logic                      ds_load_done,
     output logic                      ds_load_error,
+    output logic                      ds_operands_ready,
+    output logic                      ds_gemm_extent_ok,
+
+    // Shared GEMM launch rejection pulse, dma_clk domain.
+    // Pulses when a rising-edge acc_start request reaches the subsystem but
+    // fails the shared acceptance contract.
+    output logic                      acc_start_reject,
 
     // ------------------------------------------------------------
     // DMA source AXI-MM read master port
@@ -485,6 +492,26 @@ module ai_accel_subsys #(
     logic [31:0] ds_adapter_forwarded_writes;
     logic [31:0] ds_adapter_dropped_writes;
 
+    // Direct Stream committed extent metadata, owned in dma_clk by the
+    // preload engine after clean terminal completion.
+    logic        ds_a_extent_valid;
+    logic        ds_b_extent_valid;
+    logic [31:0] ds_a_completed_beats;
+    logic [31:0] ds_b_completed_beats;
+
+    // Keep the physical capacity constants in the same owner that instantiates
+    // gemm_operand_buffer so launch validation and storage cannot silently
+    // diverge.
+    localparam int DS_A_BUFFER_BYTES = 1024;
+    localparam int DS_B_BUFFER_BYTES = 1024;
+
+    logic [63:0] ds_required_a_bytes_dma;
+    logic [63:0] ds_required_b_bytes_dma;
+    logic [63:0] ds_a_committed_bytes_dma;
+    logic [63:0] ds_b_committed_bytes_dma;
+    logic        ds_gemm_extent_ok_i;
+    logic        acc_start_stream_guard_ok;
+
     logic        ds_operand_buf_clear_a;
     logic        ds_operand_buf_clear_b;
     logic        ds_operand_buf_clear_status;
@@ -509,6 +536,10 @@ module ai_accel_subsys #(
     // Operand buffer status
     logic                         ds_a_loaded;
     logic                         ds_b_loaded;
+
+    logic                         ds_operands_ready_core;
+    logic                         ds_operands_ready_sync1_dma_q;
+    logic                         ds_operands_ready_sync2_dma_q;
 
     logic [31:0]                  ds_a_written_beats;
     logic [31:0]                  ds_b_written_beats;
@@ -601,9 +632,17 @@ module ai_accel_subsys #(
     //   this because config is only changed between GEMM jobs.
     //
     // Frontend preload rule:
-    //   GEMM start is accepted only when AXI-Stream preload and
-    //   Direct Stream preload are both idle. This prevents GEMM from
-    //   consuming operands before the selected preload path is complete.
+    //   GEMM start is accepted only when the accelerator, AXI-Stream
+    //   preload, and Direct Stream preload are all idle. This prevents
+    //   GEMM from consuming operands before the selected preload path is
+    //   complete and prevents a second launch while the first launch is
+    //   still crossing into core_clk.
+    //
+    // Launch reservation:
+    //   Once a GEMM start is accepted in dma_clk, acc_busy is asserted
+    //   immediately through acc_launch_pending_dma_q. The reservation is
+    //   held until synchronized core-domain busy takes ownership, closing
+    //   the accepted-start -> synchronized-busy adjacent-command window.
     // ============================================================
 
     // ------------------------------------------------------------
@@ -612,13 +651,61 @@ module ai_accel_subsys #(
     logic acc_start_dma_q;
     logic acc_start_pulse_dma;
     logic acc_start_pulse_dma_accepted;
+    logic acc_launch_pending_dma_q;
 
     assign acc_start_pulse_dma = acc_start & ~acc_start_dma_q;
 
+    // ------------------------------------------------------------
+    // dma_clk side: Direct Stream committed-extent launch validation
+    //
+    // Required payload size is derived from the current launch dimensions.
+    // Committed payload size is derived from the most recent successful
+    // Direct Stream preload completion.  64-bit arithmetic avoids truncating
+    // the dimension products before the safety comparisons.
+    //
+    // A/B completed beat counts include final stream-beat padding, so legal
+    // tails such as the 1022-byte A case are accepted when 1024 bytes were
+    // successfully committed.  Physical capacity is checked independently so
+    // a padded/committed extent cannot legalize a dimension footprint beyond
+    // the actual operand buffer.
+    // ------------------------------------------------------------
+    always_comb begin
+        ds_required_a_bytes_dma =
+            64'(dim_m) * 64'(dim_k) * 64'(GEMM_A_WIDTH / 8);
+
+        ds_required_b_bytes_dma =
+            64'(dim_k) * 64'(dim_n) * 64'(GEMM_B_WIDTH / 8);
+
+        ds_a_committed_bytes_dma =
+            64'(ds_a_completed_beats) * 64'(DATA_WIDTH / 8);
+
+        ds_b_committed_bytes_dma =
+            64'(ds_b_completed_beats) * 64'(DATA_WIDTH / 8);
+
+        ds_gemm_extent_ok_i =
+            ds_a_extent_valid &&
+            ds_b_extent_valid &&
+            (ds_required_a_bytes_dma <= ds_a_committed_bytes_dma) &&
+            (ds_required_b_bytes_dma <= ds_b_committed_bytes_dma) &&
+            (ds_required_a_bytes_dma <= 64'(DS_A_BUFFER_BYTES)) &&
+            (ds_required_b_bytes_dma <= 64'(DS_B_BUFFER_BYTES));
+    end
+
+    assign ds_gemm_extent_ok = ds_gemm_extent_ok_i;
+
+    assign acc_start_stream_guard_ok =
+        !gemm_input_stream_mode ||
+        (ds_operands_ready_sync2_dma_q && ds_gemm_extent_ok_i);
+
     assign acc_start_pulse_dma_accepted =
-        acc_start_pulse_dma &&
-        !axis_load_busy_i   &&
-        !ds_load_busy_i;
+        acc_start_pulse_dma      &&
+        !acc_busy                &&
+        !axis_load_busy_i        &&
+        !ds_load_busy_i          &&
+        acc_start_stream_guard_ok;
+
+    assign acc_start_reject =
+        acc_start_pulse_dma && !acc_start_pulse_dma_accepted;
 
     always_ff @(posedge dma_clk or negedge dma_rst_n) begin
         if (!dma_rst_n) begin
@@ -891,12 +978,14 @@ module ai_accel_subsys #(
         end
     end
 
-    assign acc_busy_core = gemm_busy_core | gemm_mem_busy | gemm_router_busy;
+    assign acc_busy_core         = gemm_busy_core | gemm_mem_busy | gemm_router_busy;
+    assign ds_operands_ready_core = ds_a_loaded && ds_b_loaded;
 
     // ============================================================
     // Accelerator status CDC back to dma_clk
     //
     // acc_busy:
+    //   accepted dma_clk launch reservation OR
     //   core_clk level -> dma_clk 2FF synchronizer
     //
     // acc_done:
@@ -927,6 +1016,47 @@ module ai_accel_subsys #(
         end
     end
 
+    // ------------------------------------------------------------
+    // dma_clk side: Direct Stream operand-readiness synchronization
+    //
+    // The operand buffer owns a_loaded/b_loaded in core_clk.  Their AND is
+    // a persistent core-domain readiness level, so a standard 2FF level
+    // synchronizer safely exposes one coherent readiness indication to the
+    // dma_clk control plane.  This is used only for pre-launch validation;
+    // the core-domain loaded flags remain the datapath source of truth.
+    // ------------------------------------------------------------
+    always_ff @(posedge dma_clk or negedge dma_rst_n or negedge core_rst_n) begin
+        if (!dma_rst_n || !core_rst_n) begin
+            ds_operands_ready_sync1_dma_q <= 1'b0;
+            ds_operands_ready_sync2_dma_q <= 1'b0;
+        end
+        else begin
+            ds_operands_ready_sync1_dma_q <= ds_operands_ready_core;
+            ds_operands_ready_sync2_dma_q <= ds_operands_ready_sync1_dma_q;
+        end
+    end
+
+    // ------------------------------------------------------------
+    // dma_clk side: accepted GEMM launch reservation
+    //
+    // A GEMM start crosses into core_clk through the toggle CDC above.
+    // During that latency, synchronized core busy is still low. Hold a
+    // source-domain reservation from accepted launch until the synchronized
+    // core busy level is high so adjacent frontend commands observe the
+    // accelerator as busy without any low-going handoff gap.
+    // ------------------------------------------------------------
+    always_ff @(posedge dma_clk or negedge dma_rst_n or negedge core_rst_n) begin
+        if (!dma_rst_n || !core_rst_n) begin
+            acc_launch_pending_dma_q <= 1'b0;
+        end
+        else if (acc_start_pulse_dma_accepted) begin
+            acc_launch_pending_dma_q <= 1'b1;
+        end
+        else if (acc_busy_sync2_dma_q) begin
+            acc_launch_pending_dma_q <= 1'b0;
+        end
+    end
+
     always_ff @(posedge dma_clk or negedge dma_rst_n or negedge core_rst_n) begin
         if (!dma_rst_n || !core_rst_n) begin
             done_sync1_dma_q      <= 1'b0;
@@ -950,8 +1080,10 @@ module ai_accel_subsys #(
     assign acc_done_dma_pulse = done_sync_armed_dma_q &&
                                 (done_sync2_dma_q ^ done_sync2_dma_qq);
 
-    assign acc_busy = acc_busy_sync2_dma_q;
-    assign acc_done = acc_done_dma_pulse;
+    assign acc_busy          = acc_launch_pending_dma_q |
+                               acc_busy_sync2_dma_q;
+    assign acc_done          = acc_done_dma_pulse;
+    assign ds_operands_ready = ds_operands_ready_sync2_dma_q;
 
     // ============================================================
     // DMA load engine
@@ -1201,6 +1333,10 @@ module ai_accel_subsys #(
         .ds_load_busy               (ds_load_busy_i),
         .ds_load_done               (ds_load_done_i),
         .ds_load_error              (ds_load_error_i),
+        .ds_a_extent_valid          (ds_a_extent_valid),
+        .ds_b_extent_valid          (ds_b_extent_valid),
+        .ds_a_completed_beats       (ds_a_completed_beats),
+        .ds_b_completed_beats       (ds_b_completed_beats),
 
         // AXI-MM source read master
         .ds_src_axi_arid            (ds_src_axi_arid),
@@ -1261,8 +1397,8 @@ module ai_accel_subsys #(
         .ADDR_WIDTH     (ADDR_WIDTH),
         .WR_DATA_WIDTH  (DATA_WIDTH),
         .RD_DATA_WIDTH  (32),
-        .A_BUFFER_BYTES (1024),
-        .B_BUFFER_BYTES (1024)
+        .A_BUFFER_BYTES (DS_A_BUFFER_BYTES),
+        .B_BUFFER_BYTES (DS_B_BUFFER_BYTES)
     ) u_gemm_operand_buffer (
         .clk                (core_clk),
         .rst_n              (core_rst_n),

@@ -220,6 +220,58 @@ CSR performance registers read the captured snapshot.
 
 This is a stable-snapshot CDC policy.  It relies on the existing subsystem contract that performance counters are stable after GEMM done and remain stable until the next accepted start.
 
+### 6.4 Direct Stream Operand-Readiness / Committed-Extent Policy
+
+The Direct Stream operand buffer owns its physical `a_loaded` and `b_loaded` state in `core_clk`.
+
+P14/P15 GEMM launch acceptance occurs in the `dma_clk` control domain, so the launch boundary must not sample raw core-domain state or independently synchronize a multi-bit written-length bus.
+
+Frozen readiness policy:
+
+```text
+core_clk:
+  ds_operands_ready_core = a_loaded && b_loaded
+
+core_clk -> dma_clk:
+  ds_operands_ready_core passes through a 2FF level synchronizer
+```
+
+R3-B adds committed-extent ownership in the existing Direct Stream preload engine, which already owns the requested beat count and the transaction-completion handshake in `dma_clk`:
+
+```text
+dma_clk direct_stream_preload_engine:
+  on new preload start for operand A/B:
+    invalidate that operand's committed extent
+
+  on clean terminal preload completion:
+    selected_extent_valid     = 1
+    selected_completed_beats  = latched ds_load_beats
+
+  on failed terminal preload completion:
+    selected extent remains invalid
+```
+
+No independent 32-bit `a_written_beats` / `b_written_beats` CDC is used.  The committed extent is constructed directly from the already-latched `beats_dma_q`, `operand_sel_dma_q`, and the existing transaction-completion/error handshake.
+
+At the shared GEMM launch boundary, Direct Stream mode requires both:
+
+```text
+synchronized A/B loaded readiness
+and
+committed extent / physical-capacity validation against the actual launch M/N/K
+```
+
+For the current int8 GEMM operands and 64-bit Direct Stream path:
+
+```text
+required_A_bytes = M * K
+required_B_bytes = K * N
+committed_A_bytes = A_completed_beats * 8
+committed_B_bytes = B_completed_beats * 8
+```
+
+The comparison uses widened arithmetic before launch.  Legal padded tails are allowed when the committed beat extent covers the requested byte footprint; the dimension-derived footprint must still be no larger than the physical A/B operand-buffer capacity.  Router-side bounds checking remains a defensive backstop and is not the primary launch-validity policy.
+
 ---
 
 ## 7. AXI-Lite CSR Bus Policy
@@ -1026,6 +1078,8 @@ Sticky command reject bits are set when a CSR command write cannot be accepted. 
 | 2 | `AXIS_BUSY_REJECT` | RO/W1C | `START_AXIS_LOAD` requested while AXI-Stream preload or GEMM Port1 conflict exists |
 | 3 | `DS_BUSY_REJECT` | RO/W1C | `START_DS_LOAD` requested while Direct Stream preload or GEMM conflict exists |
 | 4 | `DMA_STORE_BUSY_REJECT` | RO/W1C | `START_DMA_STORE` requested while DMA load/store Port0 owner conflict exists |
+| 5 | `GEMM_OPERAND_NOT_READY_REJECT` | RO/W1C | `START_GEMM` requested in Direct Stream mode before both A and B operand buffers report synchronized loaded/ready state |
+| 6 | `GEMM_OPERAND_EXTENT_REJECT` | RO/W1C | `START_GEMM` requested in Direct Stream mode after A/B preload completion, but the committed operand extent is insufficient for the programmed M/N/K or the required A/B footprint exceeds physical operand-buffer capacity |
 | 8 | `UNSUPPORTED_COMBO` | RO/W1C | Unsupported command-bit combination was written |
 | 9 | `ZERO_LENGTH_REJECT` | RO/W1C | Start command rejected because configured length/dimension is zero |
 
@@ -2022,9 +2076,32 @@ ds_load_busy == 0
 dim_m != 0
 dim_n != 0
 dim_k != 0
+
+and, when CSR_MODE.GEMM_INPUT_STREAM_MODE == 1:
+
+ds_operands_ready == 1
+ds_gemm_extent_ok == 1
 ```
 
-This matches the existing policy that GEMM should not start while AXI-Stream or Direct Stream preload is active.
+This preserves the existing busy/zero-dimension policy while enforcing both Direct Stream preload completion and length/capacity sufficiency before the core can consume operand-buffer data.
+
+Manual P14 reject precedence is:
+
+```text
+busy / ownership conflict
+  -> zero dimension
+  -> Direct Stream A/B not ready
+       CSR_CMD_REJECT_STATUS.GEMM_OPERAND_NOT_READY_REJECT
+  -> Direct Stream committed extent or capacity invalid
+       CSR_CMD_REJECT_STATUS.GEMM_OPERAND_EXTENT_REJECT
+  -> START_GEMM accepted
+```
+
+If Direct Stream mode is selected while `ds_operands_ready == 0`, no `acc_start` pulse is generated and bit 5 is set.  If A/B are ready but their committed extents do not cover the dimension-derived operand footprints, or a required footprint exceeds physical A/B capacity, no `acc_start` pulse is generated and bit 6 is set.  Neither condition sets `CSR_ERROR_STATUS` solely for this pre-launch rejection.
+
+Scratchpad-mode GEMM bypasses the Direct Stream readiness/extent checks.
+
+The final `ai_accel_subsys` GEMM launch boundary rechecks Direct Stream readiness and committed extent after P14/P15 control selection.  This shared guard protects manual P14, P15 Job, P16 Recipe-to-Job, and P19 Queue-to-Recipe/Job producers even when an upstream producer does not perform an equivalent early validation.
 
 ### 13.3 DMA Load Start Acceptance
 
@@ -2095,6 +2172,8 @@ required store byte count is non-zero for DMA_STORE output mode
 ```
 
 When a P15 job is active, P14 manual `START_*` commands are rejected and are not forwarded to the datapath.  This policy avoids two CSR control sources driving the same underlying engines.
+
+For `INPUT_MODE=DIRECT_STREAM`, P15 still performs the programmed A/B preloads, but its later GEMM pulse passes through the same shared subsystem readiness/committed-extent guard used by every GEMM producer.  If that final launch is rejected after successful preloads (for example, because the programmed preload lengths are too short for the snapshotted M/N/K), the job sequencer terminates with `CSR_JOB_ERROR_STATUS.JOB_SEQUENCE_ERROR` rather than remaining stuck in `GEMM_WAIT`.  The current R3-B repair does not allocate a new P15 reject-status bit; this shared actual-state failure is a post-`START_JOB` sequence error.
 
 ---
 
@@ -2193,6 +2272,8 @@ input logic axis_load_error,
 input logic ds_load_busy,
 input logic ds_load_done,
 input logic ds_load_error,
+input logic ds_operands_ready,
+input logic ds_gemm_extent_ok,
 
 input logic dma_store_busy,
 input logic dma_store_done,
@@ -2205,6 +2286,8 @@ input logic [31:0] gemm_perf_output_count
 ```
 
 `acc_done`, `dma_load_done`, `axis_load_done`, `ds_load_done`, and `dma_store_done` are converted into sticky CSR done bits.
+
+`ds_operands_ready` is the dma_clk-domain synchronized view of the Direct Stream operand buffer's combined A/B loaded state.  `ds_gemm_extent_ok` is the dma_clk-domain committed-extent/capacity result for the currently selected M/N/K.  P14 manual Direct Stream `START_GEMM` uses bit 5 for not-ready and bit 6 for ready-but-insufficient extent/capacity.  The subsystem also applies the same actual-state check at the final shared launch boundary for P15/P16/P19-derived GEMM starts.
 
 Error inputs are converted into sticky CSR error bits.
 

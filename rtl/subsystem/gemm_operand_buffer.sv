@@ -248,11 +248,21 @@ module gemm_operand_buffer #(
             return 1'b0;
         end
 
+        // A local operand read is legal when its START byte lies inside the
+        // selected operand buffer.  The returned RD_DATA_WIDTH container may
+        // extend past the physical tail of the buffer; pack_read_data()
+        // already zero-fills those out-of-range upper byte lanes.
+        //
+        // This keeps the local read contract aligned with GEMM's int8 operand
+        // semantics: a valid final matrix element must not be rejected merely
+        // because the 32-bit convenience container straddles the buffer tail.
+        // A request whose START byte is outside the selected buffer remains
+        // illegal and still generates the normal read-error response.
         if (operand_sel === OPERAND_A) begin
-            return ((base_idx + RD_BYTES) <= A_BUFFER_BYTES);
+            return (base_idx < A_BUFFER_BYTES);
         end
         else begin
-            return ((base_idx + RD_BYTES) <= B_BUFFER_BYTES);
+            return (base_idx < B_BUFFER_BYTES);
         end
     end
     endfunction

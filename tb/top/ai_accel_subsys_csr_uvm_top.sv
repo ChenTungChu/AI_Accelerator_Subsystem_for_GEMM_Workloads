@@ -503,6 +503,23 @@ module ai_accel_subsys_csr_uvm_top;
     logic                      dma_dst_inject_enable_q;
     int unsigned               dma_dst_inject_base_aw_count;
 
+    // CODE-COV-C1.2-G7-V4-B TB-only DMA destination AW/W
+    // independent-handshake backpressure injection.
+    logic                      dma_dst_backpressure_enable_q;
+    int unsigned               dma_dst_backpressure_base_aw_count;
+    int unsigned               dma_dst_backpressure_base_w_count;
+    logic                      dma_dst_aw_first_injected_q;
+    logic                      dma_dst_w_first_injected_q;
+    logic                      dma_dst_stall_aw_backpressure;
+    logic                      dma_dst_stall_w_backpressure;
+    integer                    dma_dst_backpressure_rel_aw_beat;
+    integer                    dma_dst_backpressure_rel_w_beat;
+    int unsigned               dma_dst_aw_first_observed_count;
+    int unsigned               dma_dst_w_first_observed_count;
+
+    // CODE-COV-C1.2-G7-X2 passive Port1 owner-overlap observation.
+    int unsigned               port1_illegal_overlap_observed_count;
+
     int unsigned               dma_dst_aw_count;
     int unsigned               dma_dst_w_count;
     int unsigned               dma_dst_b_count;
@@ -647,6 +664,50 @@ module ai_accel_subsys_csr_uvm_top;
     assign cmd_src_axi_rvalid  = cmd_src_rvalid_q;
 
     // ============================================================
+    // CODE-COV-C1.2-G7-V4-B DMA destination AW/W backpressure
+    // helpers
+    //
+    // Keep the READY-stall dependencies explicit in always_comb.
+    // Questa 10.7c must see the pending/count/control signals in the
+    // combinational sensitivity set; do not hide them behind a
+    // zero-argument function used from a continuous assignment.
+    //
+    // Both relative channel counts must identify the same transaction
+    // before a first-order stall is armed.  Once that first handshake
+    // occurs, the dedicated one-shot flag releases the opposite channel
+    // on the following cycle and prevents re-arming while AW/W counts are
+    // temporarily different.
+    // ============================================================
+    always_comb begin
+        dma_dst_backpressure_rel_aw_beat = -1;
+        dma_dst_backpressure_rel_w_beat = -1;
+
+        if (dma_dst_aw_count >= dma_dst_backpressure_base_aw_count) begin
+            dma_dst_backpressure_rel_aw_beat =
+                int'(dma_dst_aw_count - dma_dst_backpressure_base_aw_count);
+        end
+
+        if (dma_dst_w_count >= dma_dst_backpressure_base_w_count) begin
+            dma_dst_backpressure_rel_w_beat =
+                int'(dma_dst_w_count - dma_dst_backpressure_base_w_count);
+        end
+
+        dma_dst_stall_aw_backpressure =
+            dma_dst_backpressure_enable_q &&
+            !dma_dst_w_first_injected_q &&
+            (ctrl_if.dma_dst_w_first_beat >= 0) &&
+            (dma_dst_backpressure_rel_aw_beat == ctrl_if.dma_dst_w_first_beat) &&
+            (dma_dst_backpressure_rel_w_beat == ctrl_if.dma_dst_w_first_beat);
+
+        dma_dst_stall_w_backpressure =
+            dma_dst_backpressure_enable_q &&
+            !dma_dst_aw_first_injected_q &&
+            (ctrl_if.dma_dst_aw_first_beat >= 0) &&
+            (dma_dst_backpressure_rel_aw_beat == ctrl_if.dma_dst_aw_first_beat) &&
+            (dma_dst_backpressure_rel_w_beat == ctrl_if.dma_dst_aw_first_beat);
+    end
+
+    // ============================================================
     // DMA destination AXI write response model connections
     //
     // v1 assumptions:
@@ -669,11 +730,16 @@ module ai_accel_subsys_csr_uvm_top;
 
     assign dma_dst_axi_awready = dma_rst_n &&
                                  !dma_dst_aw_pending_valid &&
-                                 !dma_dst_bvalid_q;
+                                 !dma_dst_bvalid_q &&
+                                 !dma_dst_stall_aw_backpressure;
 
     assign dma_dst_axi_wready  = dma_rst_n &&
                                  !dma_dst_w_pending_valid &&
-                                 !dma_dst_bvalid_q;
+                                 !dma_dst_bvalid_q &&
+                                 !dma_dst_stall_w_backpressure;
+
+    assign ctrl_if.dma_dst_aw_first_observed_count = dma_dst_aw_first_observed_count;
+    assign ctrl_if.dma_dst_w_first_observed_count  = dma_dst_w_first_observed_count;
 
     assign dma_dst_axi_bid     = dma_dst_bid_q;
     assign dma_dst_axi_bresp   = dma_dst_bresp_q;
@@ -1571,12 +1637,20 @@ module ai_accel_subsys_csr_uvm_top;
             dma_dst_bvalid_q               <= 1'b0;
             dma_dst_b_delay_q              <= 0;
 
-            dma_dst_inject_enable_q        <= 1'b0;
-            dma_dst_inject_base_aw_count   <= 0;
+            dma_dst_inject_enable_q              <= 1'b0;
+            dma_dst_inject_base_aw_count         <= 0;
 
-            dma_dst_aw_count               <= 0;
-            dma_dst_w_count                <= 0;
-            dma_dst_b_count                <= 0;
+            dma_dst_backpressure_enable_q        <= 1'b0;
+            dma_dst_backpressure_base_aw_count   <= 0;
+            dma_dst_backpressure_base_w_count    <= 0;
+            dma_dst_aw_first_injected_q          <= 1'b0;
+            dma_dst_w_first_injected_q           <= 1'b0;
+            dma_dst_aw_first_observed_count      <= 0;
+            dma_dst_w_first_observed_count       <= 0;
+
+            dma_dst_aw_count                     <= 0;
+            dma_dst_w_count                      <= 0;
+            dma_dst_b_count                      <= 0;
         end
         else begin
             dma_dst_inject_enable_q <= ctrl_if.dma_dst_inject_bresp_error;
@@ -1584,6 +1658,55 @@ module ai_accel_subsys_csr_uvm_top;
             if (ctrl_if.dma_dst_inject_bresp_error &&
                 !dma_dst_inject_enable_q) begin
                 dma_dst_inject_base_aw_count <= dma_dst_aw_count;
+            end
+
+            dma_dst_backpressure_enable_q <=
+                (ctrl_if.dma_dst_inject_aw_w_backpressure === 1'b1);
+
+            if ((ctrl_if.dma_dst_inject_aw_w_backpressure === 1'b1) &&
+                !dma_dst_backpressure_enable_q) begin
+                if ((ctrl_if.dma_dst_aw_first_beat >= 0) &&
+                    (ctrl_if.dma_dst_w_first_beat >= 0) &&
+                    (ctrl_if.dma_dst_aw_first_beat == ctrl_if.dma_dst_w_first_beat)) begin
+                    $fatal(1,
+                        "[UVM_TOP_DMA_DST] AW-first and W-first backpressure cannot target the same relative beat %0d",
+                        ctrl_if.dma_dst_aw_first_beat
+                    );
+                end
+
+                dma_dst_backpressure_base_aw_count <= dma_dst_aw_count;
+                dma_dst_backpressure_base_w_count  <= dma_dst_w_count;
+                dma_dst_aw_first_injected_q        <= 1'b0;
+                dma_dst_w_first_injected_q         <= 1'b0;
+            end
+
+            if (!ctrl_if.dma_dst_inject_aw_w_backpressure) begin
+                dma_dst_aw_first_injected_q <= 1'b0;
+                dma_dst_w_first_injected_q  <= 1'b0;
+            end
+
+            if (dma_dst_aw_fire &&
+                dma_dst_stall_w_backpressure) begin
+                dma_dst_aw_first_injected_q <= 1'b1;
+            end
+
+            if (dma_dst_w_fire &&
+                dma_dst_stall_aw_backpressure) begin
+                dma_dst_w_first_injected_q <= 1'b1;
+            end
+
+            if (dma_dst_aw_fire &&
+                !dma_dst_w_pending_valid &&
+                !dma_dst_w_fire) begin
+                dma_dst_aw_first_observed_count <=
+                    dma_dst_aw_first_observed_count + 1;
+            end
+
+            if (dma_dst_w_fire &&
+                !dma_dst_aw_pending_valid &&
+                !dma_dst_aw_fire) begin
+                dma_dst_w_first_observed_count <=
+                    dma_dst_w_first_observed_count + 1;
             end
 
             if (dma_dst_aw_fire) begin
@@ -1894,6 +2017,73 @@ module ai_accel_subsys_csr_uvm_top;
     assign ctrl_if.csr_desc_fetch_start_pulse_obs     = dut.csr_desc_fetch_start_pulse;
     assign ctrl_if.desc_fetch_start_to_engine_obs     = dut.desc_fetch_start_to_engine;
 
+    // CODE-COV-C1.2-G7-Z3-A passive observation of the exact queue
+    // arbitration terms around Q_PRESENT.  These signals are observed only;
+    // no testbench logic drives or alters DUT state.
+    assign ctrl_if.queue_state_obs                  = dut.queue_state_i;
+    assign ctrl_if.queue_cmd_valid_obs              = dut.queue_cmd_valid_i;
+    assign ctrl_if.queue_cmd_ready_obs              = dut.queue_cmd_ready_i;
+    assign ctrl_if.queue_cmd_reject_obs             = dut.queue_cmd_reject_i;
+    assign ctrl_if.desc_fetch_start_blocked_obs     = dut.desc_fetch_start_blocked_i;
+    assign ctrl_if.csr_desc_fetch_start_blocked_obs = dut.csr_desc_fetch_start_blocked_i;
+    assign ctrl_if.queue_desc_fetch_start_pulse_obs = dut.queue_desc_fetch_start_pulse;
+
+    // CODE-COV-C1.2-G7-Z4-C2-B passive observation of the queue
+    // completion/auto-continue control window.  These signals are read
+    // by UVM only; no testbench logic drives or alters DUT state.
+    assign ctrl_if.completion_wb_busy_obs = dut.completion_wb_busy_i;
+    assign ctrl_if.queue_completion_commit_pulse_obs =
+        dut.queue_completion_commit_pulse_i;
+    assign ctrl_if.queue_auto_continue_pending_obs =
+        dut.queue_auto_continue_pending_q;
+    assign ctrl_if.queue_enable_obs = dut.csr_queue_enable;
+    assign ctrl_if.queue_run_until_empty_obs = dut.csr_queue_run_until_empty;
+    assign ctrl_if.queue_busy_obs = dut.queue_busy_i;
+
+    // CODE-COV-C1.2-G7-Z4-C2-C passive observation of the exact
+    // watchdog / queue-completion / auto-P18 terms.  UVM reads these
+    // signals only; no testbench process drives or alters DUT state.
+    assign ctrl_if.queue_timeout_watchdog_active_obs =
+        dut.queue_timeout_watchdog_active_q;
+    assign ctrl_if.queue_timeout_budget_obs = dut.queue_timeout_budget_q;
+    assign ctrl_if.queue_timeout_count_obs = dut.queue_timeout_count_q;
+    assign ctrl_if.queue_timeout_pulse_obs = dut.queue_timeout_pulse_i;
+    assign ctrl_if.queue_timeout_error_status_obs =
+        dut.queue_timeout_error_status_q;
+    assign ctrl_if.queue_completion_commit_raw_obs =
+        dut.queue_completion_commit_raw_i;
+    assign ctrl_if.queue_completion_error_raw_obs =
+        dut.queue_completion_error_raw_i;
+    assign ctrl_if.completion_wb_auto_pending_obs =
+        dut.completion_wb_auto_pending_q;
+    assign ctrl_if.completion_wb_enable_obs = dut.csr_completion_wb_enable;
+
+    // CODE-COV-C1.2-G7-X2 passive observation of the exact Port1
+    // ownership inputs and defensive overlap condition inside the
+    // existing datapath subsystem.  The CSR wrapper's validated
+    // subsystem instance name is u_ai_accel_subsys.
+    assign ctrl_if.axis_stream_load_active_obs =
+        dut.u_ai_accel_subsys.axis_stream_load_active;
+    assign ctrl_if.acc_busy_core_obs =
+        dut.u_ai_accel_subsys.acc_busy_core;
+    assign ctrl_if.port1_illegal_overlap_obs =
+        dut.u_ai_accel_subsys.port1_illegal_overlap;
+    assign ctrl_if.port1_illegal_overlap_observed_count =
+        port1_illegal_overlap_observed_count;
+
+    // Count overlap cycles on the same core clock used by the Port1
+    // owner mux.  The counter is sticky for the run so a short overlap
+    // cannot be missed by dma_clk-domain UVM polling.
+    always_ff @(posedge core_clk or negedge core_rst_n) begin
+        if (!core_rst_n) begin
+            port1_illegal_overlap_observed_count <= 0;
+        end
+        else if (dut.u_ai_accel_subsys.port1_illegal_overlap) begin
+            port1_illegal_overlap_observed_count <=
+                port1_illegal_overlap_observed_count + 1;
+        end
+    end
+
     assign ctrl_if.acc_busy   = acc_busy;
     assign ctrl_if.acc_done   = acc_done;
 
@@ -2077,6 +2267,7 @@ module ai_accel_subsys_csr_uvm_top;
         // DMA destination memory model defaults
         ctrl_if.dma_dst_mem_clear();
         ctrl_if.dma_dst_set_bresp_error(1'b0, -1);
+        ctrl_if.dma_dst_set_aw_w_backpressure(1'b0, -1, -1);
 
         // axi0_if idle defaults
         axi0_if.awid    = '0;

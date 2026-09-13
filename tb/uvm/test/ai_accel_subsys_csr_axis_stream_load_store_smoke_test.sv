@@ -40,6 +40,31 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     localparam logic [31:0] G7_K3C_HOST_FILL_VALUE = 32'hC3C3_C3C3;
     localparam logic [7:0]  G7_K3C_AXIS_FILL_BYTE  = 8'hA5;
 
+    // CODE-COV-C1.2-G7-Y2 shared GEMM launch producer-contract probes.
+    // Keep the additional AXI-Stream scratchpad range disjoint from the
+    // normal A/B/C regions.  Direct Stream writes the operand buffer, so its
+    // destination is the legal operand-A base rather than scratchpad Port1.
+    localparam logic [31:0] G7_Y2_AXIS_SRC_BASE = 32'h0000_0600;
+    localparam logic [31:0] G7_Y2_AXIS_DST_BASE = 32'h0000_0E00;
+    localparam logic [31:0] G7_Y2_DS_SRC_BASE   = 32'h0000_0680;
+    localparam logic [31:0] G7_Y2_DS_DST_BASE   = 32'h0000_0000;
+
+    localparam int unsigned G7_Y2_OWNER_BEATS        = 8;
+    localparam int unsigned G7_Y2_OWNER_BYTES        = G7_Y2_OWNER_BEATS * BYTES_PER_BEAT;
+    localparam int unsigned G7_Y2_REJ_GEMM_BUSY_BIT  = 0;
+
+    localparam logic [7:0] G7_Y2_AXIS_FILL_BYTE = 8'h5A;
+    localparam logic [7:0] G7_Y2_DS_FILL_BYTE   = 8'hD5;
+
+
+    // CODE-COV-C1.2-G7-Y3-A independent DMA-reset / CDC re-arm probe.
+    // Exercise the reset ordering that normal POR intentionally does not
+    // generate: dma_rst_n=0 while core_rst_n=1.  Keep the probe idle-only so
+    // it validates reset isolation / CDC re-arm without defining mid-job
+    // partial-domain reset semantics.
+    localparam int unsigned G7_Y3_DMA_RESET_HOLD_CYCLES = 6;
+    localparam int unsigned G7_Y3_CDC_REARM_CYCLES      = 16;
+
     // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
@@ -785,6 +810,794 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     endtask
 
     // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-X3 GEMM launch-reservation / AXI-Stream
+    // adjacent-start rejection and recovery probe
+    //
+    // This is intentionally plusarg-gated from run_phase.  The critical
+    // ordering remains two legal CSR writes with no busy polling or
+    // arbitrary delay between them:
+    //
+    //   START_GEMM -> normal AXI-Lite B response -> START_AXIS_LOAD
+    //
+    // After the X3 RTL repair, the accepted GEMM launch must reserve
+    // acc_busy in dma_clk before the second command can be applied.  The
+    // AXI-Stream command must therefore be rejected at the CSR boundary,
+    // with no AXI-Stream engine launch and no Port1 owner overlap.  After
+    // GEMM completes and the reservation releases, the same preload command
+    // is retried and must complete normally.
+    // ------------------------------------------------------------
+    task automatic run_g7_x3_gemm_launch_reservation_probe(
+        input ai_accel_subsys_seq_item profile_item,
+        input int signed               a_flat[],
+        input int signed               b_flat[]
+    );
+        logic [31:0] cmd;
+        logic [31:0] reject_status;
+        logic [31:0] done_status;
+        int unsigned axis_beats;
+        int unsigned overlap_count_before;
+        int unsigned overlap_count_after;
+        int unsigned cnt;
+        bit          axis_busy_seen;
+        bit          stream_active_seen;
+        bit          acc_busy_dma_seen;
+        bit          acc_busy_core_seen;
+        bit          reservation_released;
+    begin
+        if (selected_case_id != 102) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/BAD_CASE",
+                $sformatf("G7-X3 probe is defined for CASE_ID=102, got CASE_ID=%0d",
+                    selected_case_id))
+        end
+
+        // Establish valid A/B scratchpad contents first so the GEMM launch is
+        // architecturally valid.  These operations complete before the
+        // critical adjacent-command window.
+        run_one_axis_load(
+            AXIS_SRC_A_BASE,
+            profile_item.base_addr_a,
+            a_flat.size(),
+            "G7_X3_PRELOAD_A"
+        );
+
+        run_one_axis_load(
+            AXIS_SRC_B_BASE,
+            profile_item.base_addr_b,
+            b_flat.size(),
+            "G7_X3_PRELOAD_B"
+        );
+
+        // Pre-program both command contexts before START_GEMM.  The probe
+        // AXI-Stream destination stays outside the GEMM A/B/C regions so this
+        // validates ownership reservation rather than deliberate data aliasing.
+        axis_beats = 1;
+        csr_clear_sticky_status();
+        csr_write_gemm_config(profile_item);
+        csr_write_axis_load_config(
+            AXIS_SRC_A_BASE,
+            G7_K3C_AXIS_DST_BASE,
+            axis_beats,
+            "G7_X3_ADJACENT"
+        );
+        csr_clear_sticky_status();
+
+        if (vif.axis_load_busy) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/AXIS_NOT_IDLE",
+                "AXI-Stream preload engine was busy before the adjacent-start probe")
+        end
+
+        overlap_count_before = vif.port1_illegal_overlap_observed_count;
+        axis_busy_seen        = 1'b0;
+        stream_active_seen    = 1'b0;
+        acc_busy_dma_seen     = 1'b0;
+        acc_busy_core_seen    = 1'b0;
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/START",
+            $sformatf("Starting GEMM launch-reservation / adjacent AXIS rejection probe: GEMM dim=(%0d,%0d,%0d), AXIS src=0x%08h dst=0x%08h beats=%0d, overlap_count_before=%0d",
+                profile_item.dim_m,
+                profile_item.dim_n,
+                profile_item.dim_k,
+                AXIS_SRC_A_BASE,
+                G7_K3C_AXIS_DST_BASE,
+                axis_beats,
+                overlap_count_before),
+            UVM_MEDIUM)
+
+        // Use the public command primitive directly so there is no inserted
+        // poll or arbitrary delay after START_GEMM.  By the time the normal
+        // AXI-Lite B response completes, the X3 launch reservation must be
+        // externally visible as acc_busy.
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::CMD_START_GEMM] = 1'b1;
+        csr.issue_command(cmd);
+
+        if (!vif.acc_busy) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/RESERVATION_NOT_VISIBLE",
+                "START_GEMM write completed but acc_busy was still low before the immediately adjacent START_AXIS_LOAD")
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/GEMM_ISSUED",
+            "START_GEMM write completed with dma-domain launch reservation visible; issuing START_AXIS_LOAD immediately",
+            UVM_MEDIUM)
+
+        csr_start_axis_load("G7_X3_ADJACENT");
+
+        // Observe several dma_clk cycles after the rejected command.  A legal
+        // X3 result keeps the AXI-Stream engine inactive and the sticky Port1
+        // overlap counter unchanged while GEMM proceeds normally.
+        for (cnt = 0; cnt < 16; cnt++) begin
+            axis_busy_seen     |= vif.axis_load_busy;
+            stream_active_seen |= vif.axis_stream_load_active_obs;
+            acc_busy_dma_seen  |= vif.acc_busy;
+            acc_busy_core_seen |= vif.acc_busy_core_obs;
+
+            overlap_count_after = vif.port1_illegal_overlap_observed_count;
+            if ((overlap_count_after > overlap_count_before) ||
+                vif.port1_illegal_overlap_obs) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_X3/PORT1_OVERLAP",
+                    $sformatf("Port1 illegal overlap occurred after the adjacent AXIS command: overlap_count %0d -> %0d",
+                        overlap_count_before,
+                        overlap_count_after))
+            end
+
+            @(posedge csr_vif.clk);
+        end
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            reject_status
+        );
+
+        if (!reject_status[C1D1_P14_REJ_AXIS_BUSY]) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/NO_AXIS_BUSY_REJECT",
+                $sformatf("Adjacent START_AXIS_LOAD was not rejected by ACC_BUSY reservation: reject=0x%08h",
+                    reject_status))
+        end
+
+        if (axis_busy_seen || stream_active_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/AXIS_LAUNCHED",
+                $sformatf("Rejected adjacent START_AXIS_LOAD still launched activity: axis_busy_seen=%0d stream_active_seen=%0d",
+                    axis_busy_seen,
+                    stream_active_seen))
+        end
+
+        overlap_count_after = vif.port1_illegal_overlap_observed_count;
+        if (overlap_count_after != overlap_count_before) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/OVERLAP_COUNT_CHANGED",
+                $sformatf("Port1 overlap counter changed across rejected adjacent command: %0d -> %0d",
+                    overlap_count_before,
+                    overlap_count_after))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/ADJACENT_REJECT_PASS",
+            $sformatf("Adjacent START_AXIS_LOAD rejected with REJ_AXIS_BUSY and no Port1 overlap: reject=0x%08h overlap_count=%0d axis_busy_seen=%0d stream_active_seen=%0d acc_busy_dma_seen=%0d acc_busy_core_seen=%0d",
+                reject_status,
+                overlap_count_after,
+                axis_busy_seen,
+                stream_active_seen,
+                acc_busy_dma_seen,
+                acc_busy_core_seen),
+            UVM_MEDIUM)
+
+        // Remove only the expected command-reject sticky state before using
+        // the existing GEMM completion poller.
+        csr_clear_p14_reject_status(
+            "after G7-X3 adjacent START_AXIS_LOAD busy reject"
+        );
+
+        csr_poll_gemm_done(done_timeout_cycles);
+        csr_check_perf_snapshot();
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/GEMM_DONE",
+            "GEMM completed normally after the rejected adjacent AXI-Stream command",
+            UVM_MEDIUM)
+
+        // The synchronized core busy level may take a small number of dma_clk
+        // cycles to fall after done.  Wait explicitly for the exported busy
+        // reservation/status to release before testing recovery.
+        reservation_released = 1'b0;
+        for (cnt = 0; cnt < 64; cnt++) begin
+            if (!vif.acc_busy) begin
+                reservation_released = 1'b1;
+                break;
+            end
+            @(posedge csr_vif.clk);
+        end
+
+        if (!reservation_released) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/RESERVATION_STUCK",
+                "acc_busy did not release within 64 dma_clk cycles after GEMM completion")
+        end
+
+        csr_clear_sticky_status();
+
+        // Retry the exact same AXI-Stream command after GEMM ownership has
+        // released.  This proves the reservation does not create a permanent
+        // interlock and that the normal preload path remains functional.
+        csr_start_axis_load("G7_X3_RECOVERY");
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+            "AXIS_LOAD_G7_X3_RECOVERY"
+        );
+
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            done_status
+        );
+
+        if (!done_status[ai_accel_csr_access_helper::DONE_AXIS_LOAD]) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/RECOVERY_DONE_MISSING",
+                $sformatf("Recovery AXI-Stream preload did not leave DONE_AXIS_LOAD set: DONE_STATUS=0x%08h",
+                    done_status))
+        end
+
+        overlap_count_after = vif.port1_illegal_overlap_observed_count;
+        if ((overlap_count_after != overlap_count_before) ||
+            vif.port1_illegal_overlap_obs) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_X3/RECOVERY_OVERLAP",
+                $sformatf("Port1 overlap observed during post-GEMM recovery preload: overlap_count %0d -> %0d",
+                    overlap_count_before,
+                    overlap_count_after))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/RECOVERY_PASS",
+            $sformatf("AXI-Stream preload accepted after GEMM reservation released: DONE_STATUS=0x%08h overlap_count=%0d",
+                done_status,
+                overlap_count_after),
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1P2_G7_X3/PASS",
+            "GEMM launch-reservation / adjacent AXI-Stream rejection and recovery probe PASS",
+            UVM_MEDIUM)
+    end
+    endtask
+
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Y2 shared GEMM launch busy-guard
+    // producer-contract reconciliation
+    //
+    // Both probes intentionally use legal public CSR commands and keep the
+    // critical ordering adjacent, with no busy poll or arbitrary delay:
+    //
+    //   START_AXIS_LOAD -> normal AXI-Lite B response -> START_GEMM
+    //   START_DS_LOAD   -> normal AXI-Lite B response -> START_GEMM
+    //
+    // The GEMM command must be rejected at the CSR producer boundary while
+    // the current preload owner remains active.  Therefore the lower shared
+    // acc_start_pulse_dma_accepted busy terms should remain defensive misses.
+    // ------------------------------------------------------------
+    task automatic g7_y2_prepare_owner_sources();
+        int unsigned i;
+    begin
+        for (i = 0; i < G7_Y2_OWNER_BYTES; i++) begin
+            vif.dma_src_mem_write_byte(
+                G7_Y2_AXIS_SRC_BASE + 32'(i),
+                G7_Y2_AXIS_FILL_BYTE
+            );
+            vif.dma_src_mem_write_byte(
+                G7_Y2_DS_SRC_BASE + 32'(i),
+                G7_Y2_DS_FILL_BYTE
+            );
+        end
+
+        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.ds_src_set_rresp_error(1'b0, -1);
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2/SRC",
+            $sformatf("Prepared Y2 owner sources: AXIS src=0x%08h bytes=%0d fill=0x%02h, DS src=0x%08h bytes=%0d fill=0x%02h",
+                G7_Y2_AXIS_SRC_BASE,
+                G7_Y2_OWNER_BYTES,
+                G7_Y2_AXIS_FILL_BYTE,
+                G7_Y2_DS_SRC_BASE,
+                G7_Y2_OWNER_BYTES,
+                G7_Y2_DS_FILL_BYTE),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic csr_write_ds_load_config(
+        input logic [31:0] src_base,
+        input logic [31:0] dst_base,
+        input int unsigned beats,
+        input logic        operand_sel,
+        input string       tag
+    );
+        logic [31:0] control_value;
+    begin
+        control_value = operand_sel ? 32'h0000_0001 : 32'h0000_0000;
+
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DS_SRC_BASE,
+            src_base
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DS_DST_BASE,
+            dst_base
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DS_LOAD_BEATS,
+            32'(beats)
+        );
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DS_CONTROL,
+            control_value
+        );
+
+        csr.expect_read32(
+            ai_accel_csr_access_helper::CSR_DS_SRC_BASE,
+            src_base,
+            {tag, " CSR_DS_SRC_BASE"}
+        );
+        csr.expect_read32(
+            ai_accel_csr_access_helper::CSR_DS_DST_BASE,
+            dst_base,
+            {tag, " CSR_DS_DST_BASE"}
+        );
+        csr.expect_read32(
+            ai_accel_csr_access_helper::CSR_DS_LOAD_BEATS,
+            32'(beats),
+            {tag, " CSR_DS_LOAD_BEATS"}
+        );
+        csr.expect_read32(
+            ai_accel_csr_access_helper::CSR_DS_CONTROL,
+            control_value,
+            {tag, " CSR_DS_CONTROL"}
+        );
+
+        `uvm_info("CSR_AXIS_SMOKE",
+            $sformatf("Programmed CSR Direct Stream preload %s: operand=%0d src=0x%08h dst=0x%08h beats=%0d",
+                tag,
+                operand_sel,
+                src_base,
+                dst_base,
+                beats),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic csr_start_ds_load(input string tag);
+        logic [31:0] cmd;
+    begin
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::CMD_START_DS_LOAD] = 1'b1;
+        csr.issue_command(cmd);
+
+        `uvm_info("CSR_AXIS_SMOKE",
+            $sformatf("Issued CSR START_DS_LOAD command for %s", tag),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic g7_y2_expect_gemm_busy_reject(input string tag);
+        logic [31:0] reject_status;
+    begin
+        csr.read32_expect_okay(
+            ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS,
+            reject_status
+        );
+
+        if (!reject_status[G7_Y2_REJ_GEMM_BUSY_BIT]) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2/NO_GEMM_BUSY_REJECT",
+                $sformatf("%s: expected REJ_GEMM_BUSY after adjacent START_GEMM, reject=0x%08h",
+                    tag,
+                    reject_status))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2/GEMM_REJECT_OBSERVED",
+            $sformatf("%s: observed expected REJ_GEMM_BUSY, reject=0x%08h",
+                tag,
+                reject_status),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_g7_y2_shared_gemm_busy_guard_probe(
+        input ai_accel_subsys_seq_item profile_item
+    );
+        logic [31:0] cmd;
+        int unsigned cnt;
+        int unsigned overlap_count_before;
+        int unsigned overlap_count_after;
+        bit          axis_busy_seen;
+        bit          ds_busy_seen;
+        bit          acc_busy_seen;
+        bit          acc_busy_core_seen;
+    begin
+        if (selected_case_id != 102) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2/BAD_CASE",
+                $sformatf("G7-Y2 probe is defined for CASE_ID=102, got CASE_ID=%0d",
+                    selected_case_id))
+        end
+
+        g7_y2_prepare_owner_sources();
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2/START",
+            "Starting shared GEMM launch busy-guard producer-contract probe: AXIS-owner and Direct-Stream-owner directions",
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // A) AXI-Stream owner blocks an immediately adjacent GEMM.
+        // --------------------------------------------------------
+        csr_clear_sticky_status();
+        csr_write_gemm_config(profile_item);
+        csr_write_axis_load_config(
+            G7_Y2_AXIS_SRC_BASE,
+            G7_Y2_AXIS_DST_BASE,
+            G7_Y2_OWNER_BEATS,
+            "G7_Y2_AXIS_OWNER"
+        );
+        csr_clear_sticky_status();
+
+        if (vif.axis_load_busy || vif.acc_busy) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2/AXIS_PRECONDITION",
+                $sformatf("AXIS->GEMM probe did not start idle: axis_busy=%0d acc_busy=%0d",
+                    vif.axis_load_busy,
+                    vif.acc_busy))
+        end
+
+        overlap_count_before = vif.port1_illegal_overlap_observed_count;
+        axis_busy_seen        = 1'b0;
+        acc_busy_seen         = 1'b0;
+        acc_busy_core_seen    = 1'b0;
+
+        csr_start_axis_load("G7_Y2_AXIS_OWNER");
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2_AXIS/OWNER_START",
+            "START_AXIS_LOAD write completed; issuing START_GEMM immediately with no busy poll or inserted delay",
+            UVM_MEDIUM)
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::CMD_START_GEMM] = 1'b1;
+        csr.issue_command(cmd);
+
+        for (cnt = 0; cnt < 16; cnt++) begin
+            axis_busy_seen     |= vif.axis_load_busy;
+            acc_busy_seen      |= vif.acc_busy;
+            acc_busy_core_seen |= vif.acc_busy_core_obs;
+
+            overlap_count_after = vif.port1_illegal_overlap_observed_count;
+            if ((overlap_count_after > overlap_count_before) ||
+                vif.port1_illegal_overlap_obs) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Y2_AXIS/PORT1_OVERLAP",
+                    $sformatf("Port1 overlap occurred during AXIS-owner GEMM-reject probe: overlap_count %0d -> %0d",
+                        overlap_count_before,
+                        overlap_count_after))
+            end
+
+            @(posedge csr_vif.clk);
+        end
+
+        g7_y2_expect_gemm_busy_reject("AXIS owner blocks GEMM");
+
+        if (!axis_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2_AXIS/OWNER_NOT_BUSY",
+                "AXI-Stream owner never asserted busy during the AXIS->GEMM probe")
+        end
+
+        if (acc_busy_seen || acc_busy_core_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2_AXIS/GEMM_LAUNCHED",
+                $sformatf("Rejected START_GEMM still launched accelerator activity: acc_busy_seen=%0d acc_busy_core_seen=%0d",
+                    acc_busy_seen,
+                    acc_busy_core_seen))
+        end
+
+        overlap_count_after = vif.port1_illegal_overlap_observed_count;
+        if (overlap_count_after != overlap_count_before) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2_AXIS/OVERLAP_COUNT_CHANGED",
+                $sformatf("Port1 overlap counter changed during AXIS->GEMM rejection: %0d -> %0d",
+                    overlap_count_before,
+                    overlap_count_after))
+        end
+
+        csr_clear_p14_reject_status(
+            "after G7-Y2 AXIS-owner START_GEMM busy reject"
+        );
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+            "G7_Y2_AXIS_OWNER"
+        );
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2_AXIS/GEMM_REJECT_PASS",
+            $sformatf("Adjacent START_GEMM rejected while AXI-Stream owned Port1: axis_busy_seen=%0d acc_busy_seen=%0d acc_busy_core_seen=%0d overlap_count=%0d",
+                axis_busy_seen,
+                acc_busy_seen,
+                acc_busy_core_seen,
+                overlap_count_after),
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+
+        // --------------------------------------------------------
+        // B) Direct Stream owner blocks an immediately adjacent GEMM.
+        // --------------------------------------------------------
+        csr_write_gemm_config(profile_item);
+        csr_write_ds_load_config(
+            G7_Y2_DS_SRC_BASE,
+            G7_Y2_DS_DST_BASE,
+            G7_Y2_OWNER_BEATS,
+            1'b0,
+            "G7_Y2_DS_OWNER"
+        );
+        csr_clear_sticky_status();
+
+        if (vif.ds_load_busy || vif.acc_busy) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2/DS_PRECONDITION",
+                $sformatf("DS->GEMM probe did not start idle: ds_busy=%0d acc_busy=%0d",
+                    vif.ds_load_busy,
+                    vif.acc_busy))
+        end
+
+        ds_busy_seen      = 1'b0;
+        acc_busy_seen     = 1'b0;
+        acc_busy_core_seen = 1'b0;
+
+        csr_start_ds_load("G7_Y2_DS_OWNER");
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2_DS/OWNER_START",
+            "START_DS_LOAD write completed; issuing START_GEMM immediately with no busy poll or inserted delay",
+            UVM_MEDIUM)
+
+        cmd = 32'h0000_0000;
+        cmd[ai_accel_csr_access_helper::CMD_START_GEMM] = 1'b1;
+        csr.issue_command(cmd);
+
+        for (cnt = 0; cnt < 16; cnt++) begin
+            ds_busy_seen       |= vif.ds_load_busy;
+            acc_busy_seen      |= vif.acc_busy;
+            acc_busy_core_seen |= vif.acc_busy_core_obs;
+            @(posedge csr_vif.clk);
+        end
+
+        g7_y2_expect_gemm_busy_reject("Direct Stream owner blocks GEMM");
+
+        if (!ds_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2_DS/OWNER_NOT_BUSY",
+                "Direct Stream owner never asserted busy during the DS->GEMM probe")
+        end
+
+        if (acc_busy_seen || acc_busy_core_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y2_DS/GEMM_LAUNCHED",
+                $sformatf("Rejected START_GEMM still launched accelerator activity: acc_busy_seen=%0d acc_busy_core_seen=%0d",
+                    acc_busy_seen,
+                    acc_busy_core_seen))
+        end
+
+        csr_clear_p14_reject_status(
+            "after G7-Y2 Direct-Stream-owner START_GEMM busy reject"
+        );
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_DS_LOAD,
+            "G7_Y2_DS_OWNER"
+        );
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2_DS/GEMM_REJECT_PASS",
+            $sformatf("Adjacent START_GEMM rejected while Direct Stream owner was busy: ds_busy_seen=%0d acc_busy_seen=%0d acc_busy_core_seen=%0d",
+                ds_busy_seen,
+                acc_busy_seen,
+                acc_busy_core_seen),
+            UVM_MEDIUM)
+
+        // --------------------------------------------------------
+        // C) Shared release/recovery: after both owners complete, a normal
+        // GEMM launch must be accepted and complete.  The normal A/B
+        // scratchpad preloads performed by run_phase remain intact.
+        // --------------------------------------------------------
+        csr_clear_sticky_status();
+        csr_write_gemm_config(profile_item);
+        csr_start_gemm();
+        csr_poll_gemm_done(done_timeout_cycles);
+        csr_check_perf_snapshot();
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2/RECOVERY_PASS",
+            "GEMM launch accepted and completed after both preload-owner busy guards released",
+            UVM_MEDIUM)
+
+        csr_clear_sticky_status();
+
+        `uvm_info("CODE_COV_C1P2_G7_Y2/PASS",
+            "Shared GEMM launch producer-contract probe PASS: AXIS owner and Direct Stream owner both reject adjacent GEMM launch and recover cleanly",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
+    // CODE-COV-C1.2-G7-Y3-A
+    // Independent DMA-reset / core-alive CDC re-arm probe.
+    //
+    // Normal POR releases dma_rst_n first and core_rst_n second, so it never
+    // creates dma_rst_n=0 while core_rst_n=1.  The existing TB reset override
+    // is used here to construct that legal independent-reset ordering without
+    // forcing any DUT-internal signal.
+    // ------------------------------------------------------------
+    task automatic run_g7_y3_dma_only_reset_cdc_rearm_probe();
+        int unsigned cnt;
+        int unsigned overlap_count_before;
+        int unsigned overlap_count_after;
+        bit          false_acc_busy_seen;
+        bit          false_acc_done_seen;
+        bit          false_core_busy_seen;
+    begin
+        if (selected_case_id != 102) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/BAD_CASE",
+                $sformatf("G7-Y3-A probe is defined for CASE_ID=102, got CASE_ID=%0d",
+                    selected_case_id))
+        end
+
+        if ((vif.dma_rst_n !== 1'b1) ||
+            (vif.core_rst_n !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/PRE_RESET_STATE",
+                $sformatf("G7-Y3-A requires both resets released before override: dma_rst_n=%b core_rst_n=%b",
+                    vif.dma_rst_n,
+                    vif.core_rst_n))
+        end
+
+        if (vif.acc_busy ||
+            vif.acc_busy_core_obs ||
+            vif.dma_load_busy ||
+            vif.axis_load_busy ||
+            vif.ds_load_busy ||
+            vif.dma_store_busy) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/PRE_BUSY",
+                $sformatf("G7-Y3-A must start idle: acc_busy=%0d acc_busy_core=%0d dma_load_busy=%0d axis_busy=%0d ds_busy=%0d dma_store_busy=%0d",
+                    vif.acc_busy,
+                    vif.acc_busy_core_obs,
+                    vif.dma_load_busy,
+                    vif.axis_load_busy,
+                    vif.ds_load_busy,
+                    vif.dma_store_busy))
+        end
+
+        overlap_count_before = vif.port1_illegal_overlap_observed_count;
+
+        `uvm_info("CODE_COV_C1P2_G7_Y3_A/START",
+            "Starting independent DMA-reset / core-alive CDC re-arm probe at system idle",
+            UVM_MEDIUM)
+
+        // First enable the override while preserving the already released
+        // reset state.  This avoids introducing a transition on either reset
+        // merely from selecting the override mux.
+        @(negedge csr_vif.clk);
+        vif.tb_dma_rst_n_override  = 1'b1;
+        vif.tb_core_rst_n_override = 1'b1;
+        vif.tb_reset_override_en   = 1'b1;
+
+        @(posedge csr_vif.clk);
+        if ((vif.dma_rst_n !== 1'b1) ||
+            (vif.core_rst_n !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/OVERRIDE_ARM",
+                $sformatf("Reset override arm disturbed released resets: dma_rst_n=%b core_rst_n=%b",
+                    vif.dma_rst_n,
+                    vif.core_rst_n))
+        end
+
+        // Construct the missing legal reset ordering: DMA reset asserted while
+        // core reset remains released.
+        @(negedge csr_vif.clk);
+        vif.tb_dma_rst_n_override = 1'b0;
+
+        for (cnt = 0; cnt < G7_Y3_DMA_RESET_HOLD_CYCLES; cnt++) begin
+            @(posedge csr_vif.clk);
+
+            if ((vif.dma_rst_n !== 1'b0) ||
+                (vif.core_rst_n !== 1'b1)) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/RESET_ORDER",
+                    $sformatf("Expected DMA-only reset ordering was not held: cycle=%0d dma_rst_n=%b core_rst_n=%b",
+                        cnt,
+                        vif.dma_rst_n,
+                        vif.core_rst_n))
+            end
+
+            if (vif.acc_busy ||
+                vif.acc_done ||
+                vif.acc_busy_core_obs ||
+                vif.port1_illegal_overlap_obs) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/SPURIOUS_DURING_RESET",
+                    $sformatf("Spurious accelerator activity during DMA-only reset: acc_busy=%0d acc_done=%0d acc_busy_core=%0d overlap=%0d",
+                        vif.acc_busy,
+                        vif.acc_done,
+                        vif.acc_busy_core_obs,
+                        vif.port1_illegal_overlap_obs))
+            end
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Y3_A/DMA_ONLY_RESET_PASS",
+            $sformatf("Observed legal independent reset ordering for %0d dma_clk cycles: dma_rst_n=0 core_rst_n=1 with no spurious accelerator activity",
+                G7_Y3_DMA_RESET_HOLD_CYCLES),
+            UVM_MEDIUM)
+
+        // Release the DMA reset while core remains alive, then give both CDC
+        // armed synchronizers ample time to seed from their current source
+        // toggle values.  No false GEMM start/done is allowed during re-arm.
+        @(negedge csr_vif.clk);
+        vif.tb_dma_rst_n_override = 1'b1;
+
+        false_acc_busy_seen  = 1'b0;
+        false_acc_done_seen  = 1'b0;
+        false_core_busy_seen = 1'b0;
+
+        for (cnt = 0; cnt < G7_Y3_CDC_REARM_CYCLES; cnt++) begin
+            @(posedge csr_vif.clk);
+
+            if ((vif.dma_rst_n !== 1'b1) ||
+                (vif.core_rst_n !== 1'b1)) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/RELEASE_STATE",
+                    $sformatf("Both resets were not released during CDC re-arm: cycle=%0d dma_rst_n=%b core_rst_n=%b",
+                        cnt,
+                        vif.dma_rst_n,
+                        vif.core_rst_n))
+            end
+
+            false_acc_busy_seen  |= vif.acc_busy;
+            false_acc_done_seen  |= vif.acc_done;
+            false_core_busy_seen |= vif.acc_busy_core_obs;
+
+            if (vif.port1_illegal_overlap_obs) begin
+                `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/REARM_OVERLAP",
+                    "Port1 illegal overlap asserted during DMA-reset CDC re-arm")
+            end
+        end
+
+        overlap_count_after = vif.port1_illegal_overlap_observed_count;
+
+        if (false_acc_busy_seen ||
+            false_acc_done_seen ||
+            false_core_busy_seen) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/SPURIOUS_REARM",
+                $sformatf("False activity observed during CDC re-arm: acc_busy_seen=%0d acc_done_seen=%0d acc_busy_core_seen=%0d",
+                    false_acc_busy_seen,
+                    false_acc_done_seen,
+                    false_core_busy_seen))
+        end
+
+        if (overlap_count_after != overlap_count_before) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/OVERLAP_COUNT_CHANGED",
+                $sformatf("Port1 illegal-overlap counter changed across DMA-only reset/re-arm: %0d -> %0d",
+                    overlap_count_before,
+                    overlap_count_after))
+        end
+
+        `uvm_info("CODE_COV_C1P2_G7_Y3_A/CDC_REARM_PASS",
+            $sformatf("CDC re-arm completed with no false start/done/busy or Port1 overlap across %0d observation cycles",
+                G7_Y3_CDC_REARM_CYCLES),
+            UVM_MEDIUM)
+
+        // Return control to the normal POR mux only after both override reset
+        // values are high.  POR has already completed, so this handoff must be
+        // transition-free.
+        @(negedge csr_vif.clk);
+        vif.tb_dma_rst_n_override  = 1'b1;
+        vif.tb_core_rst_n_override = 1'b1;
+        vif.tb_reset_override_en   = 1'b0;
+
+        repeat (2) @(posedge csr_vif.clk);
+
+        if ((vif.dma_rst_n !== 1'b1) ||
+            (vif.core_rst_n !== 1'b1)) begin
+            `uvm_fatal("CODE_COV_C1P2_G7_Y3_A/POR_HANDOFF",
+                $sformatf("POR handoff did not preserve released resets: dma_rst_n=%b core_rst_n=%b",
+                    vif.dma_rst_n,
+                    vif.core_rst_n))
+        end
+
+        // Reinitialize only the TB-side AXI-Lite drive values.  The DUT CSR
+        // block has legitimately reset and the remainder of CASE_ID=102 will
+        // reprogram all state before use.
+        csr.init_bus();
+        csr.wait_reset_release();
+
+        `uvm_info("CODE_COV_C1P2_G7_Y3_A/PASS",
+            "Independent DMA-reset / core-alive reset ordering and CDC re-arm PASS; normal CASE_ID=102 smoke continues as recovery qualification",
+            UVM_MEDIUM)
+    end
+    endtask
+
+    // ------------------------------------------------------------
     // Destination-memory result collection
     // ------------------------------------------------------------
     task automatic collect_dma_destination_c(
@@ -827,6 +1640,11 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
         csr.init_bus();
         csr.wait_reset_release();
 
+        if ((get_type_name() == "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_g7_y3_dma_only_reset_cdc_rearm_probe();
+        end
+
         build_selected_payload(
             profile_item,
             a_flat,
@@ -844,6 +1662,20 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
         end
 
         prepare_axis_source_and_destination(a_flat, b_flat);
+
+        // One-off G7-X3 launch-reservation repair probe.  The plusarg
+        // keeps the validated default 150-test regression behavior
+        // unchanged when the probe is not explicitly requested.
+        if ($test$plusargs("G7_X3_PROBE")) begin
+            run_g7_x3_gemm_launch_reservation_probe(
+                profile_item,
+                a_flat,
+                b_flat
+            );
+
+            phase.drop_objection(this);
+            return;
+        end
 
         if ((get_type_name() == "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") &&
             (selected_case_id == 102)) begin
@@ -865,6 +1697,11 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
             b_flat.size(),
             "B"
         );
+
+        if ((get_type_name() == "ai_accel_subsys_csr_axis_stream_load_store_smoke_test") &&
+            (selected_case_id == 102)) begin
+            run_g7_y2_shared_gemm_busy_guard_probe(profile_item);
+        end
 
         csr_clear_sticky_status();
         csr_write_gemm_config(profile_item);

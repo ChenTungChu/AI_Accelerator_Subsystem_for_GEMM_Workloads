@@ -1,5 +1,5 @@
 QuestaSim-64 vcover 10.7c Coverage Utility 2018.08 Aug 18 2018
-Start time: 19:00:45 on Aug 16,2026
+Start time: 01:03:28 on Sep 13,2026
 vcover report -code bcefst coverage/code_cov/code_cov_merged.ucdb 
 Coverage Report Summary Data by file
 
@@ -8,11 +8,11 @@ Coverage Report Summary Data by file
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                         1220      1210        10     99.18
-    Branches                      1007       951        56     94.43
-    FEC Condition Terms             96        70        26     72.91
-    FEC Expression Terms           174       147        27     84.48
-    Toggle Bins                  19236      3874     15362     20.13
+    Stmts                         1222      1212        10     99.18
+    Branches                      1009       953        56     94.44
+    FEC Condition Terms            100        76        24     76.00
+    FEC Expression Terms           174       151        23     86.78
+    Toggle Bins                  19240      4031     15209     20.95
 
 =================================================================================
 === File: ../rtl/dma/axi_mm2s_dma.sv
@@ -26,7 +26,7 @@ Coverage Report Summary Data by file
     FSMs                                                       81.81
         States                       5         5         0    100.00
         Transitions                 11         7         4     63.63
-    Toggle Bins                   1062       495       567     46.61
+    Toggle Bins                   1062       504       558     47.45
 
 =================================================================================
 === File: ../rtl/dma/axi_stream_loader.sv
@@ -40,7 +40,7 @@ Coverage Report Summary Data by file
     FSMs                                                       90.00
         States                       3         3         0    100.00
         Transitions                  5         4         1     80.00
-    Toggle Bins                   1118       563       555     50.35
+    Toggle Bins                   1118       571       547     51.07
 
 =================================================================================
 === File: ../rtl/gemm/gemm_top.sv
@@ -50,25 +50,25 @@ Coverage Report Summary Data by file
     Stmts                          697       692         5     99.28
     Branches                       257       238        19     92.60
     FEC Condition Terms             28        18        10     64.28
-    FEC Expression Terms            74        55        19     74.32
+    FEC Expression Terms            74        56        18     75.67
     FSMs                                                       82.24
         States                      41        41         0    100.00
         Transitions                107        69        38     64.48
-    Toggle Bins                   4260      2297      1963     53.92
+    Toggle Bins                   4260      2447      1813     57.44
 
 =================================================================================
 === File: ../rtl/mem/axi_mm_dual_port_bram.sv
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                          570       548        22     96.14
-    Branches                       196       163        33     83.16
-    FEC Condition Terms             63        38        25     60.31
-    FEC Expression Terms            45        20        25     44.44
+    Stmts                          552       531        21     96.19
+    Branches                       204       169        35     82.84
+    FEC Condition Terms             71        44        27     61.97
+    FEC Expression Terms            60        28        32     46.66
     FSMs                                                       87.50
         States                       5         5         0    100.00
         Transitions                  8         6         2     75.00
-    Toggle Bins                   3891      1727      2164     44.38
+    Toggle Bins                   3875      1728      2147     44.59
 
 =================================================================================
 === File: ../rtl/sequencer/ai_accel_completion_wb_engine.sv
@@ -82,7 +82,7 @@ Coverage Report Summary Data by file
     FSMs                                                       86.36
         States                       6         6         0    100.00
         Transitions                 11         8         3     72.72
-    Toggle Bins                   3082       680      2402     22.06
+    Toggle Bins                   3082       670      2412     21.73
 
 =================================================================================
 === File: ../rtl/sequencer/ai_accel_desc_fetch_engine.sv
@@ -96,21 +96,21 @@ Coverage Report Summary Data by file
     FSMs                                                       93.75
         States                       4         4         0    100.00
         Transitions                  8         7         1     87.50
-    Toggle Bins                   5266       496      4770      9.41
+    Toggle Bins                   5266       505      4761      9.58
 
 =================================================================================
 === File: ../rtl/sequencer/ai_accel_job_sequencer.sv
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                          183       155        28     84.69
-    Branches                       104        90        14     86.53
+    Stmts                          185       157        28     84.86
+    Branches                       105        91        14     86.66
     FEC Condition Terms             24         6        18     25.00
     FEC Expression Terms            14        14         0    100.00
-    FSMs                                                       74.39
+    FSMs                                                       75.00
         States                      15        15         0    100.00
-        Transitions                 41        20        21     48.78
-    Toggle Bins                   3388       335      3053      9.88
+        Transitions                 42        21        21     50.00
+    Toggle Bins                   3390       374      3016     11.03
 
 =================================================================================
 === File: ../rtl/sequencer/ai_accel_queue_fetch_controller.sv
@@ -118,13 +118,13 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          323       317         6     98.14
-    Branches                        98        90         8     91.83
+    Branches                        98        91         7     92.85
     FEC Condition Terms             38        27        11     71.05
-    FEC Expression Terms            26        25         1     96.15
+    FEC Expression Terms            26        26         0    100.00
     FSMs                                                       86.84
         States                       9         9         0    100.00
         Transitions                 19        14         5     73.68
-    Toggle Bins                   6734      1568      5166     23.28
+    Toggle Bins                   6734      1598      5136     23.73
 
 =================================================================================
 === File: ../rtl/sequencer/ai_accel_recipe_sequencer.sv
@@ -134,11 +134,11 @@ Coverage Report Summary Data by file
     Stmts                          202       181        21     89.60
     Branches                        59        42        17     71.18
     FEC Condition Terms             21        11        10     52.38
-    FEC Expression Terms            16        11         5     68.75
+    FEC Expression Terms            16        12         4     75.00
     FSMs                                                       77.27
         States                       9         9         0    100.00
         Transitions                 22        12        10     54.54
-    Toggle Bins                   2258       258      2000     11.42
+    Toggle Bins                   2258       269      1989     11.91
 
 =================================================================================
 === File: ../rtl/subsystem/axis_async_fifo.sv
@@ -159,7 +159,7 @@ Coverage Report Summary Data by file
     Branches                        78        72         6     92.30
     FEC Condition Terms             14         9         5     64.28
     FEC Expression Terms            22        16         6     72.72
-    Toggle Bins                   2286      1163      1123     50.87
+    Toggle Bins                   2286      1164      1122     50.91
 
 =================================================================================
 === File: ../rtl/subsystem/axis_scratchpad_write_adapter.sv
@@ -177,11 +177,11 @@ Coverage Report Summary Data by file
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                          134       124        10     92.53
-    Branches                        84        76         8     90.47
-    FEC Condition Terms             12         6         6     50.00
-    FEC Expression Terms            27        14        13     51.85
-    Toggle Bins                   2318      1122      1196     48.40
+    Stmts                          149       139        10     93.28
+    Branches                        95        87         8     91.57
+    FEC Condition Terms             21        15         6     71.42
+    FEC Expression Terms            29        14        15     48.27
+    Toggle Bins                   2452      1198      1254     48.85
 
 =================================================================================
 === File: ../rtl/subsystem/dma_load_engine.sv
@@ -194,7 +194,7 @@ Coverage Report Summary Data by file
     FSMs                                                       83.33
         States                       6         6         0    100.00
         Transitions                 12         8         4     66.66
-    Toggle Bins                   1920       758      1162     39.47
+    Toggle Bins                   1920       760      1160     39.58
 
 =================================================================================
 === File: ../rtl/subsystem/dma_scratchpad_write_adapter.sv
@@ -208,7 +208,7 @@ Coverage Report Summary Data by file
     FSMs                                                       91.66
         States                       4         4         0    100.00
         Transitions                  6         5         1     83.33
-    Toggle Bins                   1104       528       576     47.82
+    Toggle Bins                   1104       530       574     48.00
 
 =================================================================================
 === File: ../rtl/subsystem/dma_store_engine.sv
@@ -216,13 +216,13 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          113       105         8     92.92
-    Branches                        65        55        10     84.61
-    FEC Condition Terms              8         4         4     50.00
-    FEC Expression Terms            32        22        10     68.75
+    Branches                        65        57         8     87.69
+    FEC Condition Terms              8         7         1     87.50
+    FEC Expression Terms            32        24         8     75.00
     FSMs                                                       80.76
         States                       6         6         0    100.00
         Transitions                 13         8         5     61.53
-    Toggle Bins                   1284       620       664     48.28
+    Toggle Bins                   1284       621       663     48.36
 
 =================================================================================
 === File: ../rtl/subsystem/gemm_input_mem_router.sv
@@ -233,7 +233,7 @@ Coverage Report Summary Data by file
     Branches                        62        55         7     88.70
     FEC Condition Terms             21        15         6     71.42
     FEC Expression Terms            21        17         4     80.95
-    Toggle Bins                   1827       784      1043     42.91
+    Toggle Bins                   1827       814      1013     44.55
 
 =================================================================================
 === File: ../rtl/subsystem/gemm_operand_buffer.sv
@@ -241,10 +241,10 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          102        84        18     82.35
-    Branches                        62        45        17     72.58
-    FEC Condition Terms             25        11        14     44.00
+    Branches                        62        46        16     74.19
+    FEC Condition Terms             25        12        13     48.00
     FEC Expression Terms             4         3         1     75.00
-    Toggle Bins                    716       428       288     59.77
+    Toggle Bins                    716       451       265     62.98
 
 =================================================================================
 === File: ../rtl/subsystem/gemm_operand_buffer_write_adapter.sv
@@ -254,7 +254,7 @@ Coverage Report Summary Data by file
     Stmts                           51        46         5     90.19
     Branches                        14        12         2     85.71
     FEC Expression Terms            17         7        10     41.17
-    Toggle Bins                    790       448       342     56.70
+    Toggle Bins                    790       464       326     58.73
 
 =================================================================================
 === File: ../rtl/subsystem/gemm_scratchpad_adapter.sv
@@ -267,7 +267,7 @@ Coverage Report Summary Data by file
     FSMs                                                       83.33
         States                       8         8         0    100.00
         Transitions                 15        10         5     66.66
-    Toggle Bins                   1192       962       230     80.70
+    Toggle Bins                   1192       964       228     80.87
 
 =================================================================================
 === File: ../rtl/subsystem/scratchpad_port0_owner_mux.sv
@@ -294,25 +294,25 @@ Coverage Report Summary Data by file
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                          101       100         1     99.00
-    Branches                        31        30         1     96.77
-    FEC Condition Terms             13         6         7     46.15
-    FEC Expression Terms            16        11         5     68.75
-    Toggle Bins                   6408      2623      3785     40.93
+    Stmts                          120       119         1     99.16
+    Branches                        37        36         1     97.29
+    FEC Condition Terms             17        13         4     76.47
+    FEC Expression Terms            33        25         8     75.75
+    Toggle Bins                   7070      2813      4257     39.78
 
 =================================================================================
 === File: ../rtl/top/ai_accel_subsys_csr_top.sv
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                          391       388         3     99.23
-    Branches                       264       259         5     98.10
-    FEC Condition Terms             87        61        26     70.11
-    FEC Expression Terms           134        97        37     72.38
-    Toggle Bins                  22676      3866     18810     17.04
+    Stmts                          391       389         2     99.48
+    Branches                       264       262         2     99.24
+    FEC Condition Terms             87        73        14     83.90
+    FEC Expression Terms           134       117        17     87.31
+    Toggle Bins                  22682      4098     18584     18.06
 
 
-Total Coverage By File (code coverage only, filtered view): 72.77%
+Total Coverage By File (code coverage only, filtered view): 74.36%
 
-End time: 19:00:46 on Aug 16,2026, Elapsed time: 0:00:01
+End time: 01:03:28 on Sep 13,2026, Elapsed time: 0:00:00
 Errors: 0, Warnings: 0

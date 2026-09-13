@@ -1,0 +1,80 @@
+CODE-COV-C1.2-G8-C3
+Final RAW vs EFFECTIVE Reconciliation / Closure
+
+Authoritative inputs
+====================
+RAW:
+  coverage/code_cov/code_cov_merged.ucdb
+
+Final EFFECTIVE:
+  coverage/code_cov/g8_c/code_cov_g8_c2b_multimetric_effective.ucdb
+
+Frozen RAW aggregate:
+  bcefst filtered aggregate = 74.36%
+
+Frozen G8-C2-B views:
+  statement = 99.68%
+  bcef      = 82.94%
+  toggle    = 29.78%
+
+Expected metric ledger
+======================
+
+Metric                  RAW A/H(or C)/M       FINAL EFFECTIVE        Expected delta
+----------------------  --------------------  ---------------------  --------------------------
+Statement               5285 / 5095 / 190     5111 / 5095 / 16      active -174, hit 0, miss -174
+Branch                  2866 / 2638 / 228     2862 / 2638 / 224     active -4,   hit 0, miss -4
+FEC Condition            533 / 362 / 171       533 / 385 / 148      active 0, covered +23, miss -23
+FEC Expression           835 / 651 / 184       835 / 697 / 138      active 0, covered +46, miss -46
+FSM States               121 / 121 / 0         121 / 121 / 0        no change
+FSM Transitions          279 / 179 / 100       264 / 179 / 85       active -15, hit 0, miss -15
+Toggle                 96910 / 28867 / 68043 96910 / 28867 / 68043  no change
+
+Physical exclusion accounting
+=============================
+Statement physical exclusions                         174
+Safe branch physical exclusions                         4
+Condition exact FEC rows                               23
+Expression exact FEC rows (C2-A)                      23
+Expression exact FEC rows (C2-B normalization)        23
+FSM transition exact exclusions                        15
+Toggle exclusions                                       0
+
+Approved branch residues physically retained
+due Questa 10.7c granularity                           14
+
+Important interpretation
+========================
+- FEC condition/expression exclusions are represented by Questa without
+  reducing the Active term count; instead the excluded zero-hit terms no
+  longer remain misses in the effective view. Therefore Covered rises by
+  +23/+46 while Active stays fixed.
+- The final EFFECTIVE bcefst aggregate is report-derived and must NOT be
+  described as RAW coverage improvement.
+- RAW 74.36% remains the authoritative physical raw code-coverage baseline.
+- The final effective aggregate is an exclusion-aware audit view only.
+- Protected constructive evidence remains intentionally unexcluded.
+- Repaired real bugs are never reclassified as exclusions.
+- Toggle is deliberately RAW-only: no toggle exclusions.
+
+G8-C3 closure gates
+===================
+1. RAW SHA256 before == RAW SHA256 after.
+2. RAW bcefst remains 74.36%.
+3. Statement: 5111 / 5095 / 16.
+4. Branch: 2862 / 2638 / 224.
+5. Condition: 533 / 385 / 148.
+6. Expression: 835 / 697 / 138.
+7. FSM states unchanged: 121 / 121 / 0.
+8. FSM transitions: 264 / 179 / 85.
+9. Toggle identical RAW vs EFFECTIVE:
+   96910 / 28867 / 68043.
+10. Covered-hit loss for statement/branch/FSM = 0.
+11. 14 approved branch residues remain physically visible.
+12. No real repaired bug is excluded.
+13. No constructively covered protected object is excluded.
+14. vcover errors/warnings = 0 in final report generation.
+
+If all gates pass:
+  CODE-COV-C1.2-G8-C3 = CLOSED
+  CODE-COV-C1.2-G8-C  = CLOSED

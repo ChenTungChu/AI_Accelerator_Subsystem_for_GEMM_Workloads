@@ -1,0 +1,98 @@
+CODE-COV-C1.2-G9-A
+Final Baseline / Closure Evidence Freeze
+
+Purpose
+=======
+Freeze the final C1.2 source baseline identity and the validated closure
+evidence already established by the 150-test full regression and G8-C.
+
+This checkpoint does NOT modify RTL, UVM, documentation, RAW UCDB, or
+EFFECTIVE UCDB content.
+
+Frozen validated baseline
+=========================
+Functional regression:
+  TOTAL : 150
+  PASS  : 150
+  FAIL  : 0
+  CODE-COV: PASS
+  UCDB merge/report: PASS
+
+Authoritative RAW:
+  bcefst filtered aggregate = 74.36%
+
+Final EFFECTIVE:
+  bcefst = 76.87%
+  bcef   = 82.94%
+  stmt   = 99.68%
+  toggle = 29.78% (RAW == EFFECTIVE)
+
+Final metric ledger:
+  Statement:
+    RAW       5285 / 5095 / 190
+    EFFECTIVE 5111 / 5095 / 16
+
+  Branch:
+    RAW       2866 / 2638 / 228
+    EFFECTIVE 2862 / 2638 / 224
+
+  Condition:
+    RAW       533 / 362 / 171
+    EFFECTIVE 533 / 385 / 148
+
+  Expression:
+    RAW       835 / 651 / 184
+    EFFECTIVE 835 / 697 / 138
+
+  FSM States:
+    RAW       121 / 121 / 0
+    EFFECTIVE 121 / 121 / 0
+
+  FSM Transitions:
+    RAW       279 / 179 / 100
+    EFFECTIVE 264 / 179 / 85
+
+  Toggle:
+    RAW       96910 / 28867 / 68043
+    EFFECTIVE 96910 / 28867 / 68043
+
+G8 closure:
+  G8-C1 CLOSED
+  G8-C2 CLOSED
+  G8-C3 CLOSED
+  G8-C  CLOSED
+
+Known open real integration bugs:
+  0
+
+Exclusion integrity:
+  Repaired real bugs converted to exclusions       : 0
+  Protected constructive statement misses retained : 16
+  Approved branch residues physically retained     : 14
+  Toggle exclusions                                 : 0
+
+G9-A physical evidence freeze
+=============================
+The Tcl script captures:
+  1. Git repository root
+  2. Git branch
+  3. Git HEAD SHA
+  4. HEAD commit time and subject
+  5. Full git status --porcelain snapshot
+  6. unstaged/staged changed-file lists
+  7. SHA256 of critical RAW/EFFECTIVE/G8-C3 evidence
+  8. SHA256 of control Tcl artifacts if present
+
+Formal G9-A closure gates
+=========================
+A. Git baseline identity captured.
+B. Critical evidence files all present.
+C. RAW and EFFECTIVE UCDB identities frozen by SHA256.
+D. G8-C3 final reports frozen by SHA256.
+E. Git status reviewed:
+   - CLEAN is preferred.
+   - If not clean, every non-clean entry must be intentionally generated,
+     ignored/deferred, or otherwise dispositioned before formal closure.
+F. No new RTL/UVM functional work is introduced by G9-A.
+
+No compile, simulation, or full regression is required.
