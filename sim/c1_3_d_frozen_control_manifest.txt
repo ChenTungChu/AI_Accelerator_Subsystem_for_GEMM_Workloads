@@ -1,0 +1,26 @@
+CODE-COV-C1.3-D2 Rev-A — Frozen Control Manifest
+============================================================
+Canonical RAW UCDB:
+coverage/code_cov/code_cov_merged.ucdb
+SHA256:
+ff2918d43a714d0ecd70ac8b1001c84cdfc3188f0ed4f825f3489343e0a1e079
+
+Frozen C1.2 exclusion controls (UNCHANGED):
+g8_c_statement_exclusions.tcl
+38b4e7543712fa35b469e7a103265711044db079be8815583376e1e833544846
+
+g8_c2a_multimetric_exclusions.tcl
+2419f400b05636d49a19bf411add48c9dc36bf8aa78e7c2b7d71572d39d45a9c
+
+g8_c2b_expression_exclusions.tcl
+d697d4a25bfd13102f75eb07cb7c032f45f6c3d0a53cca27b46173d0d07488a4
+
+Rev-A wrapper compatibility aliases:
+Stage 1 -> G8C_*
+Stage 2 -> G8C2_*
+Stage 3 -> G8C2B_*
+
+New exclusions introduced: 0
+Toggle exclusions introduced: 0
+Canonical RAW editing: prohibited
+C1.2 g8_c evidence overwrite: prohibited

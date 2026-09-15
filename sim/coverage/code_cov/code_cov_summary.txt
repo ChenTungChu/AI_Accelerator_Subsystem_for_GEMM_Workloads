@@ -1,5 +1,5 @@
 QuestaSim-64 vcover 10.7c Coverage Utility 2018.08 Aug 18 2018
-Start time: 01:03:28 on Sep 13,2026
+Start time: 00:39:42 on Sep 14,2026
 vcover report -code bcefst coverage/code_cov/code_cov_merged.ucdb 
 Coverage Report Summary Data by file
 
@@ -8,11 +8,11 @@ Coverage Report Summary Data by file
 =================================================================================
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
-    Stmts                         1222      1212        10     99.18
-    Branches                      1009       953        56     94.44
-    FEC Condition Terms            100        76        24     76.00
+    Stmts                         1222      1213         9     99.26
+    Branches                      1009       954        55     94.54
+    FEC Condition Terms            100        78        22     78.00
     FEC Expression Terms           174       151        23     86.78
-    Toggle Bins                  19240      4031     15209     20.95
+    Toggle Bins                  19240      4037     15203     20.98
 
 =================================================================================
 === File: ../rtl/dma/axi_mm2s_dma.sv
@@ -20,13 +20,13 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                           70        67         3     95.71
-    Branches                        42        38         4     90.47
-    FEC Condition Terms             16         7         9     43.75
+    Branches                        42        39         3     92.85
+    FEC Condition Terms             16        12         4     75.00
     FEC Expression Terms             6         5         1     83.33
     FSMs                                                       81.81
         States                       5         5         0    100.00
         Transitions                 11         7         4     63.63
-    Toggle Bins                   1062       504       558     47.45
+    Toggle Bins                   1062       506       556     47.64
 
 =================================================================================
 === File: ../rtl/dma/axi_stream_loader.sv
@@ -76,9 +76,9 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          144       136         8     94.44
-    Branches                        54        49         5     90.74
-    FEC Condition Terms              7         3         4     42.85
-    FEC Expression Terms            13         9         4     69.23
+    Branches                        54        52         2     96.29
+    FEC Condition Terms              7         7         0    100.00
+    FEC Expression Terms            13        13         0    100.00
     FSMs                                                       86.36
         States                       6         6         0    100.00
         Transitions                 11         8         3     72.72
@@ -90,7 +90,7 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          134       131         3     97.76
-    Branches                        56        54         2     96.42
+    Branches                        56        55         1     98.21
     FEC Condition Terms             18        18         0    100.00
     FEC Expression Terms             3         3         0    100.00
     FSMs                                                       93.75
@@ -118,7 +118,7 @@ Coverage Report Summary Data by file
     Enabled Coverage            Active      Hits    Misses % Covered
     ----------------            ------      ----    ------ ---------
     Stmts                          323       317         6     98.14
-    Branches                        98        91         7     92.85
+    Branches                        98        92         6     93.87
     FEC Condition Terms             38        27        11     71.05
     FEC Expression Terms            26        26         0    100.00
     FSMs                                                       86.84
@@ -159,7 +159,7 @@ Coverage Report Summary Data by file
     Branches                        78        72         6     92.30
     FEC Condition Terms             14         9         5     64.28
     FEC Expression Terms            22        16         6     72.72
-    Toggle Bins                   2286      1164      1122     50.91
+    Toggle Bins                   2286      1166      1120     51.00
 
 =================================================================================
 === File: ../rtl/subsystem/axis_scratchpad_write_adapter.sv
@@ -298,7 +298,7 @@ Coverage Report Summary Data by file
     Branches                        37        36         1     97.29
     FEC Condition Terms             17        13         4     76.47
     FEC Expression Terms            33        25         8     75.75
-    Toggle Bins                   7070      2813      4257     39.78
+    Toggle Bins                   7070      2817      4253     39.84
 
 =================================================================================
 === File: ../rtl/top/ai_accel_subsys_csr_top.sv
@@ -309,10 +309,10 @@ Coverage Report Summary Data by file
     Branches                       264       262         2     99.24
     FEC Condition Terms             87        73        14     83.90
     FEC Expression Terms           134       117        17     87.31
-    Toggle Bins                  22682      4098     18584     18.06
+    Toggle Bins                  22682      4104     18578     18.09
 
 
-Total Coverage By File (code coverage only, filtered view): 74.36%
+Total Coverage By File (code coverage only, filtered view): 74.83%
 
-End time: 01:03:28 on Sep 13,2026, Elapsed time: 0:00:00
+End time: 00:39:43 on Sep 14,2026, Elapsed time: 0:00:01
 Errors: 0, Warnings: 0

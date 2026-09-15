@@ -32,6 +32,18 @@ interface comp_wb_inject_if(input logic clk);
     int signed   bresp_block_beat   = -1;
     int unsigned bresp_block_gen    = 0;
 
+    // CODE-COV-C1.3-B1: legal independent AW/W acceptance probe.
+    //   aw_first_beat: hold WREADY low until AW handshakes first.
+    //   w_first_beat : hold AWREADY low until W handshakes first.
+    // Beat indices are relative to the AW/W counts captured when armed.
+    bit          aw_w_backpressure_enable = 1'b0;
+    int signed   aw_first_beat             = -1;
+    int signed   w_first_beat              = -1;
+    int unsigned aw_w_backpressure_gen     = 0;
+
+    int unsigned aw_first_observed_count;
+    int unsigned w_first_observed_count;
+
     task automatic set_bresp_error(
         input bit        enable,
         input int signed relative_write_beat
@@ -65,11 +77,25 @@ interface comp_wb_inject_if(input logic clk);
     end
     endtask
 
+    task automatic set_aw_w_backpressure(
+        input bit        enable,
+        input int signed relative_aw_first_beat,
+        input int signed relative_w_first_beat
+    );
+    begin
+        aw_w_backpressure_enable = enable;
+        aw_first_beat            = relative_aw_first_beat;
+        w_first_beat             = relative_w_first_beat;
+        aw_w_backpressure_gen    = aw_w_backpressure_gen + 1;
+    end
+    endtask
+
     task automatic clear();
     begin
         set_bresp_error(1'b0, -1);
         set_bid_mismatch(1'b0, -1);
         set_bresp_block(1'b0, -1);
+        set_aw_w_backpressure(1'b0, -1, -1);
     end
     endtask
 

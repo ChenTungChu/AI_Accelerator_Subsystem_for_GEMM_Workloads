@@ -65,6 +65,10 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
     localparam int unsigned G7_Y3_DMA_RESET_HOLD_CYCLES = 6;
     localparam int unsigned G7_Y3_CDC_REARM_CYCLES      = 16;
 
+    // CODE-COV-C1.3-B1 legal MM2S external-source protocol faults.
+    localparam int unsigned C1P3_B1_AXIS_FAULT_RID   = 1;
+    localparam int unsigned C1P3_B1_AXIS_FAULT_RLAST = 2;
+
     // ------------------------------------------------------------
     // Constructor
     // ------------------------------------------------------------
@@ -168,7 +172,7 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
         vif.dma_dst_mem_clear();
 
         vif.dma_src_set_rresp_error(1'b0, -1);
-        vif.axis_src_set_rresp_error(1'b0, -1);
+        vif.axis_src_clear_protocol_faults();
         vif.ds_src_set_rresp_error(1'b0, -1);
         vif.dma_dst_set_bresp_error(1'b0, -1);
 
@@ -511,6 +515,232 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
             $sformatf("Genuine AXI-Stream source RRESP error propagated to P14 ERROR_STATUS and recovered: observed=0x%08h post_rearm_clear=0x%08h",
                 expected_error, error_status),
             UVM_MEDIUM)
+    end
+    endtask
+
+    // ============================================================
+    // CODE-COV-C1.3-B1 AXI MM2S transport / response robustness
+    //
+    // These probes use only external-source AXI behavior that a legal
+    // responder may present to the MM2S master.  They do not force DUT
+    // state and do not target the structural S_WAIT_R/S_STREAM invariants.
+    // ============================================================
+    task automatic run_c1_3_b1_mm2s_arready_backpressure_probe(
+        input logic [31:0] dst_base,
+        input int unsigned byte_count
+    );
+        int unsigned observed_before;
+        int unsigned observed_after;
+    begin
+        observed_before = vif.axis_src_arready_stall_observed_count;
+
+        vif.axis_src_clear_protocol_faults();
+        vif.axis_src_set_arready_stall(2);
+        repeat (2) @(posedge csr_vif.clk);
+
+        run_one_axis_load(
+            AXIS_SRC_A_BASE,
+            dst_base,
+            byte_count,
+            "C1P3_B1_ARREADY"
+        );
+
+        vif.axis_src_set_arready_stall(0);
+        repeat (2) @(posedge csr_vif.clk);
+        observed_after = vif.axis_src_arready_stall_observed_count;
+
+        if (observed_after < (observed_before + 2)) begin
+            `uvm_fatal("CODE_COV_C1P3_B1_MM2S/ARREADY_NOT_OBSERVED",
+                $sformatf("Expected at least two ARVALID cycles with ARREADY held low: before=%0d after=%0d",
+                    observed_before, observed_after))
+        end
+
+        `uvm_info("CODE_COV_C1P3_B1_MM2S/ARREADY_PASS",
+            $sformatf("Legal source ARREADY backpressure observed for %0d cycle(s)",
+                observed_after - observed_before),
+            UVM_MEDIUM)
+    end
+    endtask
+
+    task automatic run_c1_3_b1_mm2s_protocol_error_probe(
+        input logic [31:0] dst_base,
+        input int unsigned byte_count,
+        input int unsigned fault_kind,
+        input string       tag
+    );
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] expected_error;
+        logic [31:0] expected_done;
+        int unsigned beats;
+        int unsigned cnt;
+        int unsigned observed_before;
+        int unsigned observed_after;
+    begin
+        beats          = bytes_to_beats(byte_count);
+        expected_error = 32'h0000_0001 << 1;
+        expected_done  = 32'h0000_0001 << ai_accel_csr_access_helper::DONE_AXIS_LOAD;
+
+        vif.axis_src_clear_protocol_faults();
+        case (fault_kind)
+            C1P3_B1_AXIS_FAULT_RID: begin
+                observed_before = vif.axis_src_rid_mismatch_observed_count;
+                vif.axis_src_set_rid_mismatch(1'b1, 0);
+            end
+
+            C1P3_B1_AXIS_FAULT_RLAST: begin
+                observed_before = vif.axis_src_rlast_error_observed_count;
+                vif.axis_src_set_rlast_error(1'b1, 0);
+            end
+
+            default: begin
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/BAD_FAULT_KIND",
+                    $sformatf("Unsupported C1.3-B1 MM2S fault kind %0d", fault_kind))
+            end
+        endcase
+        repeat (2) @(posedge csr_vif.clk);
+
+        csr_clear_sticky_status();
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, beats, tag);
+        csr_start_axis_load(tag);
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                vif.axis_src_clear_protocol_faults();
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/UNEXPECTED_REJECT",
+                    $sformatf("%s: unexpected P14 reject during legal external-source protocol fault: reject=0x%08h status=0x%08h",
+                        tag, reject_status, status))
+            end
+
+            if ((error_status != 32'h0000_0000) &&
+                (error_status != expected_error)) begin
+                vif.axis_src_clear_protocol_faults();
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/BAD_ERROR_STATUS",
+                    $sformatf("%s: expected ERROR_STATUS=0x%08h actual=0x%08h",
+                        tag, expected_error, error_status))
+            end
+
+            if (error_status == expected_error) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                vif.axis_src_clear_protocol_faults();
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/ERROR_TIMEOUT",
+                    $sformatf("%s: timed out waiting for protocol error after %0d cycles",
+                        tag, done_timeout_cycles))
+            end
+        end
+
+        case (fault_kind)
+            C1P3_B1_AXIS_FAULT_RID:
+                observed_after = vif.axis_src_rid_mismatch_observed_count;
+            C1P3_B1_AXIS_FAULT_RLAST:
+                observed_after = vif.axis_src_rlast_error_observed_count;
+            default:
+                observed_after = observed_before;
+        endcase
+
+        if (observed_after <= observed_before) begin
+            vif.axis_src_clear_protocol_faults();
+            `uvm_fatal("CODE_COV_C1P3_B1_MM2S/FAULT_NOT_OBSERVED",
+                $sformatf("%s: responder observation counter did not advance: before=%0d after=%0d",
+                    tag, observed_before, observed_after))
+        end
+
+        vif.axis_src_clear_protocol_faults();
+        repeat (2) @(posedge csr_vif.clk);
+
+        // Wait for the failed operation to retire before re-arming the engine.
+        cnt = 0;
+        while (status[C1D1_P14_STATUS_AXIS_LOAD_BUSY]) begin
+            @(posedge csr_vif.clk);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/BUSY_TIMEOUT",
+                    $sformatf("%s: AXI-Stream load engine remained busy after protocol error", tag))
+            end
+        end
+
+        // Clear any terminal DONE, then use a genuine clean operation to clear
+        // the level-held source-engine error and prove recovery.
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_DONE_STATUS,
+            expected_done
+        );
+
+        csr_write_axis_load_config(AXIS_SRC_A_BASE, dst_base, beats, {tag, "_RECOVERY"});
+        csr_start_axis_load({tag, "_RECOVERY"});
+
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_DONE_STATUS, done_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/RECOVERY_REJECT",
+                    $sformatf("%s recovery start rejected: reject=0x%08h status=0x%08h",
+                        tag, reject_status, status))
+            end
+
+            if (status[C1D1_P14_STATUS_AXIS_LOAD_BUSY] ||
+                ((done_status & expected_done) != 32'h0000_0000)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > done_timeout_cycles) begin
+                `uvm_fatal("CODE_COV_C1P3_B1_MM2S/RECOVERY_START_TIMEOUT",
+                    $sformatf("%s recovery operation never became active or completed", tag))
+            end
+        end
+
+        repeat (2) @(posedge csr_vif.clk);
+        csr.write32_expect_okay(
+            ai_accel_csr_access_helper::CSR_ERROR_STATUS,
+            expected_error
+        );
+        repeat (2) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_CMD_REJECT_STATUS, reject_status);
+
+        if ((error_status != 32'h0000_0000) ||
+            (reject_status != 32'h0000_0000)) begin
+            `uvm_fatal("CODE_COV_C1P3_B1_MM2S/RECOVERY_CLEAR",
+                $sformatf("%s recovery sticky cleanup failed: error=0x%08h reject=0x%08h",
+                    tag, error_status, reject_status))
+        end
+
+        csr_poll_done_bit(
+            done_timeout_cycles,
+            ai_accel_csr_access_helper::DONE_AXIS_LOAD,
+            {tag, "_RECOVERY"}
+        );
+        csr_clear_sticky_status();
+
+        if (fault_kind == C1P3_B1_AXIS_FAULT_RID) begin
+            `uvm_info("CODE_COV_C1P3_B1_MM2S/RID_PASS",
+                $sformatf("Legal RID mismatch was observed and recovered: responder_count %0d -> %0d",
+                    observed_before, observed_after),
+                UVM_MEDIUM)
+        end else begin
+            `uvm_info("CODE_COV_C1P3_B1_MM2S/RLAST_PASS",
+                $sformatf("Legal missing-RLAST response was observed and recovered: responder_count %0d -> %0d",
+                    observed_before, observed_after),
+                UVM_MEDIUM)
+        end
     end
     endtask
 
@@ -1681,6 +1911,28 @@ class ai_accel_subsys_csr_axis_stream_load_store_smoke_test extends ai_accel_sub
             (selected_case_id == 102)) begin
             run_d1_axis_reject_probes(profile_item.base_addr_a);
             run_d2_axis_error_probe(profile_item.base_addr_a, a_flat.size());
+
+            run_c1_3_b1_mm2s_arready_backpressure_probe(
+                profile_item.base_addr_a,
+                a_flat.size()
+            );
+            run_c1_3_b1_mm2s_protocol_error_probe(
+                profile_item.base_addr_a,
+                a_flat.size(),
+                C1P3_B1_AXIS_FAULT_RID,
+                "C1P3_B1_RID"
+            );
+            run_c1_3_b1_mm2s_protocol_error_probe(
+                profile_item.base_addr_a,
+                a_flat.size(),
+                C1P3_B1_AXIS_FAULT_RLAST,
+                "C1P3_B1_RLAST"
+            );
+
+            `uvm_info("CODE_COV_C1P3_B1_MM2S/PASS",
+                "AXI MM2S ARREADY / RID / RLAST constructive robustness probes PASS",
+                UVM_MEDIUM)
+
             run_g7_k3c_dual_port_arbitration_probe();
         end
 

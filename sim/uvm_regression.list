@@ -2,9 +2,9 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   Verification Coverage RC-COV-D: Functional Coverage Documentation Closure Completed
+#   CODE-COV-C1.3: Post-C1.2 Legal Constructive Coverage Improvement
 #
-# Current baseline:
+# Qualification baseline entering C1.3:
 #   TOTAL : 150
 #   PASS  : 150
 #   FAIL  : 0
@@ -16,6 +16,15 @@
 #   MISSING PLANNED BINS      : 0
 #   UCDB MERGE / REPORT       : PASS
 #   VCOVER ERRORS / WARNINGS  : 0 / 0
+#
+# CODE-COV-C1.3 status:
+#   C1.3-A  Priority Freeze                                      CLOSED
+#   C1.3-B1 AXI Transport / Response Robustness                  CLOSED
+#   C1.3-B2 Queue / Direct-Stream Error-Recovery                 CLOSED
+#   C1.3-B3-A Selective Sequencer / Loader / CSR Exact Audit     CLOSED
+#   C1.3-B3-B Direct-Stream Operand-Readiness Reject Integration IN PROGRESS
+#   C1.3-C  Fresh Full Regression / RAW Delta Reconciliation     PENDING
+#   C1.3-D  Final C1.3 Closure                                   PENDING
 #
 # Major coverage:
 #   - host-primary GEMM path
@@ -338,7 +347,7 @@ ai_accel_subsys_csr_axis_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_acc
 # 089: csr_direct_stream_load_store_case100
 ai_accel_subsys_csr_direct_stream_load_store_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
 # 090: csr_direct_stream_load_store_case102
-ai_accel_subsys_csr_direct_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14
+ai_accel_subsys_csr_direct_stream_load_store_smoke_test CASE_ID 102 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14 +CODE_COV_G8_A_R2_NO_PRELOAD_REJECT
 
 # 091: csr_job_dma_load_store_case100
 ai_accel_subsys_csr_job_dma_load_store_smoke_test CASE_ID 100 UVM_TOP ai_accel_subsys_csr_uvm_top +ENABLE_RESULT_CHECK=1 +FORCE_HELPER_MEM_PATH=0 +DMA_CLK_PERIOD_NS=10 +CORE_CLK_PERIOD_NS=14

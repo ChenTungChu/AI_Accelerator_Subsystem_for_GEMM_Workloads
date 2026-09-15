@@ -1,0 +1,48 @@
+CODE-COV-C1.3-A
+Post-C1.2 Coverage Improvement Roadmap / Priority Freeze
+
+Freeze decision
+===============
+C1.3 is the final high-value code-coverage improvement milestone.
+It is not an extension of the C1.2 exclusion campaign.
+
+The authoritative comparison baseline remains the C1.2 final signed-off state:
+  branch main
+  HEAD 41f31d7c6e4dfe6765fe41000df856b342b8276a
+  150/150 PASS
+  RAW bcefst 74.36%
+  EFFECTIVE bcefst 76.87%
+  EFFECTIVE bcef 82.94%
+  EFFECTIVE statement 99.68%
+  toggle 29.78%
+
+Priority policy
+===============
+P0:
+  AXI/protocol/error/recovery paths with high bug-finding value.
+
+P1:
+  Exact-residue audit required before any new stimulus.
+
+P2:
+  Stable-IP, configuration-disabled, already-dispositioned, or percentage-only
+  targets that are explicitly not worth pursuing in this milestone.
+
+Hard constraints
+================
+- legal stimulus only
+- no force/deposit
+- no state corruption
+- no global toggle target
+- no broad exclusion campaign
+- repaired bugs are never waivers
+- RAW delta is the improvement metric
+- effective coverage remains an audit view
+- preserve the existing UVM architecture and canonical smoke tests
+- prefer extending existing tests over adding standalone tests
+- preserve regression count unless a genuinely distinct test is necessary
+
+C1.3-A closure condition
+========================
+The priority ledger is the frozen roadmap for C1.3.
+No compile, simulation, or regression is required for C1.3-A itself.

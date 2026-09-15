@@ -1,0 +1,219 @@
+CODE-COV-C1.3-A
+Post-C1.2 Coverage Improvement Roadmap / Priority Freeze
+
+Authoritative starting point
+============================
+Final C1.2 source baseline:
+  branch : main
+  HEAD   : 41f31d7c6e4dfe6765fe41000df856b342b8276a
+
+Functional baseline:
+  full regression : 150 / 150 PASS
+  known open real integration bugs : 0
+
+Coverage baseline:
+  RAW bcefst       : 74.36%
+  EFFECTIVE bcefst : 76.87%
+  EFFECTIVE bcef   : 82.94%
+  EFFECTIVE stmt   : 99.68%
+  Toggle           : 29.78% (RAW == EFFECTIVE)
+
+C1.3 governing rule
+===================
+C1.3 is NOT another exclusion campaign and is NOT a percentage-farming phase.
+
+Only legal, meaningful, bug-finding-oriented constructive coverage is in scope.
+Improvement is measured from fresh RAW coverage, not from additional exclusions.
+
+No force/deposit/state corruption.
+No broad line-wide exclusions.
+No reclassification of repaired bugs as waivers.
+No reopening stable IP merely to improve project-level percentage.
+No global toggle-percentage target.
+
+Priority Tier P0 — Constructive targets to audit first
+======================================================
+1. AXI MM2S transport / response robustness
+   rtl/dma/axi_mm2s_dma.sv
+
+   Current effective residues:
+     Branch misses        : 4
+     Condition misses     : 9
+     Expression misses    : 1
+     FSM transition miss  : 4
+
+   Why P0:
+     AR/R backpressure and response-integrity behavior can expose real
+     transaction/control bugs. Candidate residues include ARREADY/RREADY,
+     RID/RRESP/RLAST handling and abort/recovery-style transitions.
+
+2. Scratchpad AXI write ordering / response robustness
+   rtl/subsystem/axis_scratchpad_write_adapter.sv
+
+   Current effective residues:
+     Branch misses     : 4
+     Condition misses  : 4
+     Expression misses : 5
+
+   Why P0:
+     AW/W ordering, accepted-request validity and BRESP error handling are
+     high-value protocol paths.
+
+3. Completion writeback protocol / recovery
+   rtl/sequencer/ai_accel_completion_wb_engine.sv
+
+   Current effective residues:
+     Branch misses        : 5
+     Condition misses     : 4
+     Expression misses    : 4
+     FSM transition miss  : 3
+
+   Why P0:
+     Completion publication is architectural state. Error/backpressure/recovery
+     paths are worth constructive proof if legal.
+
+4. Descriptor fetch protocol / recovery
+   rtl/sequencer/ai_accel_desc_fetch_engine.sv
+
+   Current effective residues:
+     Branch misses        : 2
+     FSM transition miss  : 1
+
+   Why P0:
+     Small residue count and high control significance make this a good
+     low-cost/high-signal target.
+
+5. Direct-Stream end-to-end error propagation
+   rtl/subsystem/direct_stream_preload_engine.sv
+
+   Current effective residues:
+     Statement miss      : 1 protected constructive residue
+     Branch misses       : 8
+     Condition misses    : 6
+     Expression misses   : 15
+
+   Why P0:
+     Remaining expressions include loader_error / adapter_error aggregation.
+     Legal error propagation is more valuable than raw denominator reduction.
+
+6. Queue fetch control / guard / backpressure behavior
+   rtl/sequencer/ai_accel_queue_fetch_controller.sv
+
+   Current effective residues:
+     Branch misses        : 7
+     Condition misses     : 11
+     FSM transition miss  : 5
+
+   Why P0:
+     Queue-idle, guard, backpressure and underlying-engine ownership paths can
+     reveal real integration/control issues.
+
+Priority Tier P1 — Selective audit, not blanket targeting
+=========================================================
+1. rtl/dma/axi_stream_loader.sv
+   Branch 8 / Condition 1 / Expression 6 / FSM transition 1 remaining.
+   Prior C1.2 work already showed several parent-prevalidated/static/debug-only
+   paths. Audit exact residues before adding stimulus.
+
+2. rtl/sequencer/ai_accel_job_sequencer.sv
+   Branch 14 / Condition 18 / FSM transition 21 remaining.
+   Only legal error/recovery/ordering behavior should be considered.
+   Reset-only, encoded-default, impossible ordering and parent-prevalidated
+   paths are not targets.
+
+3. rtl/sequencer/ai_accel_recipe_sequencer.sv
+   Branch 17 / Condition 10 / Expression 4 / FSM transition 10 remaining.
+   Same policy as job sequencer: target only legal runtime behavior.
+
+4. rtl/csr/ai_accel_csr_regs.sv
+   Branch 56 / Condition 24 / Expression 23 remaining.
+   Large count is intentionally NOT treated as highest priority because the
+   residue mixes reserved CSR addresses, strobe combinations, telemetry/event
+   controls, defensive bounds and actual runtime control behavior.
+   Only software-visible legal combinations with bug-finding value qualify.
+
+5. rtl/subsystem/gemm_operand_buffer.sv
+   Statement 7 protected misses plus Branch 16 / Condition 13 / Expression 1.
+   Audit only legal buffer/tail/flow-control behavior; do not disturb protected
+   constructive statement residues.
+
+6. rtl/subsystem/gemm_input_mem_router.sv
+   Branch 7 / Condition 6 / Expression 4.
+   Target only legal routing/error combinations that can occur at integration.
+
+7. rtl/subsystem/dma_load_engine.sv
+   Branch/FSM are already 100% effective; 9 expression misses remain.
+   Low-cost audit is allowed, but no FEC-farming.
+
+Priority Tier P2 — Explicitly de-prioritized / no percentage farming
+===================================================================
+1. rtl/mem/axi_mm_dual_port_bram.sv
+   Stable reusable scratchpad IP with its own project/regression history.
+   Do not reopen inside this project solely for AI-accelerator coverage gain.
+
+2. rtl/gemm/gemm_top.sv
+   Large remaining residue is strongly coupled to the frozen default
+   configuration (cache/tiling/feature parameters). Do not create alternate
+   builds merely to improve C1.3 percentage unless alternate-config validation
+   becomes a separate project requirement.
+
+3. Tool-granularity-limited branch residues retained from C1.2:
+   dma_scratchpad_write_adapter : 2
+   dma_store_engine             : 8
+   scratchpad_port0_owner_mux   : 1
+   scratchpad_port1_owner_mux   : 1
+   ai_accel_subsys              : 1
+   ai_accel_subsys_csr_top      : 1
+                                  --
+   TOTAL                        : 14
+
+   These are OUT OF SCOPE for C1.3 constructive targeting unless the underlying
+   architecture changes. They are already semantically dispositioned.
+
+4. Toggle coverage
+   Final RAW/EFFECTIVE toggle = 29.78%.
+   No aggregate toggle target is defined.
+   New tests may incidentally improve toggle coverage, but dedicated wide-bus,
+   address-bit, reserved-bit or counter-bit toggle farming is prohibited.
+
+C1.3 success criteria
+=====================
+C1.3 does not have a required aggregate percentage.
+
+Success means:
+  - every selected P0 object is either constructively hit by legal stimulus or
+    explicitly rejected from the target set after exact reachability analysis;
+  - no functional regression is introduced;
+  - any discovered real bug is repaired and regression-tested, never excluded;
+  - fresh RAW coverage delta is reported separately from effective coverage;
+  - toggle changes are informational only;
+  - C1.2 exclusions and protected residues remain intact.
+
+Planned checkpoint structure
+============================
+CODE-COV-C1.3-A
+  Post-C1.2 Coverage Improvement Roadmap / Priority Freeze
+
+CODE-COV-C1.3-B1
+  AXI Transport / Response Robustness Exact-Target Audit
+  Primary modules:
+    axi_mm2s_dma
+    axis_scratchpad_write_adapter
+    ai_accel_completion_wb_engine
+    ai_accel_desc_fetch_engine
+
+CODE-COV-C1.3-B2
+  Queue / Direct-Stream Error-Recovery Exact-Target Audit
+  Primary modules:
+    ai_accel_queue_fetch_controller
+    direct_stream_preload_engine
+
+CODE-COV-C1.3-B3
+  Selective Sequencer / Loader / CSR Constructive Sweep
+  Only if B1/B2 evidence shows remaining worthwhile legal targets.
+
+CODE-COV-C1.3-C
+  Fresh Full Regression / RAW Delta Reconciliation
+
+CODE-COV-C1.3-D
+  Final C1.3 Closure / Handoff to PROJECT-FINAL-P1

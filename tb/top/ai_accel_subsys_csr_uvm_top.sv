@@ -248,6 +248,23 @@ module ai_accel_subsys_csr_uvm_top;
     logic                  axis_src_inject_enable_q;
     int unsigned           axis_src_inject_base_ar_count;
 
+    // CODE-COV-C1.3-B1 external AXIS-source protocol probes.
+    int unsigned           axis_src_arready_stall_cycles_q;
+    int unsigned           axis_src_arready_stall_gen_q;
+    int unsigned           axis_src_arready_stall_observed_count;
+
+    logic                  axis_src_inject_rid_mismatch_q;
+    int signed             axis_src_inject_rid_mismatch_beat_q;
+    int unsigned           axis_src_inject_rid_base_ar_count;
+    int unsigned           axis_src_rid_mismatch_gen_q;
+    int unsigned           axis_src_rid_mismatch_observed_count;
+
+    logic                  axis_src_inject_rlast_error_q;
+    int signed             axis_src_inject_rlast_error_beat_q;
+    int unsigned           axis_src_inject_rlast_base_ar_count;
+    int unsigned           axis_src_rlast_error_gen_q;
+    int unsigned           axis_src_rlast_error_observed_count;
+
     logic [ID_WIDTH-1:0]   axis_src_rid_q;
     logic [DATA_WIDTH-1:0] axis_src_rdata_q;
     logic [1:0]            axis_src_rresp_q;
@@ -352,6 +369,11 @@ module ai_accel_subsys_csr_uvm_top;
     int unsigned           desc_src_rlast_error_gen_q = 0;
     int unsigned           desc_src_inject_rlast_base_ar_count = 0;
 
+    // CODE-COV-C1.3-B1 legal descriptor-source ARREADY backpressure.
+    int unsigned           desc_src_arready_stall_cycles_q = 0;
+    int unsigned           desc_src_arready_stall_gen_q = 0;
+    int unsigned           desc_src_arready_stall_observed_count = 0;
+
     int unsigned           desc_src_rd_pending_beat_idx;
 
     wire desc_src_ar_fire = desc_src_axi_arvalid && desc_src_axi_arready;
@@ -388,6 +410,11 @@ module ai_accel_subsys_csr_uvm_top;
     logic [1:0]            cmd_src_rresp_q;
     logic                  cmd_src_rlast_q;
     logic                  cmd_src_rvalid_q;
+
+    // CODE-COV-C1.3-B2-B legal command-source ARREADY backpressure.
+    int unsigned           cmd_src_arready_stall_cycles_q = 0;
+    int unsigned           cmd_src_arready_stall_gen_q = 0;
+    int unsigned           cmd_src_arready_stall_observed_count = 0;
 
     wire cmd_src_ar_fire = cmd_src_axi_arvalid && cmd_src_axi_arready;
     wire cmd_src_r_fire  = cmd_src_axi_rvalid  && cmd_src_axi_rready;
@@ -477,6 +504,20 @@ module ai_accel_subsys_csr_uvm_top;
     int signed                 comp_wb_inject_bresp_block_beat_q;
     int unsigned               comp_wb_inject_block_base_aw_count;
     int unsigned               comp_wb_bresp_block_gen_q;
+
+    // CODE-COV-C1.3-B1 completion-memory independent AW/W backpressure.
+    logic                      comp_wb_backpressure_enable_q;
+    int unsigned               comp_wb_backpressure_base_aw_count;
+    int unsigned               comp_wb_backpressure_base_w_count;
+    int unsigned               comp_wb_backpressure_gen_q;
+    logic                      comp_wb_aw_first_injected_q;
+    logic                      comp_wb_w_first_injected_q;
+    logic                      comp_wb_stall_aw_backpressure;
+    logic                      comp_wb_stall_w_backpressure;
+    integer                    comp_wb_backpressure_rel_aw_beat;
+    integer                    comp_wb_backpressure_rel_w_beat;
+    int unsigned               comp_wb_aw_first_observed_count;
+    int unsigned               comp_wb_w_first_observed_count;
 
     wire comp_aw_fire = comp_axi_awvalid && comp_axi_awready;
     wire comp_w_fire  = comp_axi_wvalid  && comp_axi_wready;
@@ -615,7 +656,12 @@ module ai_accel_subsys_csr_uvm_top;
     // ============================================================
     assign axis_src_axi_arready = dma_rst_n &&
                                   !axis_src_rd_pending_valid &&
-                                  !axis_src_rvalid_q;
+                                  !axis_src_rvalid_q &&
+                                  (axis_src_arready_stall_cycles_q == 0);
+
+    assign ctrl_if.axis_src_arready_stall_observed_count = axis_src_arready_stall_observed_count;
+    assign ctrl_if.axis_src_rid_mismatch_observed_count  = axis_src_rid_mismatch_observed_count;
+    assign ctrl_if.axis_src_rlast_error_observed_count   = axis_src_rlast_error_observed_count;
 
     assign axis_src_axi_rid     = axis_src_rid_q;
     assign axis_src_axi_rdata   = axis_src_rdata_q;
@@ -641,7 +687,10 @@ module ai_accel_subsys_csr_uvm_top;
     // ============================================================
     assign desc_src_axi_arready = dma_rst_n &&
                                   !desc_src_rd_pending_valid &&
-                                  !desc_src_rvalid_q;
+                                  !desc_src_rvalid_q &&
+                                  (desc_src_arready_stall_cycles_q == 0);
+
+    assign desc_src_inject_vif.arready_stall_observed_count = desc_src_arready_stall_observed_count;
 
     assign desc_src_axi_rid     = desc_src_rid_q;
     assign desc_src_axi_rdata   = desc_src_rdata_q;
@@ -655,7 +704,11 @@ module ai_accel_subsys_csr_uvm_top;
     // ============================================================
     assign cmd_src_axi_arready = dma_rst_n &&
                                  !cmd_src_rd_pending_valid &&
-                                 !cmd_src_rvalid_q;
+                                 !cmd_src_rvalid_q &&
+                                 (cmd_src_arready_stall_cycles_q == 0);
+
+    assign ctrl_if.cmd_src_arready_stall_observed_count =
+        cmd_src_arready_stall_observed_count;
 
     assign cmd_src_axi_rid     = cmd_src_rid_q;
     assign cmd_src_axi_rdata   = cmd_src_rdata_q;
@@ -708,6 +761,38 @@ module ai_accel_subsys_csr_uvm_top;
     end
 
     // ============================================================
+    // CODE-COV-C1.3-B1 completion-memory AW/W backpressure helpers
+    // ============================================================
+    always_comb begin
+        comp_wb_backpressure_rel_aw_beat = -1;
+        comp_wb_backpressure_rel_w_beat = -1;
+
+        if (comp_aw_count >= comp_wb_backpressure_base_aw_count) begin
+            comp_wb_backpressure_rel_aw_beat =
+                int'(comp_aw_count - comp_wb_backpressure_base_aw_count);
+        end
+
+        if (comp_w_count >= comp_wb_backpressure_base_w_count) begin
+            comp_wb_backpressure_rel_w_beat =
+                int'(comp_w_count - comp_wb_backpressure_base_w_count);
+        end
+
+        comp_wb_stall_aw_backpressure =
+            comp_wb_backpressure_enable_q &&
+            !comp_wb_w_first_injected_q &&
+            (comp_wb_inject_vif.w_first_beat >= 0) &&
+            (comp_wb_backpressure_rel_aw_beat == comp_wb_inject_vif.w_first_beat) &&
+            (comp_wb_backpressure_rel_w_beat == comp_wb_inject_vif.w_first_beat);
+
+        comp_wb_stall_w_backpressure =
+            comp_wb_backpressure_enable_q &&
+            !comp_wb_aw_first_injected_q &&
+            (comp_wb_inject_vif.aw_first_beat >= 0) &&
+            (comp_wb_backpressure_rel_aw_beat == comp_wb_inject_vif.aw_first_beat) &&
+            (comp_wb_backpressure_rel_w_beat == comp_wb_inject_vif.aw_first_beat);
+    end
+
+    // ============================================================
     // DMA destination AXI write response model connections
     //
     // v1 assumptions:
@@ -718,11 +803,16 @@ module ai_accel_subsys_csr_uvm_top;
     // ============================================================
     assign comp_axi_awready = dma_rst_n &&
                               !comp_aw_pending_valid &&
-                              !comp_bvalid_q;
+                              !comp_bvalid_q &&
+                              !comp_wb_stall_aw_backpressure;
 
     assign comp_axi_wready  = dma_rst_n &&
                               !comp_w_pending_valid &&
-                              !comp_bvalid_q;
+                              !comp_bvalid_q &&
+                              !comp_wb_stall_w_backpressure;
+
+    assign comp_wb_inject_vif.aw_first_observed_count = comp_wb_aw_first_observed_count;
+    assign comp_wb_inject_vif.w_first_observed_count  = comp_wb_w_first_observed_count;
 
     assign comp_axi_bid     = comp_bid_q;
     assign comp_axi_bresp   = comp_bresp_q;
@@ -970,6 +1060,15 @@ module ai_accel_subsys_csr_uvm_top;
             comp_wb_inject_bresp_block_beat_q <= -1;
             comp_wb_inject_block_base_aw_count <= 0;
             comp_wb_bresp_block_gen_q         <= 0;
+
+            comp_wb_backpressure_enable_q      <= 1'b0;
+            comp_wb_backpressure_base_aw_count <= 0;
+            comp_wb_backpressure_base_w_count  <= 0;
+            comp_wb_backpressure_gen_q         <= 0;
+            comp_wb_aw_first_injected_q        <= 1'b0;
+            comp_wb_w_first_injected_q         <= 1'b0;
+            comp_wb_aw_first_observed_count    <= 0;
+            comp_wb_w_first_observed_count     <= 0;
         end else begin
             if (comp_wb_inject_vif.bresp_error_gen !=
                 comp_wb_bresp_error_gen_q) begin
@@ -994,6 +1093,36 @@ module ai_accel_subsys_csr_uvm_top;
                 comp_wb_inject_bresp_block_beat_q <= comp_wb_inject_vif.bresp_block_beat;
                 comp_wb_inject_block_base_aw_count <= comp_aw_count;
                 comp_wb_bresp_block_gen_q         <= comp_wb_inject_vif.bresp_block_gen;
+            end
+
+            if (comp_wb_inject_vif.aw_w_backpressure_gen !=
+                comp_wb_backpressure_gen_q) begin
+                if (comp_wb_inject_vif.aw_w_backpressure_enable &&
+                    (comp_wb_inject_vif.aw_first_beat >= 0) &&
+                    (comp_wb_inject_vif.w_first_beat >= 0) &&
+                    (comp_wb_inject_vif.aw_first_beat == comp_wb_inject_vif.w_first_beat)) begin
+                    $fatal(1,
+                        "[UVM_TOP_COMP_WB] AW-first and W-first backpressure cannot target the same relative beat %0d",
+                        comp_wb_inject_vif.aw_first_beat
+                    );
+                end
+
+                comp_wb_backpressure_enable_q      <= comp_wb_inject_vif.aw_w_backpressure_enable;
+                comp_wb_backpressure_base_aw_count <= comp_aw_count;
+                comp_wb_backpressure_base_w_count  <= comp_w_count;
+                comp_wb_backpressure_gen_q         <= comp_wb_inject_vif.aw_w_backpressure_gen;
+                comp_wb_aw_first_injected_q        <= 1'b0;
+                comp_wb_w_first_injected_q         <= 1'b0;
+            end
+
+            if (comp_aw_fire && comp_wb_stall_w_backpressure) begin
+                comp_wb_aw_first_injected_q     <= 1'b1;
+                comp_wb_aw_first_observed_count <= comp_wb_aw_first_observed_count + 1;
+            end
+
+            if (comp_w_fire && comp_wb_stall_aw_backpressure) begin
+                comp_wb_w_first_injected_q     <= 1'b1;
+                comp_wb_w_first_observed_count <= comp_wb_w_first_observed_count + 1;
             end
 
             if (comp_aw_fire) begin
@@ -1186,6 +1315,22 @@ module ai_accel_subsys_csr_uvm_top;
             axis_src_inject_enable_q       <= 1'b0;
             axis_src_inject_base_ar_count  <= 0;
 
+            axis_src_arready_stall_cycles_q       <= 0;
+            axis_src_arready_stall_gen_q          <= 0;
+            axis_src_arready_stall_observed_count <= 0;
+
+            axis_src_inject_rid_mismatch_q        <= 1'b0;
+            axis_src_inject_rid_mismatch_beat_q   <= -1;
+            axis_src_inject_rid_base_ar_count     <= 0;
+            axis_src_rid_mismatch_gen_q           <= 0;
+            axis_src_rid_mismatch_observed_count  <= 0;
+
+            axis_src_inject_rlast_error_q         <= 1'b0;
+            axis_src_inject_rlast_error_beat_q    <= -1;
+            axis_src_inject_rlast_base_ar_count   <= 0;
+            axis_src_rlast_error_gen_q            <= 0;
+            axis_src_rlast_error_observed_count   <= 0;
+
             axis_src_rid_q                 <= '0;
             axis_src_rdata_q               <= '0;
             axis_src_rresp_q               <= AXI_RESP_OKAY;
@@ -1201,6 +1346,33 @@ module ai_accel_subsys_csr_uvm_top;
             if (ctrl_if.axis_src_inject_rresp_error &&
                 !axis_src_inject_enable_q) begin
                 axis_src_inject_base_ar_count <= axis_src_ar_count;
+            end
+
+            if (ctrl_if.axis_src_arready_stall_gen !=
+                axis_src_arready_stall_gen_q) begin
+                axis_src_arready_stall_cycles_q <= ctrl_if.axis_src_arready_stall_cycles;
+                axis_src_arready_stall_gen_q    <= ctrl_if.axis_src_arready_stall_gen;
+            end else if (axis_src_axi_arvalid &&
+                         (axis_src_arready_stall_cycles_q != 0)) begin
+                axis_src_arready_stall_cycles_q <= axis_src_arready_stall_cycles_q - 1;
+                axis_src_arready_stall_observed_count <=
+                    axis_src_arready_stall_observed_count + 1;
+            end
+
+            if (ctrl_if.axis_src_inject_rid_mismatch_gen !=
+                axis_src_rid_mismatch_gen_q) begin
+                axis_src_inject_rid_mismatch_q      <= ctrl_if.axis_src_inject_rid_mismatch;
+                axis_src_inject_rid_mismatch_beat_q <= ctrl_if.axis_src_inject_rid_mismatch_beat;
+                axis_src_inject_rid_base_ar_count   <= axis_src_ar_count;
+                axis_src_rid_mismatch_gen_q         <= ctrl_if.axis_src_inject_rid_mismatch_gen;
+            end
+
+            if (ctrl_if.axis_src_inject_rlast_error_gen !=
+                axis_src_rlast_error_gen_q) begin
+                axis_src_inject_rlast_error_q      <= ctrl_if.axis_src_inject_rlast_error;
+                axis_src_inject_rlast_error_beat_q <= ctrl_if.axis_src_inject_rlast_error_beat;
+                axis_src_inject_rlast_base_ar_count <= axis_src_ar_count;
+                axis_src_rlast_error_gen_q         <= ctrl_if.axis_src_inject_rlast_error_gen;
             end
 
             if (axis_src_ar_fire) begin
@@ -1252,6 +1424,26 @@ module ai_accel_subsys_csr_uvm_top;
                 axis_src_rlast_q  <= 1'b1;
                 axis_src_rid_q    <= axis_src_rd_pending_id;
                 axis_src_rdata_q  <= src_pack_word(axis_src_rd_pending_addr);
+
+                if (axis_src_inject_rid_mismatch_q &&
+                    (axis_src_inject_rid_mismatch_beat_q >= 0) &&
+                    (axis_src_rd_pending_beat_idx >= axis_src_inject_rid_base_ar_count) &&
+                    (int'(axis_src_rd_pending_beat_idx - axis_src_inject_rid_base_ar_count) ==
+                        axis_src_inject_rid_mismatch_beat_q)) begin
+                    axis_src_rid_q <= {{(ID_WIDTH-1){1'b0}}, 1'b1};
+                    axis_src_rid_mismatch_observed_count <=
+                        axis_src_rid_mismatch_observed_count + 1;
+                end
+
+                if (axis_src_inject_rlast_error_q &&
+                    (axis_src_inject_rlast_error_beat_q >= 0) &&
+                    (axis_src_rd_pending_beat_idx >= axis_src_inject_rlast_base_ar_count) &&
+                    (int'(axis_src_rd_pending_beat_idx - axis_src_inject_rlast_base_ar_count) ==
+                        axis_src_inject_rlast_error_beat_q)) begin
+                    axis_src_rlast_q <= 1'b0;
+                    axis_src_rlast_error_observed_count <=
+                        axis_src_rlast_error_observed_count + 1;
+                end
 
                 if (ctrl_if.axis_src_inject_rresp_error &&
                     (ctrl_if.axis_src_inject_rresp_error_beat >= 0) &&
@@ -1429,7 +1621,22 @@ module ai_accel_subsys_csr_uvm_top;
             cmd_src_rresp_q          <= AXI_RESP_OKAY;
             cmd_src_rlast_q          <= 1'b0;
             cmd_src_rvalid_q         <= 1'b0;
+
+            cmd_src_arready_stall_cycles_q       <= 0;
+            cmd_src_arready_stall_gen_q          <= 0;
+            cmd_src_arready_stall_observed_count <= 0;
         end else begin
+            if (ctrl_if.cmd_src_arready_stall_gen !=
+                cmd_src_arready_stall_gen_q) begin
+                cmd_src_arready_stall_cycles_q <= ctrl_if.cmd_src_arready_stall_cycles;
+                cmd_src_arready_stall_gen_q    <= ctrl_if.cmd_src_arready_stall_gen;
+            end else if (cmd_src_axi_arvalid &&
+                         (cmd_src_arready_stall_cycles_q != 0)) begin
+                cmd_src_arready_stall_cycles_q <= cmd_src_arready_stall_cycles_q - 1;
+                cmd_src_arready_stall_observed_count <=
+                    cmd_src_arready_stall_observed_count + 1;
+            end
+
             if (cmd_src_ar_fire) begin
                 cmd_src_rd_pending_valid <= 1'b1;
                 cmd_src_rd_pending_addr  <= cmd_src_axi_araddr;
@@ -1523,8 +1730,22 @@ module ai_accel_subsys_csr_uvm_top;
             desc_src_rd_pending_beat_idx       <= 0;
             desc_src_rresp_error_gen_q         <= 0;
             desc_src_rlast_error_gen_q         <= 0;
+            desc_src_arready_stall_cycles_q    <= 0;
+            desc_src_arready_stall_gen_q       <= 0;
+            desc_src_arready_stall_observed_count <= 0;
         end
         else begin
+            if (desc_src_inject_vif.arready_stall_gen !=
+                desc_src_arready_stall_gen_q) begin
+                desc_src_arready_stall_cycles_q <= desc_src_inject_vif.arready_stall_cycles;
+                desc_src_arready_stall_gen_q    <= desc_src_inject_vif.arready_stall_gen;
+            end else if (desc_src_axi_arvalid &&
+                         (desc_src_arready_stall_cycles_q != 0)) begin
+                desc_src_arready_stall_cycles_q <= desc_src_arready_stall_cycles_q - 1;
+                desc_src_arready_stall_observed_count <=
+                    desc_src_arready_stall_observed_count + 1;
+            end
+
             if (desc_src_inject_vif.rresp_error_gen !=
                 desc_src_rresp_error_gen_q) begin
 
@@ -2260,7 +2481,7 @@ module ai_accel_subsys_csr_uvm_top;
         // source memory model defaults
         ctrl_if.dma_src_mem_clear();
         ctrl_if.dma_src_set_rresp_error(1'b0, -1);
-        ctrl_if.axis_src_set_rresp_error(1'b0, -1);
+        ctrl_if.axis_src_clear_protocol_faults();
         
         ctrl_if.ds_src_set_rresp_error(1'b0, -1);
 

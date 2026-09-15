@@ -551,17 +551,43 @@ class ai_accel_subsys_csr_desc_fetch_reject_error_test
         input int unsigned             b_bytes,
         input int unsigned             c_bytes
     );
+        int unsigned arready_observed_before;
+        int unsigned arready_observed_after;
     begin
         csr_desc_fetch_clear_sticky_status();
         program_single_descriptor(profile_item, SLOT0_CONTROL_DMA_HOST_READBACK, a_bytes, b_bytes, c_bytes, 32'hD17C_0000);
 
+        // CODE-COV-C1.3-B1: hold descriptor ARREADY low for two genuine
+        // ARVALID cycles, then allow the already-existing RRESP error probe
+        // to proceed.  This proves legal address-channel backpressure without
+        // adding a standalone descriptor operation.
+        desc_src_inject_vif.clear();
+        repeat (2) @(posedge csr_vif.clk);
+        arready_observed_before = desc_src_inject_vif.arready_stall_observed_count;
+        desc_src_inject_vif.set_arready_stall(2);
         desc_src_inject_vif.set_rresp_error(1'b1, 0);
+        repeat (2) @(posedge csr_vif.clk);
+
         csr_start_desc_fetch_raw(P17G_BAD_DESC_BASE, 1, P17G_DESC_STRIDE);
         expect_desc_fetch_error(
             "descriptor AXI RRESP error propagation",
             bit_mask(ai_accel_csr_access_helper::DESC_FETCH_ERR_AXI_RRESP)
         );
-        desc_src_inject_vif.set_rresp_error(1'b0, -1);
+        desc_src_inject_vif.clear();
+        repeat (2) @(posedge csr_vif.clk);
+
+        arready_observed_after = desc_src_inject_vif.arready_stall_observed_count;
+        if (arready_observed_after < (arready_observed_before + 2)) begin
+            `uvm_fatal("CODE_COV_C1P3_B1_DESC/ARREADY_NOT_OBSERVED",
+                $sformatf("Expected two descriptor ARVALID cycles with ARREADY low: before=%0d after=%0d",
+                    arready_observed_before, arready_observed_after))
+        end
+
+        `uvm_info("CODE_COV_C1P3_B1_DESC/ARREADY_PASS",
+            $sformatf("Descriptor-source ARREADY backpressure observed for %0d cycle(s)",
+                arready_observed_after - arready_observed_before),
+            UVM_MEDIUM)
+
         csr_desc_fetch_clear_sticky_status();
     end
     endtask

@@ -2322,6 +2322,8 @@ run_reg_item "csr_direct_stream_load_store_case102" {
 
     set DMA_CLK_PERIOD_NS 10
     set CORE_CLK_PERIOD_NS 14
+
+    set EXTRA_PLUSARGS [list +CODE_COV_G8_A_R2_NO_PRELOAD_REJECT]
 }
 
 # ============================================================

@@ -1015,6 +1015,10 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
         int signed               actual_c[];
         int unsigned             c_elems;
         int unsigned             c_bytes;
+        int unsigned             c1p3_b1_aw_first_before;
+        int unsigned             c1p3_b1_w_first_before;
+        int unsigned             c1p3_b1_aw_first_after;
+        int unsigned             c1p3_b1_w_first_after;
     begin
         phase.raise_objection(this);
 
@@ -1077,6 +1081,17 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
         csr_program_completion_wb();
         csr_program_queue();
 
+        // CODE-COV-C1.3-B1: use the existing normal queue-owned completion
+        // success path to prove that the completion master tolerates legal
+        // independent AW/W acceptance.  Relative completion write beat 0 is
+        // AW-first; relative beat 1 is W-first.
+        comp_wb_inject_vif.clear();
+        repeat (2) @(posedge csr_vif.clk);
+        c1p3_b1_aw_first_before = comp_wb_inject_vif.aw_first_observed_count;
+        c1p3_b1_w_first_before  = comp_wb_inject_vif.w_first_observed_count;
+        comp_wb_inject_vif.set_aw_w_backpressure(1'b1, 0, 1);
+        repeat (2) @(posedge csr_vif.clk);
+
         csr_check_recipe_idle_ready("before queue START");
         csr_start_queue();
 
@@ -1085,6 +1100,35 @@ class ai_accel_subsys_csr_queue_completion_wb_smoke_test
         csr_poll_recipe_done(done_timeout_cycles * 2);
         csr_poll_completion_wb_done(done_timeout_cycles);
         csr_check_recipe_perf_snapshot(profile_item);
+
+        comp_wb_inject_vif.set_aw_w_backpressure(1'b0, -1, -1);
+        repeat (2) @(posedge csr_vif.clk);
+        c1p3_b1_aw_first_after = comp_wb_inject_vif.aw_first_observed_count;
+        c1p3_b1_w_first_after  = comp_wb_inject_vif.w_first_observed_count;
+
+        if (c1p3_b1_aw_first_after <= c1p3_b1_aw_first_before) begin
+            `uvm_fatal("CODE_COV_C1P3_B1_COMP/AW_FIRST_NOT_OBSERVED",
+                $sformatf("Completion AW-first injection was not observed: before=%0d after=%0d",
+                    c1p3_b1_aw_first_before, c1p3_b1_aw_first_after))
+        end
+
+        if (c1p3_b1_w_first_after <= c1p3_b1_w_first_before) begin
+            `uvm_fatal("CODE_COV_C1P3_B1_COMP/W_FIRST_NOT_OBSERVED",
+                $sformatf("Completion W-first injection was not observed: before=%0d after=%0d",
+                    c1p3_b1_w_first_before, c1p3_b1_w_first_after))
+        end
+
+        `uvm_info("CODE_COV_C1P3_B1_COMP/AW_FIRST_PASS",
+            $sformatf("Completion AW-first handshake observed: %0d -> %0d",
+                c1p3_b1_aw_first_before, c1p3_b1_aw_first_after),
+            UVM_MEDIUM)
+        `uvm_info("CODE_COV_C1P3_B1_COMP/W_FIRST_PASS",
+            $sformatf("Completion W-first handshake observed: %0d -> %0d",
+                c1p3_b1_w_first_before, c1p3_b1_w_first_after),
+            UVM_MEDIUM)
+        `uvm_info("CODE_COV_C1P3_B1_COMP/PASS",
+            "Completion writeback independent AW/W ordering robustness probes PASS",
+            UVM_MEDIUM)
 
         repeat (5) @(posedge csr_vif.clk);
 

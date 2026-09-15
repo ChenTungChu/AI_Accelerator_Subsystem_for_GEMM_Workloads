@@ -289,7 +289,7 @@ interface ai_accel_subsys_ctrl_if #(
     endtask
 
     // ------------------------------------------------------------
-    // AXI-Stream preload source RRESP error injection control
+    // AXI-Stream preload source protocol injection control
     // ------------------------------------------------------------
     logic      axis_src_inject_rresp_error;
     int signed axis_src_inject_rresp_error_beat;
@@ -301,6 +301,64 @@ interface ai_accel_subsys_ctrl_if #(
     begin
         axis_src_inject_rresp_error      = enable;
         axis_src_inject_rresp_error_beat = beat_index;
+    end
+    endtask
+
+    // CODE-COV-C1.3-B1: legal AXI read-address backpressure and
+    // protocol-integrity injection for the external AXIS preload source.
+    // Beat indices are relative to the AR count captured when the control
+    // generation changes.  Observation counters are driven by the UVM top.
+    int unsigned axis_src_arready_stall_cycles = 0;
+    int unsigned axis_src_arready_stall_gen    = 0;
+    int unsigned axis_src_arready_stall_observed_count;
+
+    logic        axis_src_inject_rid_mismatch = 1'b0;
+    int signed   axis_src_inject_rid_mismatch_beat = -1;
+    int unsigned axis_src_inject_rid_mismatch_gen  = 0;
+    int unsigned axis_src_rid_mismatch_observed_count;
+
+    logic        axis_src_inject_rlast_error = 1'b0;
+    int signed   axis_src_inject_rlast_error_beat = -1;
+    int unsigned axis_src_inject_rlast_error_gen  = 0;
+    int unsigned axis_src_rlast_error_observed_count;
+
+    task automatic axis_src_set_arready_stall(
+        input int unsigned stall_cycles
+    );
+    begin
+        axis_src_arready_stall_cycles = stall_cycles;
+        axis_src_arready_stall_gen    = axis_src_arready_stall_gen + 1;
+    end
+    endtask
+
+    task automatic axis_src_set_rid_mismatch(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        axis_src_inject_rid_mismatch      = enable;
+        axis_src_inject_rid_mismatch_beat = beat_index;
+        axis_src_inject_rid_mismatch_gen  = axis_src_inject_rid_mismatch_gen + 1;
+    end
+    endtask
+
+    task automatic axis_src_set_rlast_error(
+        input bit        enable,
+        input int signed beat_index
+    );
+    begin
+        axis_src_inject_rlast_error      = enable;
+        axis_src_inject_rlast_error_beat = beat_index;
+        axis_src_inject_rlast_error_gen  = axis_src_inject_rlast_error_gen + 1;
+    end
+    endtask
+
+    task automatic axis_src_clear_protocol_faults();
+    begin
+        axis_src_set_rresp_error(1'b0, -1);
+        axis_src_set_arready_stall(0);
+        axis_src_set_rid_mismatch(1'b0, -1);
+        axis_src_set_rlast_error(1'b0, -1);
     end
     endtask
 
@@ -339,6 +397,22 @@ interface ai_accel_subsys_ctrl_if #(
     logic      cmd_src_inject_missing_rlast = 1'b0;
     int signed cmd_src_inject_missing_rlast_beat = -1;
 
+    // CODE-COV-C1.3-B2-B: legal command-source ARREADY backpressure.
+    // The generation counter lets the UVM top capture each new stall request
+    // without force/deposit or any DUT-internal state manipulation.
+    int unsigned cmd_src_arready_stall_cycles = 0;
+    int unsigned cmd_src_arready_stall_gen    = 0;
+    int unsigned cmd_src_arready_stall_observed_count;
+
+    task automatic cmd_src_set_arready_stall(
+        input int unsigned stall_cycles
+    );
+    begin
+        cmd_src_arready_stall_cycles = stall_cycles;
+        cmd_src_arready_stall_gen    = cmd_src_arready_stall_gen + 1;
+    end
+    endtask
+
     task automatic cmd_src_clear_faults();
     begin
         cmd_src_inject_rresp_error       = 1'b0;
@@ -347,6 +421,7 @@ interface ai_accel_subsys_ctrl_if #(
         cmd_src_inject_early_rlast_beat  = -1;
         cmd_src_inject_missing_rlast      = 1'b0;
         cmd_src_inject_missing_rlast_beat = -1;
+        cmd_src_set_arready_stall(0);
     end
     endtask
 

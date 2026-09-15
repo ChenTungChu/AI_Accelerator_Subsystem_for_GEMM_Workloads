@@ -30,6 +30,12 @@ interface desc_src_inject_if(input logic clk);
     int signed   rlast_error_beat;
     int unsigned rlast_error_gen;
 
+    // CODE-COV-C1.3-B1: legal descriptor-source ARREADY backpressure.
+    // Stall cycles are consumed only while descriptor ARVALID is asserted.
+    int unsigned arready_stall_cycles;
+    int unsigned arready_stall_gen;
+    int unsigned arready_stall_observed_count;
+
     initial begin
         rresp_error_enable = 1'b0;
         rresp_error_beat   = -1;
@@ -38,6 +44,9 @@ interface desc_src_inject_if(input logic clk);
         rlast_error_enable = 1'b0;
         rlast_error_beat   = -1;
         rlast_error_gen    = 0;
+
+        arready_stall_cycles = 0;
+        arready_stall_gen    = 0;
     end
 
     task automatic set_rresp_error(
@@ -62,10 +71,20 @@ interface desc_src_inject_if(input logic clk);
     end
     endtask
 
+    task automatic set_arready_stall(
+        input int unsigned stall_cycles
+    );
+    begin
+        arready_stall_cycles = stall_cycles;
+        arready_stall_gen    = arready_stall_gen + 1;
+    end
+    endtask
+
     task automatic clear();
     begin
         set_rresp_error(1'b0, -1);
         set_rlast_error(1'b0, -1);
+        set_arready_stall(0);
     end
     endtask
 

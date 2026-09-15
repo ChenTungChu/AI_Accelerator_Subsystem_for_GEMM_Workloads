@@ -825,6 +825,157 @@ class ai_accel_subsys_csr_queue_reject_error_test
     end
     endtask
 
+    // ------------------------------------------------------------
+    // CODE-COV-C1.3-B2-B command-source ARREADY backpressure probe
+    //
+    // Use a clean AXI command fetch followed by an intentionally invalid
+    // command opcode.  The B2-B checker intentionally does NOT sample the
+    // DONE/ERROR/DETAIL CSRs as one atomic snapshot: those are independent
+    // AXI-Lite reads, so the queue may advance between reads.  First wait for
+    // the stable validation-error signature, then take a fresh post-terminal
+    // snapshot and require CMD_FETCHED plus the exact freshly fetched tag.
+    // ------------------------------------------------------------
+    task automatic c1p3_b2b_cmd_arready_backpressure_probe();
+        int unsigned stall_count_before;
+        int unsigned stall_count_after;
+        int unsigned cnt;
+        logic [31:0] status;
+        logic [31:0] done_status;
+        logic [31:0] error_status;
+        logic [31:0] reject_status;
+        logic [31:0] detail;
+        logic [31:0] last_cmd_tag;
+    begin
+        p17d_ctrl_vif.cmd_src_clear_faults();
+        p19f_clear_queue_sticky_and_wait_idle();
+
+        p19f_program_sq_command_entry(
+            0,
+            32'h0000_0105,
+            32'(P17D_DESC_BASE),
+            32'h0000_0002,
+            32'(P17D_DESC_STRIDE),
+            32'hD19F_B2B1
+        );
+        p19f_program_base_queue(
+            32'd1,
+            32'd0,
+            32'(P19F_QUEUE_DEPTH),
+            32'(P19F_QUEUE_DEPTH),
+            32'h0000_0005
+        );
+
+        stall_count_before = p17d_ctrl_vif.cmd_src_arready_stall_observed_count;
+        p17d_ctrl_vif.cmd_src_set_arready_stall(2);
+
+        // Allow the responder to capture the generation-tagged stall request
+        // before START_QUEUE can produce cmd_axi_arvalid.
+        repeat (2) @(posedge csr_vif.clk);
+
+        p19f_start_queue();
+
+        // Poll only for a stable terminal signature here.  In particular, do
+        // not compare a DONE value read earlier in the same CSR sweep against
+        // an ERROR value that may have become sticky a few AXI-Lite cycles
+        // later.  That would be a split-snapshot observation race rather than
+        // evidence that CMD_FETCHED was lost.
+        cnt = 0;
+        forever begin
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS, status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+            csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_DETAIL, detail);
+
+            if (error_status[Q_ERR_CMD_FETCH]) begin
+                `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/UNEXPECTED_FETCH_ERROR",
+                    $sformatf("ARREADY backpressure must not create a command-fetch error: status=0x%08h error=0x%08h reject=0x%08h detail=0x%08h",
+                        status, error_status, reject_status, detail))
+            end
+
+            if (reject_status != 32'h0000_0000) begin
+                `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/UNEXPECTED_REJECT",
+                    $sformatf("ARREADY backpressure must remain a legal transaction: status=0x%08h error=0x%08h reject=0x%08h detail=0x%08h",
+                        status, error_status, reject_status, detail))
+            end
+
+            if (error_status[Q_ERR_CMD_VALIDATION] &&
+                (detail === ERR_CMD_BAD_OPCODE)) begin
+                break;
+            end
+
+            @(posedge csr_vif.clk);
+            cnt++;
+            if (cnt > 160) begin
+                `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/VALIDATION_TIMEOUT",
+                    $sformatf("Timed out waiting for stable bad-opcode validation signature after ARREADY backpressure: status=0x%08h error=0x%08h reject=0x%08h detail=0x%08h",
+                        status, error_status, reject_status, detail))
+            end
+        end
+
+        // Let the independently-read CSR view settle, then take a fresh
+        // post-terminal snapshot.  CMD_FETCHED is sticky until explicit clear,
+        // so it must still be visible after this delay if the clean final R
+        // beat committed correctly.  LAST_CMD_TAG independently proves that
+        // this exact B2-B command, rather than stale cmd_words_q contents,
+        // reached Q_VALIDATE.
+        repeat (4) @(posedge csr_vif.clk);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_STATUS, status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_DONE_STATUS, done_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_STATUS, error_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_REJECT_STATUS, reject_status);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_ERROR_DETAIL, detail);
+        csr.read32_expect_okay(ai_accel_csr_access_helper::CSR_QUEUE_LAST_CMD_TAG, last_cmd_tag);
+
+        stall_count_after = p17d_ctrl_vif.cmd_src_arready_stall_observed_count;
+
+        if ((stall_count_after - stall_count_before) != 2) begin
+            `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/ARREADY_OBS",
+                $sformatf("Expected exactly 2 command-source ARREADY stall cycles, observed delta=%0d (before=%0d after=%0d)",
+                    stall_count_after - stall_count_before,
+                    stall_count_before,
+                    stall_count_after))
+        end
+
+        if (error_status[Q_ERR_CMD_FETCH] ||
+            !error_status[Q_ERR_CMD_VALIDATION] ||
+            (reject_status != 32'h0000_0000) ||
+            (detail !== ERR_CMD_BAD_OPCODE)) begin
+            `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/TERMINAL_SIGNATURE",
+                $sformatf("Post-settle terminal signature mismatch: status=0x%08h done=0x%08h error=0x%08h reject=0x%08h detail=0x%08h tag=0x%08h",
+                    status, done_status, error_status, reject_status, detail, last_cmd_tag))
+        end
+
+        if (last_cmd_tag !== 32'hD19F_B2B1) begin
+            `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/FRESH_COMMAND_TAG",
+                $sformatf("Expected freshly fetched B2-B command tag=0xD19FB2B1 got=0x%08h; status=0x%08h done=0x%08h error=0x%08h detail=0x%08h",
+                    last_cmd_tag, status, done_status, error_status, detail))
+        end
+
+        if (!done_status[Q_DONE_CMD_FETCHED] ||
+            done_status[Q_DONE_CMD_VALIDATED]) begin
+            `uvm_fatal("CODE_COV_C1P3_B2B_QUEUE/FETCHED_STICKY",
+                $sformatf("Post-settle queue DONE contract mismatch after clean backpressured fetch: expected CMD_FETCHED=1 CMD_VALIDATED=0, got done=0x%08h status=0x%08h error=0x%08h detail=0x%08h tag=0x%08h stall_delta=%0d",
+                    done_status, status, error_status, detail, last_cmd_tag,
+                    stall_count_after - stall_count_before))
+        end
+
+        `uvm_info("CODE_COV_C1P3_B2B_QUEUE/FETCH_VALIDATE_PASS",
+            $sformatf("Backpressured command fetch reached bad-opcode validation with fresh tag=0x%08h, done=0x%08h, error=0x%08h, detail=0x%08h",
+                last_cmd_tag, done_status, error_status, detail),
+            UVM_MEDIUM)
+
+        p17d_ctrl_vif.cmd_src_clear_faults();
+        repeat (3) @(posedge csr_vif.clk);
+        p19f_direct_queue_error_clear("C1.3-B2-B command ARREADY backpressure");
+        p19f_clear_queue_sticky_and_wait_idle();
+
+        `uvm_info("CODE_COV_C1P3_B2B_QUEUE/ARREADY_PASS",
+            $sformatf("Legal command-source ARREADY backpressure observed for %0d cycle(s); clean command fetch reached validation and recovered",
+                stall_count_after - stall_count_before),
+            UVM_MEDIUM)
+    end
+    endtask
+
     task automatic p19f_case_command_protocol_error_matrix();
     begin
         p19f_run_cmd_protocol_fault(
@@ -1876,6 +2027,10 @@ class ai_accel_subsys_csr_queue_reject_error_test
         p19f_case_invalid_cfg_reject();
         p19f_case_empty_drained();
         p19f_case_bad_pointer_reject();
+
+        // CODE-COV-C1.3-B2-B: prove legal command-source ARREADY
+        // backpressure before the broader G7-A2 queue miss matrix.
+        c1p3_b2b_cmd_arready_backpressure_probe();
 
         // CODE-COV-C1.2-G7-A2 current-source reachable miss matrix.
         p19f_case_validation_error_matrix();

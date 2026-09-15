@@ -1,0 +1,28 @@
+CODE-COV-C1.2-G9-B Rev-A
+Final C1.2 Closure Record / Signoff Freeze
+
+Rev-A correction
+================
+The original G9-B script required a literally clean Git working tree after
+the new G9-B package itself had been extracted into sim/. That makes the
+audit self-invalidating: the three G9-B control files are new/untracked even
+though the G9-A-frozen RTL/UVM/docs/evidence baseline is unchanged.
+
+Rev-A fixes only that audit-tool issue.
+
+The clean gate now:
+  - obtains status from the repository root with `git -C`;
+  - ignores ONLY:
+      sim/run_g9_b_final_c1_2_signoff.tcl
+      sim/g9_b_final_signoff_manifest.txt
+      sim/README_G9_B.txt
+      sim/coverage/code_cov/g9_b/*
+  - fails on every other modified/staged/untracked path.
+
+All other signoff gates are unchanged:
+  branch == main
+  HEAD == 41f31d7c6e4dfe6765fe41000df856b342b8276a
+  subject matches G9-A freeze
+  all 8 critical evidence SHA256 values match G9-A
+
+No source, UCDB, compile, simulation, or regression change is required.
