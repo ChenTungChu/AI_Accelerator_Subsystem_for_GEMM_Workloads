@@ -2,13 +2,26 @@
 # AI Accelerator Subsystem UVM Regression List
 #
 # Current milestone:
-#   CODE-COV-C1.3: Post-C1.2 Legal Constructive Coverage Improvement
+#   PROJECT-FINAL-P1: Release / Reproducibility / Portfolio Signoff
 #
-# Qualification baseline entering C1.3:
-#   TOTAL : 150
-#   PASS  : 150
-#   FAIL  : 0
-#   150/150 PASS
+# Validated baseline entering PROJECT-FINAL-P1:
+#   Git HEAD                    : 755a5c6d71e6c40e829ff09aad2c01d1193b084a
+#   TOTAL                       : 150
+#   PASS                        : 150
+#   FAIL                        : 0
+#   RC-COV planned coverage     : 100.00% across 7 / 7 covergroup types
+#   CODE-COV-C1.3 RAW bcefst    : 74.83%
+#   CODE-COV-C1.3 EFFECTIVE     : 77.34%
+#   CODE-COV-C1.3              : CLOSED
+#
+# PROJECT-FINAL-P1 regression policy:
+#   - This file is the canonical single source of truth for the
+#     full 150-item regression inventory.
+#   - run_full_uvm_regression.tcl parses the numbered '# NNN: name'
+#     record and the configuration line that immediately follows it.
+#   - Do not duplicate regression items inside the Tcl runner.
+#   - Keep numbering contiguous and preserve item ordering unless a
+#     deliberate regression-baseline change is being made.
 #
 # Planned functional coverage:
 #   TOTAL COVERGROUP COVERAGE : 100.00%
@@ -16,15 +29,6 @@
 #   MISSING PLANNED BINS      : 0
 #   UCDB MERGE / REPORT       : PASS
 #   VCOVER ERRORS / WARNINGS  : 0 / 0
-#
-# CODE-COV-C1.3 status:
-#   C1.3-A  Priority Freeze                                      CLOSED
-#   C1.3-B1 AXI Transport / Response Robustness                  CLOSED
-#   C1.3-B2 Queue / Direct-Stream Error-Recovery                 CLOSED
-#   C1.3-B3-A Selective Sequencer / Loader / CSR Exact Audit     CLOSED
-#   C1.3-B3-B Direct-Stream Operand-Readiness Reject Integration IN PROGRESS
-#   C1.3-C  Fresh Full Regression / RAW Delta Reconciliation     PENDING
-#   C1.3-D  Final C1.3 Closure                                   PENDING
 #
 # Major coverage:
 #   - host-primary GEMM path
