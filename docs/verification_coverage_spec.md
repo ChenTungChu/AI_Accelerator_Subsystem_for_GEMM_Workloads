@@ -744,8 +744,8 @@ RAW non-toggle multimetric       : 80.69%
 EFFECTIVE non-toggle multimetric : 83.64%
 RAW statement                    : 96.42%
 EFFECTIVE statement              : 99.70%
-Toggle RAW                       : 29.80%
-Toggle EFFECTIVE                 : 29.80%
+Toggle RAW                       : 29.81%
+Toggle EFFECTIVE                 : 29.81%
 ```
 
 Condition and expression effective-covered counts reflect Questa exact-FEC exclusion accounting.  They are not additional simulation hits.
